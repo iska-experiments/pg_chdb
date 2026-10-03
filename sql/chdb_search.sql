@@ -11,6 +11,10 @@ CREATE FUNCTION chdb_search_exec(TEXT) RETURNS VOID
 AS 'MODULE_PATHNAME', 'chdb_search_debug_exec'
 LANGUAGE C STRICT;
 
+CREATE FUNCTION chdb_search_drop() RETURNS VOID
+AS 'MODULE_PATHNAME', 'chdb_search_debug_drop'
+LANGUAGE C STRICT;
+
 CREATE FUNCTION chdb_search_query(TEXT) RETURNS SETOF record
 AS 'MODULE_PATHNAME', 'chdb_search_debug_query'
 LANGUAGE C STRICT;
@@ -22,5 +26,6 @@ AS 'MODULE_PATHNAME', 'chdb_search_debug_copy_to'
 LANGUAGE C STRICT;
 
 REVOKE EXECUTE ON FUNCTION chdb_search_exec(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION chdb_search_drop() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_query(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_copy_to(regclass, text) FROM PUBLIC;

@@ -47,6 +47,18 @@ chdb_search_debug_exec(PG_FUNCTION_ARGS) {
     PG_RETURN_VOID();
 }
 
+/* Drops idx_0 through the worker's DROP command. */
+PG_FUNCTION_INFO_V1(chdb_search_debug_drop);
+Datum
+chdb_search_debug_drop(PG_FUNCTION_ARGS) {
+    require_superuser();
+    chdbSearchConn* conn = chdb_search_connect();
+    chdb_search_drop(conn, CHDB_SEARCH_DEBUG_INDEX);
+    chdb_search_close(conn);
+
+    PG_RETURN_VOID();
+}
+
 /* Runs a query in idx_0, mapping its rows to the caller's column definition list. */
 PG_FUNCTION_INFO_V1(chdb_search_debug_query);
 Datum
