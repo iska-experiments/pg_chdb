@@ -69,4 +69,13 @@ chdb_search_finish(chdbSearchConn* conn);
 extern void
 chdb_search_drop(chdbSearchConn* conn, Oid indexoid);
 
+/*
+ * Adapts the connection for the Native streaming code of native.h, which
+ * reads and writes through a chdbHelper. Use after chdb_search_select or
+ * chdb_search_insert; finish the stream with chdb_search_finish.
+ */
+struct chdbHelper;
+extern struct chdbHelper*
+chdb_search_helper(chdbSearchConn* conn);
+
 #endif /* CHDB_SEARCH_CLIENT_H */
