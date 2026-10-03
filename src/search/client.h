@@ -9,8 +9,10 @@
  * requests over a unix socket at $PGDATA/pg_chdb/<dboid>.sock and stream
  * Native blocks both ways. The client starts the worker on first use.
  *
- * Every request names the index it works on. The worker maps an index OID to
- * the chDB database `idx_<indexoid>` and keeps one table `t` in it.
+ * Every request names the index it works on. Before running it the worker
+ * creates the chDB database `idx_<indexoid>` if it is missing. Queries pass
+ * through unchanged, so callers name the table in full: `idx_<indexoid>.t`.
+ * The framing is documented in protocol.h.
  */
 
 #include "postgres.h"
@@ -18,9 +20,8 @@
 #include "nodes/pg_list.h"
 #include "utils/relcache.h"
 
-/* Commands, continuing the numbering of src/setup.h. */
-#define CHDB_CMD_EXEC 'E'   /* run a statement, no result rows */
-#define CHDB_CMD_DROP 'X'   /* drop the index's chDB database */
+/* Commands: CHDB_CMD_SELECT and _INSERT of src/setup.h, plus _EXEC and _DROP. */
+#include "protocol.h"
 
 typedef struct chdbSearchConn chdbSearchConn;
 
@@ -33,7 +34,7 @@ extern void
 chdb_search_close(chdbSearchConn* conn);
 
 /*
- * Runs `sql` in the index's database. `sql` may reference the table as `t`.
+ * Runs `sql`, which names the table as `idx_<indexoid>.t`.
  * Raises on failure with the worker's error text.
  */
 extern void
@@ -50,7 +51,8 @@ extern size_t
 chdb_search_recv(chdbSearchConn* conn, void* buf, size_t len);
 
 /*
- * Starts `INSERT INTO t (cols) FORMAT Native`; the caller then sends blocks
+ * Starts `sql`, an `INSERT INTO idx_<indexoid>.t (cols)` with no FORMAT
+ * clause, which the worker supplies as Native; the caller then sends blocks
  * with chdb_search_send and ends the stream with chdb_search_finish, which
  * waits for the worker's acknowledgement and raises on failure.
  */
