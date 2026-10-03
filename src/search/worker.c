@@ -793,6 +793,9 @@ open_listener(void) {
     }
 }
 
+/* WL_SOCKET_ACCEPT is WL_SOCKET_READABLE, so user_data tells the listener apart. */
+#define LISTENER ((void*)(intptr_t)-1)
+
 /* Rebuilt on every change, as WaitEventSets cannot drop a socket. */
 static WaitEventSet*
 build_wait_set(const int* clients, int nclients) {
@@ -800,7 +803,7 @@ build_wait_set(const int* clients, int nclients) {
 
     AddWaitEventToSet(set, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
     AddWaitEventToSet(set, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET, NULL, NULL);
-    AddWaitEventToSet(set, WL_SOCKET_ACCEPT, listen_fd, NULL, (void*)(intptr_t)-1);
+    AddWaitEventToSet(set, WL_SOCKET_ACCEPT, listen_fd, NULL, LISTENER);
     for (int i = 0; i < nclients; i++) {
         AddWaitEventToSet(
             set, WL_SOCKET_READABLE, clients[i], NULL, (void*)(intptr_t)i
@@ -867,7 +870,7 @@ chdb_search_worker_main(Datum arg) {
                 ConfigReloadPending = false;
                 ProcessConfigFile(PGC_SIGHUP);
             }
-        } else if (event.events & WL_SOCKET_ACCEPT) {
+        } else if ((event.events & WL_SOCKET_READABLE) && event.user_data == LISTENER) {
             int fd = accept4(listen_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
             if (fd >= 0 && nclients < CHDB_SEARCH_MAX_CLIENTS) {
