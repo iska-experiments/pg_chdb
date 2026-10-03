@@ -1,4 +1,5 @@
-EXTENSION    = $(patsubst %.control,%,$(wildcard *.control))
+# Named, not globbed: chdb_search.control belongs to the search module below.
+EXTENSION    = chdb
 EXTVERSION   = $(shell grep -m 1 'default_version' chdb.control | \
                sed -e "s/[[:space:]]*default_version[[:space:]]*=[[:space:]]*'\([^']*\)',\{0,1\}/\1/")
 DISTVERSION  = $(shell grep -m 1 '^[[:space:]]\{2\}"version":' META.json | \
@@ -50,7 +51,7 @@ PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chd
                -DCHC_ERR_MSG_LEN=4096
 
 # Clean up generated files.
-EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc src/helper/chdb_helper src/helper/*.o test/schedule*
+EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc sql/chdb_search--0.1.sql src/search/chdb_search$(DLSUFFIX) src/search/*.o src/search/*.bc src/helper/chdb_helper src/helper/*.o test/schedule*
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -71,7 +72,7 @@ endif
 endif
 
 # Require the versioned SQL script.
-all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper src/hook/chdb_hook$(DLSUFFIX)
+all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper src/hook/chdb_hook$(DLSUFFIX) src/search/chdb_search$(DLSUFFIX)
 
 # PGXS tracks no header dependencies, and the vendored libraries are all header.
 # *.bc compiles same sources, so needs same headers.
@@ -98,6 +99,25 @@ uninstall-hook:
 	rm -f $(DESTDIR)$(pkglibdir)/$(HOOK_MODULE)
 install: install-hook
 uninstall: uninstall-hook
+
+# Search module: the chdb_search extension and its worker. It has its own
+# control file and script, so it installs through a sub-make of its own.
+SEARCH_MODULE := src/search/chdb_search$(DLSUFFIX)
+$(SEARCH_MODULE): $(wildcard src/search/*.c src/search/*.h) $(OBJS) src/version.h
+	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) LIBCHDB_DIR=$(LIBCHDB_DIR)
+
+sql/chdb_search--0.1.sql: sql/chdb_search.sql
+	cp $< $@
+
+install-search: $(SEARCH_MODULE) sql/chdb_search--0.1.sql
+	$(INSTALL_SHLIB) $< '$(DESTDIR)$(pkglibdir)/'
+	$(MKDIR_P) '$(DESTDIR)$(datadir)/extension'
+	$(INSTALL_DATA) chdb_search.control sql/chdb_search--0.1.sql '$(DESTDIR)$(datadir)/extension/'
+uninstall-search:
+	rm -f $(DESTDIR)$(pkglibdir)/chdb_search$(DLSUFFIX)
+	rm -f $(DESTDIR)$(datadir)/extension/chdb_search.control $(DESTDIR)$(datadir)/extension/chdb_search--0.1.sql
+install: install-search
+uninstall: uninstall-search
 
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
@@ -153,7 +173,7 @@ uninstall-libchdb:
 	rm -f $(DESTDIR)/usr/local/lib/libchdb.so
 
 .PHONY: format # Format .c and .h files to project standard in .clang-format.
-format: $(wildcard src/*.c src/*.h src/helper/*.c)
+format: $(wildcard src/*.c src/*.h src/helper/*.c src/search/*.c src/search/*.h)
 	@$(CLANG_FORMAT) --style=file:.clang-format -i $^
 
 .PHONY: type-table # Regenerate the data type tables of doc/chdb_hook.md.
