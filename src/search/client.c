@@ -17,6 +17,7 @@
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "storage/latch.h"
+#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/timestamp.h"
 #include "utils/wait_event.h"
@@ -51,6 +52,24 @@ lost_worker(chdbChannel* ch, const char* what, int errnum) {
             errnum ? strerror(errnum) : ""
         ),
         errcontext("query: %s", conn->query ? conn->query : "")
+    );
+}
+
+void
+chdb_search_client_init(void) {
+    DefineCustomIntVariable(
+        "chdb_search.worker_timeout",
+        "Seconds to wait for the chdb_search worker to start.",
+        NULL,
+        &chdb_search_worker_timeout,
+        30,
+        1,
+        3600,
+        PGC_USERSET,
+        GUC_UNIT_S,
+        NULL,
+        NULL,
+        NULL
     );
 }
 

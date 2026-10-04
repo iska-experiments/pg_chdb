@@ -32,6 +32,14 @@
 
 typedef struct chdbSearchConn chdbSearchConn;
 
+/*
+ * Defines the client's GUCs: chdb_search.worker_timeout for the worker
+ * client, the chdb_search_stub ones for the stub. _PG_init runs it before
+ * reserving the chdb_search prefix.
+ */
+extern void
+chdb_search_client_init(void);
+
 /* Opens a connection to the worker, starting it if needed. Never NULL. */
 extern chdbSearchConn*
 chdb_search_connect(void);
