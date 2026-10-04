@@ -202,11 +202,23 @@ documented.
   query needs and put in a virtual scan tuple (`planner/score.c`,
   `planner/sql.c`). Returning stored columns without a heap fetch is a
   later stage along the same lines.
-* Aggregate pushdown (`create_upper_paths_hook`): `count(*)`, `count(col)`,
-  `min/max/sum/avg` and `GROUP BY` over stored columns when every qual is
-  pushable. MVCC: the pushed query excludes ctids VACUUM has not yet removed
-  only if the heap's visibility map says the pages are all-visible;
-  otherwise the path is not generated (same rule as index-only scans).
+* Aggregate pushdown (`create_upper_paths_hook`, `src/search/planner/agg_*.c`):
+  `count(*)`, `count(col)`, `min/max/sum/avg` and `GROUP BY` over stored
+  columns when every qual is pushable, as a CustomScan with `scanrelid 0`
+  whose `custom_scan_tlist` is the grouping columns and the aggregates
+  (`ChdbAggOutput` in `planner.h`); setrefs rewrites the target list and the
+  HAVING clause over them. `avg` is the store's sum and count divided by
+  `numeric_div` or a float division, as the Postgres aggregate does, so the
+  digits match. MVCC: the store's rows are the snapshot's only if the heap's
+  visibility map says every page is all-visible (same rule as index-only
+  scans). The path is generated only when it does at planning; at execution
+  the node checks the map before the statement and after its answer, and if
+  either check fails, or the store is unavailable in skip mode, it runs the
+  Agg plan over the planner's cheapest scan that it carries as its child
+  (`custom_plans`), so the answer is always exact. Any heap write clears its
+  page's bit before the row can reach the store, and VACUUM sets a bit again
+  only for tuples every open snapshot sees, which is what makes two clean
+  checks around the statement sufficient.
 
 ### Relevance score (`src/search/score.c`, CustomScan only)
 

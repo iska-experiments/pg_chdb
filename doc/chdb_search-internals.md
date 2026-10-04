@@ -217,6 +217,16 @@ path. A scoring query gets no other path, since every other one would
 evaluate the placeholder, and none in a statement that may recheck rows
 under EvalPlanQual, which hands the scan a heap tuple.
 
+The aggregate scan (`planner/agg_*.c`) is a `create_upper_paths` hook
+(`agg_hook.c`) for a `GROUP BY` or aggregate over one such relation whose
+clauses all go to the store: it matches the grouped target's columns and
+aggregates to the index (`agg_match.c`), plans a scan of no relation whose
+`custom_scan_tlist` is those outputs (`agg_plan.c`), and at execution
+(`agg_exec.c`) sends `SELECT <groups>, <aggregates> ... GROUP BY`
+(`agg_select.c`) when the heap's visibility map says every page is
+all-visible before and after the statement, or else runs the Agg plan it
+carries as its child, so the answer is always the snapshot's.
+
 ## Storage Phases
 
 *   **Phase 0** (this tree): a local directory under `$PGDATA/pg_chdb`. It

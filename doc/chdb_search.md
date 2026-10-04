@@ -33,7 +33,8 @@ columns, by vector distance with the [chdb_vector] extension, or by
 each row has. A query over an indexed table is planned as a
 [custom scan](#the-custom-scan) that sends the predicates, the order, the
 score and the `LIMIT` to ClickHouse as one statement, or as a scan of the
-index. chDB
+index; a `GROUP BY` or an aggregate over the indexed columns is [computed by
+ClickHouse](#aggregate-pushdown) when the heap can vouch for it. chDB
 allows one process per store, so a background worker per database owns the
 store and backends talk to it over a Unix socket; libchdb itself runs in a
 child of the worker, so a crash in it costs one request. See [The Worker
@@ -279,6 +280,68 @@ counts are of the store's rows, which include the versions `VACUUM` has not
 yet removed; a `raw_preprocessor` applies to the column and not to the
 needle, which is tokenized as written.
 
+## Aggregate Pushdown
+
+A `GROUP BY` or aggregate query over one indexed table whose `WHERE` the
+store can apply in full is planned as a `Custom Scan (chdb_search
+aggregate)`: one ClickHouse statement that computes the groups and the
+aggregates, so that `count(*)` with a text predicate is answered from the
+text index without reading a row, and `GROUP BY author` is one pass over
+the store. Postgres computes the rest of the query on the result: the
+`HAVING` clause, expressions over the aggregates, the `ORDER BY`.
+
+```sql
+EXPLAIN (COSTS OFF)
+SELECT author, count(*), avg(price) FROM docs WHERE body @@@ 'shoes'
+ GROUP BY author HAVING count(*) > 1;
+                                                  QUERY PLAN
+--------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate)
+   Filter: ((count(*)) > 1)
+   Pushed Cond: (body @@@ 'shoes'::text)
+   ClickHouse: SELECT "author", count(), sumOrNull("price"), count("price") FROM idx_16401.t_7342
+     WHERE hasAllTokens("body", 'shoes') GROUP BY "author"
+   ->  HashAggregate
+         Group Key: author
+         ->  Custom Scan (chdb_search) on docs
+               Pushed Cond: (body @@@ 'shoes'::text)
+               ClickHouse: SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'shoes')
+```
+
+*   **What the store computes.** `count(*)`; `count(col)` of a text or a
+    `columnar_ops` column; `min`, `max`, `sum` and `avg` of a `columnar_ops`
+    column; and `GROUP BY` text and `columnar_ops` columns of the index, in
+    the plain forms: no `DISTINCT`, `ORDER BY` or `FILTER` in the aggregate,
+    no grouping sets, no grouping by an expression. Anything else, a clause
+    the store cannot apply, `count(DISTINCT x)` or a column outside the
+    index say, leaves the whole aggregate to Postgres. The answers are
+    Postgres's: `min` and `max` of no rows are `NULL`, a sum has the type
+    Postgres gives it, and `avg` is the store's sum and count divided as
+    Postgres's `avg` divides them, so it has the same digits. A `float4` or
+    `float8` sum is added in double precision by ClickHouse, in an order of
+    its own, so its last bits can differ from a sequential scan's.
+*   **MVCC.** The store holds a row per heap tuple that a committed
+    transaction wrote, the dead ones until `VACUUM`, and knows nothing of
+    the query's snapshot, so its count is the heap's only when the heap's
+    visibility map says every page is all-visible: no dead tuple is waiting
+    for `VACUUM`, and no tuple is from a transaction the snapshot does not
+    see. The path is planned only when the map says so, as an index-only
+    scan is, and at execution the node asks the map again before the
+    statement and after its answer; if the heap changed in between, or the
+    store is unavailable in `skip` mode, the node runs the plan Postgres
+    would have run instead, which `EXPLAIN` shows as its child and `EXPLAIN
+    ANALYZE` marks `Exact Plan` with the reason. So an insert, update or
+    delete since the last `VACUUM` costs the shortcut, not the answer. Like
+    the index, the store does not see a transaction's own uncommitted rows
+    (see [Consistency](#consistency)).
+*   **Settings.**
+    [`chdb_search.enable_aggregate_pushdown`](#chdb_searchenable_aggregate_pushdown)
+    turns it off, as does
+    [`chdb_search.enable_custom_scan`](#chdb_searchenable_custom_scan), the
+    aggregate scan being a custom scan. The path is priced as a round trip
+    and a row per group, so where it applies it wins; a table of a page or
+    two is still cheaper to scan.
+
 ## Consistency
 
 *   **Flush at commit.** Inserts are buffered per transaction and sent to
@@ -413,9 +476,20 @@ answer where the wait cannot be cancelled. From `1` to `3600`; defaults to
 SET chdb_search.enable_custom_scan = off;
 ```
 
-Whether the planner considers [the custom scan](#the-custom-scan). Off, a
-search is a scan of the index, which sends the same statement through the
-access method, row by row. Defaults to `on`.
+Whether the planner considers [the custom scan](#the-custom-scan), and with
+it the [aggregate scan](#aggregate-pushdown). Off, a search is a scan of the
+index, which sends the same statement through the access method, row by
+row. Defaults to `on`.
+
+### `chdb_search.enable_aggregate_pushdown`
+
+```sql
+SET chdb_search.enable_aggregate_pushdown = off;
+```
+
+Whether the planner considers the [aggregate scan](#aggregate-pushdown),
+which has ClickHouse compute a `GROUP BY` and its aggregates. Off, Postgres
+aggregates the rows of a scan. Defaults to `on`.
 
 ### `chdb_search.custom_scan_cost_factor`
 
@@ -482,6 +556,10 @@ database named `idx_0`.
     only, in a `SELECT` with a text search and without row locks, and a
     join evaluates it when the scan is directly below the join that
     returns it.
+*   The aggregate scan needs every page of the heap all-visible, so a table
+    written since its last `VACUUM` is aggregated by Postgres until the next
+    one, through the plan the scan carries; a table never vacuumed is never
+    aggregated by the store.
 
 ## Authors
 
