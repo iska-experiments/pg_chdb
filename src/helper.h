@@ -2,6 +2,9 @@
 #define CHDB_HELPER_H
 
 #include "postgres.h"
+
+#include "lib/stringinfo.h"
+
 #include "setup.h"
 
 /*
@@ -46,5 +49,16 @@ chdb_helper_write(chdbHelper* helper, const void* p, size_t len);
 /* Ends the stream and waits for the helper, raising unless it exited cleanly. */
 extern void
 chdb_helper_finish(chdbHelper* helper);
+
+/* Appends the setup payload of setup.h for `query` and its parameters to `buf`. */
+extern void
+chdb_helper_build_setup(
+    StringInfo buf,
+    chdbHelperContext* ctx,
+    const char* query,
+    char* const* names,
+    char* const* values,
+    size_t nparams
+);
 
 #endif /* CHDB_HELPER_H */
