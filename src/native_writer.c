@@ -1,5 +1,5 @@
 /*
- * The Native block writer over a structure clause, shared by COPY (native.c),
+ * The Native block writer over a structure clause, shared by COPY (native_send.c),
  * the chdb index access method's row writer and the stub worker client, so
  * that a block's columns are named and typed one way wherever one is built.
  */

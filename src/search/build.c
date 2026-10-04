@@ -21,7 +21,7 @@
 
 #include "search.h"
 
-/* Matches src/native.c: ClickHouse coalesces small blocks itself. */
+/* Matches src/native_send.c: ClickHouse coalesces small blocks itself. */
 #define BLOCK_BYTES (8 * 1024 * 1024)
 
 /* ---- ambuild ---- */

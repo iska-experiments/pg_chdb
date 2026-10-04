@@ -24,7 +24,7 @@
 #include "../native_writer.h"
 #include "search.h"
 
-/* Matches src/native.c: ClickHouse coalesces small blocks itself. */
+/* Matches src/native_send.c: ClickHouse coalesces small blocks itself. */
 #define BLOCK_BYTES (8 * 1024 * 1024)
 /* ---- TID packing ---- */
 
@@ -89,7 +89,7 @@ struct ChdbRowWriter {
     ChdbColumn* cols;
 };
 
-/* The table's structure names the columns, as COPY's does (src/native.c). */
+/* The table's structure names the columns, as COPY's does (native_send.c). */
 ChdbRowWriter*
 chdb_rowwriter_new(Relation index) {
     ChdbRowWriter* rw = palloc0(sizeof(*rw));
