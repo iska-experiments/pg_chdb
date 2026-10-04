@@ -12,25 +12,8 @@ CREATE TABLE docs (id int PRIMARY KEY, body text);
 INSERT INTO docs VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd');
 CREATE INDEX docs_idx ON docs USING chdb (body) WITH (vacuum_optimize_ratio = 0.5);
 
--- VACUUM removes a deleted row only once no other session's snapshot can
--- see it, and autovacuum's ANALYZE holds one now and then. A snapshot taken
--- while no older transaction runs cannot, so before each VACUUM that must
--- remove one, wait (ten seconds at most) until no other session of the
--- database holds a snapshot or a transaction ID.
-CREATE PROCEDURE pg_temp.wait_removable() LANGUAGE plpgsql AS $$
-DECLARE
-    deadline timestamptz := clock_timestamp() + interval '10 seconds';
-BEGIN
-    WHILE clock_timestamp() < deadline AND EXISTS (
-        SELECT FROM pg_stat_activity
-         WHERE datname = current_database() AND pid <> pg_backend_pid()
-           AND (backend_xmin IS NOT NULL OR backend_xid IS NOT NULL)
-    ) LOOP
-        PERFORM pg_sleep(0.01);
-        PERFORM pg_stat_clear_snapshot();
-    END LOOP;
-END
-$$;
+-- The wait before a VACUUM that must remove a row.
+\i test/utils/wait-removable.sql
 
 -- The store holds ctids 1 to 4 and one heap row is dead: VACUUM deletes its
 -- ctid and, with a quarter of the rows dead, does not merge.

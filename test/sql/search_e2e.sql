@@ -136,7 +136,10 @@ SELECT id FROM prod WHERE body @@@ 'boots' ORDER BY id;
 SELECT ctid, body FROM pg_temp.store(:'tbl') WHERE body IN ('Walking boots', 'Running shoes for runners') ORDER BY ctid;
 
 -- VACUUM removes the dead versions from the store, and merges its parts once
--- enough of it is dead.
+-- enough of it is dead; it can remove them only once no other session's
+-- snapshot could see them (test/utils/wait-removable.sql).
+\i test/utils/wait-removable.sql
+CALL pg_temp.wait_removable();
 SET client_min_messages = debug1;
 VACUUM prod;
 SET client_min_messages = warning;

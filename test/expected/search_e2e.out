@@ -349,7 +349,11 @@ SELECT ctid, body FROM pg_temp.store(:'tbl') WHERE body IN ('Walking boots', 'Ru
 (2 rows)
 
 -- VACUUM removes the dead versions from the store, and merges its parts once
--- enough of it is dead.
+-- enough of it is dead; it can remove them only once no other session's
+-- snapshot could see them (test/utils/wait-removable.sql).
+\i test/utils/wait-removable.sql
+\set ECHO errors
+CALL pg_temp.wait_removable();
 SET client_min_messages = debug1;
 VACUUM prod;
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N
