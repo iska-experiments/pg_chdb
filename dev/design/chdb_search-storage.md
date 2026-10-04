@@ -2,7 +2,7 @@
 
 The storage half of the `chdb_search` contract in `chdb_search.md`: how the
 chDB store sits beside the index relation and proves itself current, what
-the Phase 1 `pg_pages` disk asks of the worker, and what the index
+the Phase 1 callback disk asks of the worker, and what the index
 guarantees under backups and replication. Keep it current with the other
 half when an interface changes.
 
@@ -22,32 +22,47 @@ sweeps the `idx_*` databases whose OID is not a chdb index (`sweep.c`), and
 the `pg_chdb/<dboid>` directories of databases no longer in `pg_database`,
 which is how a drop made without the library loaded is cleaned up.
 
-Phase 1 (`pg_pages` disk, chdb-core PR): chdb-core gains
+Phase 1 (callback disk, chdb-core branch `callback-object-storage`):
+chdb-core gained a `callback` object storage type and the registration
 
 ```c
 typedef struct chdb_object_storage_callbacks {
+    uint32_t struct_size;
     void *ud;
-    int  (*exists)(void *ud, const char *key);
-    int  (*read)(void *ud, const char *key, uint64_t offset, void *buf, size_t len, size_t *out);
-    int  (*write_begin)(void *ud, const char *key, void **handle);
-    int  (*write_append)(void *ud, void *handle, const void *buf, size_t len);
-    int  (*write_commit)(void *ud, void *handle);
-    int  (*write_abort)(void *ud, void *handle);
-    int  (*remove)(void *ud, const char *key);
-    int  (*list)(void *ud, const char *prefix, chdb_list_sink sink, void *sink_ud);
-    int  (*metadata)(void *ud, const char *key, uint64_t *size, int64_t *mtime);
+    int (*exists)(void *ud, const char *key, int *out);
+    int (*metadata)(void *ud, const char *key, int *found, uint64_t *size, int64_t *mtime);
+    int (*read)(void *ud, const char *key, uint64_t offset, void *buf, size_t len, size_t *out);
+    int (*write_begin)(void *ud, const char *key, void **handle);
+    int (*write_append)(void *ud, void *handle, const void *buf, size_t len);
+    int (*write_commit)(void *ud, void *handle);
+    int (*write_abort)(void *ud, void *handle);
+    int (*remove)(void *ud, const char *key);
+    int (*list)(void *ud, const char *prefix, chdb_object_storage_list_sink sink, void *sink_ud);
+    int (*copy)(void *ud, const char *from_key, const char *to_key);   /* optional */
+    const char *(*last_error)(void *ud);                                /* optional */
 } chdb_object_storage_callbacks;
 chdb_state chdb_register_object_storage(const char *name, const chdb_object_storage_callbacks *cb);
 ```
 
-and a `callback` object storage type (`SETTINGS disk = disk(type='object_storage',
-object_storage_type='callback', metadata_type='plain_rewritable', name='pg_<indexoid>')`).
-The worker implements the callbacks on index-relation pages: a block
-directory in pages 1..n maps keys to page chains; blob pages are written
-with `GenericXLogStart/RegisterBuffer/Finish` under `BUFFER_LOCK_EXCLUSIVE`.
-Then recovery and physical replication come from Postgres WAL, the
-generation check becomes a sanity check, and the local directory holds only
-chDB's own `tmp/` and `metadata/`, which are rebuilt from pages on start.
+with `SETTINGS disk = disk(type = 'callback', storage_name = 'pg_<indexoid>')`
+on the store tables (`CHDB_STORE_DISK_FMT`), metadata `plain_rewritable`.
+The engine's callbacks cross the page socketpair to the worker
+(`pagestore/protocol.h`), which answers them from a backend behind
+`chdbBlobStore` (`pagestore/store.h`), in two stages:
+
+* **Stage 1** (this tree): the directory backend, `dirstore.c`, keeps each
+  blob as a file under `pg_chdb/<dboid>/blobs/<storage>/<key>`, a pending
+  write in `blobs/.tmp/` until its commit fsyncs and renames it in, so a blob
+  is whole or absent after a crash. It proves the protocol and the engine's
+  side, and is no more replicated than the Phase 0 directory was: the
+  fail-safe check below still guards it.
+* **Stage 2**: the page backend implements the same table on index-relation
+  pages: a block directory in pages 1..n maps keys to page chains; blob
+  pages are written with `GenericXLogStart/RegisterBuffer/Finish` under
+  `BUFFER_LOCK_EXCLUSIVE`, the directory entry with the commit. Then
+  recovery and physical replication come from Postgres WAL, the generation
+  check becomes a sanity check, and the local directory holds only chDB's
+  own `tmp/` and `metadata/`, which are rebuilt from pages on start.
 
 ## Phase 1 host contract (from the chdb-core review)
 

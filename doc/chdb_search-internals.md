@@ -45,15 +45,48 @@ CREATE TABLE idx_16401.t_7342 (ctid UInt64, xmin UInt32,
   INDEX "tags_idx" "tags" TYPE text(tokenizer = array,
     preprocessor = lowerUTF8("tags")))
   ENGINE = MergeTree ORDER BY ctid
-  SETTINGS fsync_after_insert = 1, fsync_part_directory = 1,
+  SETTINGS disk = disk(type = 'callback', storage_name = 'pg_16401'),
     enable_block_number_column = 1, enable_block_offset_column = 1
 ```
 
-Parts are fsynced before `COMMIT` returns, and the block number and offset
-columns let `VACUUM`'s `DELETE` patch parts as a lightweight update instead
-of a mutation. Every statement the access method sends is logged at `DEBUG1`
-before it goes, as `chdb_search <what>: <statement>`; with
+The parts live on the index's callback object storage, `pg_<indexrelid>`,
+whose blobs the worker holds (see [The Blob Store](#the-blob-store)), and
+are durable when the worker has acknowledged their commit, before
+`COMMIT` returns; the block number and offset columns let `VACUUM`'s
+`DELETE` patch parts as a lightweight update instead of a mutation, which
+the disk does not allow. Every statement the access method sends is logged
+at `DEBUG1` before it goes, as `chdb_search <what>: <statement>`; with
 `chdb_search.mask_oids` the numbers that differ from run to run read `N`.
+
+## The Blob Store
+
+The store tables keep their parts on libchdb's callback object storage, so
+the engine never writes them itself: each file of a part is a blob the
+engine asks the worker for, by a key libchdb chose, over a second
+socketpair between the two (`src/search/pagestore/protocol.h`). The
+callbacks run on any of the engine's threads, several at once, while the
+thread inside libchdb is blocked, so every request carries an id the reply
+repeats; the engine writes frames whole under a mutex and a reader thread
+of its own matches the replies (`src/search/engine/pagecall.c`,
+`pagestore.c`). The worker answers them from its event loop while idle,
+since background merges ask with no request in flight, from inside any
+wait on the request channel while it relays, and while it waits for a
+stopping engine to close its store (`engine_proc.c`, `pagestore/dispatch.c`).
+
+What answers is a backend behind a small table of functions
+(`pagestore/store.h`): exists, metadata, read, write begin, append, commit
+and abort, remove, list, copy, and the storages held. This tree's backend
+keeps blobs as files, `pg_chdb/<dboid>/blobs/pg_<indexrelid>/<key>`, a
+pending write in `blobs/.tmp/` until its commit fsyncs and renames it in,
+so a blob is whole or absent after a crash; a crashed engine's pending
+writes are dropped by the worker, which logs how many
+(`pagestore/dirstore.c`). The next backend keeps them in pages of the index
+relation. Each index has a storage of its own, `pg_<indexrelid>`, which the
+engine registers before a table is made on it, and every storage the
+worker holds before it opens the store, since libchdb attaches a persisted
+table to its storage by name. `DROP INDEX` drops the tables, whose blobs
+and storage go with them. `chdb_search_blobs(regclass)` lists an index's
+blobs with their size and commit time.
 
 ## The Metapage and the Fail-Safe
 
@@ -284,13 +317,17 @@ carries as its child, so the answer is always the snapshot's.
 
 ## Storage Phases
 
-*   **Phase 0** (this tree): a local directory under `$PGDATA/pg_chdb`. It
-    is not WAL-logged, so a base backup's copy of it stands still while
-    the heap it was taken with moves on; the fail-safe above refuses a store
-    the server cannot prove current.
-*   **Phase 1**: a chDB disk whose blobs live in index relation pages
-    written with generic WAL by the worker, upstreamed to chDB as a callback
-    object storage. Crash recovery and replication then come from Postgres.
+*   **Phase 0**: a local directory under `$PGDATA/pg_chdb`, written by the
+    engine itself.
+*   **Phase 1, stage 1** (this tree): chDB's callback object storage, its
+    blobs asked of the worker, which keeps them as files under
+    `$PGDATA/pg_chdb/<dboid>/blobs/`. The protocol and the engine's side
+    are final; the files are a stand-in, no more WAL-logged or replicated
+    than Phase 0 was, and the fail-safe above refuses a store the server
+    cannot prove current.
+*   **Phase 1, stage 2**: the same requests answered from index relation
+    pages written with generic WAL. Crash recovery and replication then
+    come from Postgres.
 
 ## Debug Functions
 
@@ -309,6 +346,8 @@ database named `idx_0`.
     `idx_<oid>.t_<generation>`, for reading it with `chdb_search_query`.
 *   `chdb_search_metapage(regclass)` returns the index's magic, version,
     generation and the WAL position of its last flush.
+*   `chdb_search_blobs(regclass)` lists the blobs of an index's storage, as
+    the worker keeps them for the engine: key, size and commit time.
 *   `chdb_search_engine_pid()` returns the pid of the worker's engine, or
     `NULL` before the first request, and
     `chdb_search_debug_kill_engine(signal)` sends it a signal, as a crash
@@ -323,13 +362,14 @@ the worker and with the stub client, `make CHDB_SEARCH_STUB=1`, a
 per-backend fake (`client_stub.c`) that accepts every statement and answers
 selects from `chdb_search_stub.ctids`, fails on `chdb_search_stub.fail` and
 describes its store's generation record in `chdb_search_stub.meta`.
-`search_stub_*.sql` run with the stub only; `search_e2e.sql` and
-`search_worker.sql` with the worker only. `t/search_*.pl` each pin one
-failure mode: a crash with staged rows, a stale or missing store, a
-flush racing a check, a worker that never answers, two-phase commit (a
-build or drop refused, buffered and staged rows flushed), `pg_upgrade`,
-missed drops, multi-round `VACUUM`, concurrent drops, and the worker and
-engine under signals; `search_standby.pl`, `search_pitr.pl`,
+`search_stub_*.sql` run with the stub only; `search_e2e.sql`,
+`search_worker.sql` and `search_blobs.sql` with the worker only.
+`t/search_*.pl` each pin one failure mode: a crash with staged rows, a
+stale or missing store, a flush racing a check, a worker that never
+answers, two-phase commit (a build or drop refused, buffered and staged
+rows flushed), `pg_upgrade`, missed drops, multi-round `VACUUM`,
+concurrent drops, and the worker and engine under signals;
+`search_standby.pl`, `search_pitr.pl`,
 `search_logical.pl` and `search_walg.pl` prove the storage phase's
 guarantees under a streaming standby, point-in-time recovery, a logical
 subscription and WAL-G, the last skipping without a `wal-g` on the `PATH`.

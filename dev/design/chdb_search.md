@@ -79,14 +79,28 @@ a ranker.
   (EXECUTE revoked from PUBLIC) ask the worker for the engine's pid and
   signal it; the test uses them to prove that a SIGSEGV leaves the backend,
   the worker and the postmaster's start time unchanged.
-* **Phase 1 consequence.** The page callbacks (read, write, list, remove blob)
-  must run in the worker, which has shared buffers; the engine has none. They
-  will cross the socketpair in the other direction, as requests from the
-  engine to the supervisor interleaved with the response stream of the
-  request in flight, which the relay answers rather than forwards (the host
-  contract in `chdb_search-storage.md` fixes the rules). Not implemented;
-  the framing has no engine-initiated frame yet. Each callback is a round
-  trip, so the blob cache of Phase 1 has to sit in the engine process.
+* **Page requests** (`src/search/pagestore/`, `src/search/engine/page*.c`).
+  The store tables keep their parts on libchdb's callback object storage,
+  one storage per index named `pg_<indexoid>`, and the engine answers each
+  callback by asking the supervisor, the process that owns the blobs, over
+  a second socketpair (`pagestore/protocol.h`). The callbacks run on any of
+  the engine's threads while the thread inside libchdb is blocked, so every
+  frame carries an id the reply repeats: the engine writes frames whole
+  under a mutex and a reader thread hands each reply to the call waiting on
+  its id. The supervisor answers from its event loop while idle (background
+  merges ask with no request in flight), from inside any wait on the
+  request channel while relaying (`channel.h`'s aside descriptor), and while
+  waiting for a stopping engine to close its store. It answers from a backend
+  behind `chdbBlobStore` (`pagestore/store.h`, a table of functions: exists,
+  metadata, read, write begin/append/commit/abort, remove, list, copy, and
+  the storages held), so that the page format replaces the backend without
+  touching the protocol. The first backend keeps blobs as files under
+  `pg_chdb/<dboid>/blobs/<storage>/` (`dirstore.c`), pending writes outside
+  every storage until their commit renames them in. The engine registers
+  the storages the supervisor holds before it opens the store, since libchdb
+  attaches a persisted table to its storage by name, and each new index's
+  before a table is made on it. Each callback is a round trip, so a blob
+  cache belongs in the engine process.
 * Listens on the abstract unix socket `@pg_chdb/<hash>/<dboid>` on Linux,
   the hash of the data directory's path, device and inode, for peers of the
   server's uid only, and on `$PGDATA/pg_chdb/<dboid>.sock` elsewhere. Wire
@@ -99,9 +113,11 @@ a ranker.
   that `idx_<oid>.t_<generation>` exists before running the request and
   otherwise answers `CHDB_STATUS_NO_STORE`, which the client raises with a
   REINDEX hint.
-* Store path Phase 0: `$PGDATA/pg_chdb/<dboid>/` holding one chDB database
-  `idx_<indexrelid>` per index with table `t`. Phase 1: the same logical
-  layout on the `pg_pages` disk whose config names the index relation.
+* Store path: `$PGDATA/pg_chdb/<dboid>/` holds chDB's own metadata and one
+  chDB database `idx_<indexrelid>` per index, whose tables' parts are the
+  blobs of the index's storage `pg_<indexrelid>`: under
+  `pg_chdb/<dboid>/blobs/` with the directory backend, in the index
+  relation's pages with the page backend to come.
 
 ### Access method (`src/search/am.c`, `sql/chdb_search.sql`)
 
