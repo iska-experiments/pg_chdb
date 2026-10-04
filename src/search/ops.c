@@ -140,25 +140,42 @@ any_tokens(text* hay, text* needles) {
     return false;
 }
 
+/*
+ * The needle's tokens in order with at most `slop` others between the first
+ * and the last: from each start, the nearest next occurrence of each token
+ * gives the shortest span (as phrase.c computes it in ClickHouse).
+ */
 static bool
-phrase(text* hay, text* needles) {
+phrase_slop(text* hay, text* needles, int32 slop) {
     Tok *h, *n;
     int nh = tokenize(hay, &h), nn = tokenize(needles, &n);
 
     if (nn == 0) {
         return false;
     }
-    for (int i = 0; i + nn <= nh; i++) {
-        int j = 0;
+    for (int i = 0; i < nh; i++) {
+        int p = i, j = 1;
 
-        while (j < nn && tok_eq(h[i + j], n[j])) {
+        if (!tok_eq(h[i], n[0])) {
+            continue;
+        }
+        while (j < nn) {
+            while (++p < nh && !tok_eq(h[p], n[j])) {}
+            if (p == nh) {
+                break;
+            }
             j++;
         }
-        if (j == nn) {
+        if (j == nn && (p - i + 1) - nn <= slop) {
             return true;
         }
     }
     return false;
+}
+
+static bool
+phrase(text* hay, text* needles) {
+    return phrase_slop(hay, needles, 0);
 }
 
 /*
@@ -269,14 +286,7 @@ chdb_search_text_leaf(
     case CHDB_STRATEGY_HAS_TOKEN:
         return single_token(hay, needle);
     case CHDB_STRATEGY_HAS_PHRASE:
-        if (slop) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                errmsg("phrase slop is not supported yet")
-            );
-        }
-        return phrase(hay, needle);
+        return phrase_slop(hay, needle, slop);
     case CHDB_STRATEGY_REGEX:
         return chdb_search_regex_matches(hay, needle, collation);
     case CHDB_STRATEGY_WILDCARD:

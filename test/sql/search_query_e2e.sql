@@ -96,6 +96,28 @@ SELECT v.q, b.* FROM (VALUES
     ($$tags @@@ (chdb.match('sport') && !chdb.match_all('trail'))$$),
     ($$tags @@@ !chdb.term('sport')$$)
 ) v(q), LATERAL pg_temp.both_ways(v.q) b;
+
+----------------------------------------------------------------------------
+-- Phrase slop, from token positions: 'a running b c shoes' (4) has two
+-- tokens between, 'a running b c d shoes' (5) three, 'shoes for running' (6)
+-- the words reversed
+----------------------------------------------------------------------------
+SELECT v.q, b.* FROM (VALUES
+    ($$body @@@ chdb.phrase('running shoes')$$),
+    ($$body @@@ chdb.phrase('running shoes', 1)$$),
+    ($$body @@@ chdb.phrase('running shoes', 2)$$),
+    ($$body @@@ chdb.phrase('running shoes', 3)$$),
+    ($$body @@@ chdb.phrase('shoes running', 1)$$),
+    ($$body @@@ chdb.phrase('a c shoes', 1)$$),
+    ($$body @@@ chdb.phrase('a c shoes', 2)$$),
+    ($$body @@@ chdb.phrase('a shoes', 3)$$),
+    ($$body @@@ chdb.phrase('Running SHOES', 2)$$),
+    ($$body @@@ chdb.phrase('running', 1)$$),
+    ($$body @@@ chdb.phrase('nowhere shoes', 9)$$),
+    ($$body @@@ (chdb.phrase('running shoes', 2) || chdb.term('boots'))$$),
+    ($$body @@@ !chdb.phrase('running shoes', 3)$$)
+) v(q), LATERAL pg_temp.both_ways(v.q) b;
+
 -- A leaf naming another column is answered through the index alone.
 SET enable_seqscan = off;
 SELECT id FROM docs WHERE body @@@ (chdb.term('shoes') && chdb.in_column(chdb.term('trail'), 'tags')) ORDER BY id;

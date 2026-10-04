@@ -37,10 +37,10 @@ token_function(StrategyNumber strategy, ChdbColumnKind kind) {
 /*
  * A text search of `col` by the strategy of its operator. The token
  * searches are the index's own functions, which preprocess the needle as
- * they do the column. A regular expression and a LIKE pattern read the
- * text, so they take the column through its preprocessor, with the pattern
- * folded alike: match() by RE2's (?i), LIKE through the same function. A
- * LIKE is parenthesized, as it may follow a NOT.
+ * they do the column; a phrase with slop is phrase.c's. A regular expression and a LIKE
+ * pattern read the text, so they take the column through its preprocessor, with the
+ * pattern folded alike: match() by RE2's (?i), LIKE through the same function. A LIKE
+ * is parenthesized, as it may follow a NOT.
  */
 void
 chdb_search_append_text_search(
@@ -55,12 +55,9 @@ chdb_search_append_text_search(
     if (col->kind == CHDB_COL_TEXT_ARRAY) {
         chdb_search_check_array_search(strategy);
     }
-    if (slop) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-            errmsg("phrase slop is not supported yet")
-        );
+    if (strategy == CHDB_STRATEGY_HAS_PHRASE && slop) {
+        chdb_search_append_slop_phrase(buf, col, needle, slop);
+        return;
     }
     initStringInfo(&lit);
     if (strategy == CHDB_STRATEGY_REGEX && chdb_search_folds_case(col)) {

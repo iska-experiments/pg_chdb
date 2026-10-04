@@ -43,48 +43,67 @@ preprocessor_of(const ChdbTextOptions* o) {
                                   : DEFAULT_PREPROCESSOR;
 }
 
+static const char*
+tokenizer_of(const ChdbTextOptions* o) {
+    return (o && o->tokenizer) ? GET_STRING_RELOPTION(o, tokenizer) : DEFAULT_TOKENIZER;
+}
+
 /*
- * The tokenizer as `TYPE text(tokenizer = ...)` and tokens() spell it. Only
- * the allowlisted names reach the statement, and an argument is a literal,
- * escaped like any other string.
+ * The tokenizer's arguments as ClickHouse writes them, in the index DDL as
+ * `tokenizer = name(args)` and in a tokens() call as `tokens(s, 'name',
+ * args)`: a literal for icu and splitByRegexp, escaped like any other
+ * string; each character of splitByString's as one separator; the gram
+ * length for ngrams. NULL when the tokenizer takes none.
  */
-char*
-chdb_search_tokenizer(const ChdbColumn* column) {
-    const ChdbTextOptions* o = text_options(column);
+static const char*
+tokenizer_args(const ChdbTextOptions* o, const char* tok) {
     StringInfoData buf;
 
     initStringInfo(&buf);
-    if (column->kind == CHDB_COL_TEXT_ARRAY) {
-        appendStringInfoString(&buf, "array");
-        return buf.data;
-    }
-
-    const char* tok =
-        (o && o->tokenizer) ? GET_STRING_RELOPTION(o, tokenizer) : DEFAULT_TOKENIZER;
-
     if (strcmp(tok, "icu") == 0 || strcmp(tok, "splitByRegexp") == 0) {
-        appendStringInfo(&buf, "%s(", tok);
         chdb_search_append_string(&buf, GET_STRING_RELOPTION(o, tokenizer_arg));
-        appendStringInfoChar(&buf, ')');
     } else if (strcmp(tok, "splitByString") == 0 && o && o->tokenizer_arg) {
-        /* Each character is one separator. */
-        appendStringInfoString(&buf, "splitByString([");
-        for (const char* c = GET_STRING_RELOPTION(o, tokenizer_arg); *c;
-             c += pg_mblen(c)) {
-            if (c != GET_STRING_RELOPTION(o, tokenizer_arg)) {
+        const char* seps = GET_STRING_RELOPTION(o, tokenizer_arg);
+
+        appendStringInfoChar(&buf, '[');
+        for (const char* c = seps; *c; c += pg_mblen(c)) {
+            if (c != seps) {
                 appendStringInfoString(&buf, ", ");
             }
             chdb_search_append_string(&buf, pnstrdup(c, pg_mblen(c)));
         }
-        appendStringInfoString(&buf, "])");
+        appendStringInfoChar(&buf, ']');
     } else if (strcmp(tok, "ngrams") == 0) {
         appendStringInfo(
-            &buf, "ngrams(%d)", o && o->ngram_size ? o->ngram_size : DEFAULT_NGRAM_SIZE
+            &buf, "%d", o && o->ngram_size ? o->ngram_size : DEFAULT_NGRAM_SIZE
         );
     } else {
-        appendStringInfoString(&buf, tok);
+        return NULL;
     }
     return buf.data;
+}
+
+/* The column's tokenizer and its arguments, as tokenizer_args gives them. */
+static const char*
+tokenizer_parts(const ChdbColumn* column, const char** args) {
+    const ChdbTextOptions* o = text_options(column);
+    const char* tok = column->kind == CHDB_COL_TEXT_ARRAY ? "array" : tokenizer_of(o);
+
+    *args = column->kind == CHDB_COL_TEXT_ARRAY ? NULL : tokenizer_args(o, tok);
+    return tok;
+}
+
+/*
+ * The tokenizer as `TYPE text(tokenizer = ...)` spells it, and as a text
+ * search names it in its third argument. Only the allowlisted names reach
+ * the statement.
+ */
+char*
+chdb_search_tokenizer(const ChdbColumn* column) {
+    const char* args;
+    const char* tok = tokenizer_parts(column, &args);
+
+    return args ? psprintf("%s(%s)", tok, args) : pstrdup(tok);
 }
 
 /*
@@ -173,4 +192,19 @@ chdb_search_folds_case(const ChdbColumn* column) {
 
     return strcmp(pre, "lower") == 0 || strcmp(pre, "lowerUTF8") == 0 ||
            strcmp(pre, "caseFoldUTF8") == 0;
+}
+
+/* The one tokens() call, for the score's needles and a phrase's positions. */
+char*
+chdb_search_tokens_call(const ChdbColumn* column, const char* expr, bool literal) {
+    const char* args;
+    const char* tok = tokenizer_parts(column, &args);
+
+    return psprintf(
+        "tokens(%s, '%s'%s%s)",
+        chdb_search_preprocessed(column, expr, literal),
+        tok,
+        args ? ", " : "",
+        args ? args : ""
+    );
 }

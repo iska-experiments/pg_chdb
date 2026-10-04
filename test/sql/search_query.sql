@@ -79,6 +79,21 @@ SELECT ARRAY['a'] @@@ chdb.phrase('a b');
 SELECT ARRAY['a'] @@@ chdb.regex('a');
 SELECT 'x' @@@ chdb.in_column(chdb.term('x'), 'title');
 SELECT 'x' @@@ chdb.term('two words');
+-- Phrase slop: the needle's tokens in order, with at most slop other tokens
+-- between the first and the last. In 'a running b c shoes' two tokens part
+-- running from shoes, so slop 1 misses by one and slop 2 matches; order is
+-- never relaxed; one token matches wherever it is; none match nothing.
+SELECT 'a running b c shoes' @@@ chdb.phrase('running shoes', 1),
+       'a running b c shoes' @@@ chdb.phrase('running shoes', 2),
+       'a running b c shoes' @@@ chdb.phrase('shoes running', 9),
+       'a running b c shoes' @@@ chdb.phrase('a c shoes', 1),
+       'a running b c shoes' @@@ chdb.phrase('a c shoes', 2),
+       'a running b c shoes' @@@ chdb.phrase('RUNNING', 0),
+       'a running b c shoes' @@@ chdb.phrase('', 3);
+-- The span starts at every occurrence of the first token and takes the
+-- nearest next one of each other token, so the shortest span decides.
+SELECT 'x b x x b c' @@@ chdb.phrase('b c'), 'b x x b c' @@@ chdb.phrase('x c', 1),
+       'b x x b c' @@@ chdb.phrase('x c', 0);
 
 ----------------------------------------------------------------------------
 -- The operator class carries the new strategies
@@ -96,13 +111,18 @@ SELECT opcname, amvalidate(oid)
 ----------------------------------------------------------------------------
 -- The statements scans generate: the pattern follows the preprocessor
 ----------------------------------------------------------------------------
-CREATE TABLE docs (id int PRIMARY KEY, body text, html text, plain text, raw text, tags text[]);
-INSERT INTO docs VALUES (1, 'Running shoes', '<b>Bold</b>', 'Plain', 'Hyphen-ated', '{sport}');
+CREATE TABLE docs (
+    id int PRIMARY KEY, body text, html text, plain text, raw text, ng text, sep text, tags text[]
+);
+INSERT INTO docs VALUES
+    (1, 'Running shoes', '<b>Bold</b>', 'Plain', 'Hyphen-ated', 'Grams', 'a b,c', '{sport}');
 CREATE INDEX docs_idx ON docs USING chdb (
     body,
     html text_ops (preprocessor = 'extractTextFromHTML'),
     plain text_ops (preprocessor = 'none'),
     raw text_ops (raw_preprocessor = 'lowerUTF8(replaceAll(raw, ''-'', '' ''))'),
+    ng text_ops (tokenizer = 'ngrams', ngram_size = 2),
+    sep text_ops (tokenizer = 'splitByString', tokenizer_arg = ' ,'),
     tags text_array_ops
 );
 SET enable_seqscan = off;
@@ -137,6 +157,17 @@ SELECT id FROM docs WHERE tags @@@ !chdb.term('sport');
 SELECT id FROM docs WHERE tags @@@ chdb.any_of(chdb.term('sport'), chdb.match_all('trail'));
 -- A leaf naming another column of the index searches that column.
 SELECT id FROM docs WHERE body @@@ (chdb.term('a') && chdb.in_column(chdb.term('b'), 'html') && chdb.in_column(chdb.match('c'), 'tags'));
+\o
+RESET client_min_messages;
+-- A phrase with slop is hasAllTokens, which the index answers, and a check
+-- of the token positions, with the column and the needle tokenized as the
+-- index tokenizes them: tokenizer, arguments and preprocessor.
+SET client_min_messages = debug1;
+\o /dev/null
+SELECT id FROM docs WHERE body @@@ chdb.phrase('running shoes', 2);
+SELECT id FROM docs WHERE ng @@@ chdb.phrase('gr am', 1) AND sep @@@ chdb.phrase('a c', 1);
+SELECT id FROM docs WHERE plain @@@ chdb.phrase('Plain text', 1);
+SELECT id FROM docs WHERE raw @@@ chdb.phrase('hyphen ated', 1);
 \o
 RESET client_min_messages;
 SELECT id FROM docs WHERE body @@@ chdb.in_column(chdb.term('a'), 'nope');

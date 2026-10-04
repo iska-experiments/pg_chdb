@@ -155,11 +155,7 @@ needle_tokens(
     initStringInfo(&lit);
     chdb_search_append_string(&lit, needle);
     initStringInfo(&sql);
-    appendStringInfo(
-        &sql, "SELECT tokens(%s, ", chdb_search_preprocessed(col, lit.data, true)
-    );
-    chdb_search_append_string(&sql, chdb_search_tokenizer(col));
-    appendStringInfoChar(&sql, ')');
+    appendStringInfo(&sql, "SELECT %s", chdb_search_tokens_call(col, lit.data, true));
 
     /* tokens() is tied to no table, so the request names no generation. */
     ArrayType* arr = DatumGetArrayTypeP(ask(cache, index, 0, sql.data, TEXTARRAYOID));

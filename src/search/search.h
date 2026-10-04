@@ -147,6 +147,22 @@ chdb_search_preprocessed(const ChdbColumn* column, const char* expr, bool litera
 /* Whether the column's preprocessor folds case, so a search of it must too. */
 extern bool
 chdb_search_folds_case(const ChdbColumn* column);
+/*
+ * `tokens(<preprocessed expr>, '<tokenizer>'[, <args>])`: the tokens the
+ * column's index derives from the column or, with `literal`, from a string.
+ */
+extern char*
+chdb_search_tokens_call(const ChdbColumn* column, const char* expr, bool literal);
+
+/* ---- phrase.c ---- */
+/* A phrase whose tokens may be `slop` others apart, from token positions. */
+extern void
+chdb_search_append_slop_phrase(
+    StringInfo buf,
+    const ChdbColumn* column,
+    const char* needle,
+    int32 slop
+);
 
 /* ---- score.c ---- */
 /* chdb.score(): a placeholder that raises wherever Postgres evaluates it. */
