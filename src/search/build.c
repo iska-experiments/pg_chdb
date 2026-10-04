@@ -80,7 +80,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
     PG_TRY();
     {
         char* sql = psprintf(
-            "INSERT INTO %s %s FORMAT Native",
+            "INSERT INTO %s %s",
             chdb_search_table_name(RelationGetRelid(index)),
             chdb_search_column_list(index)
         );
