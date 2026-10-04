@@ -66,6 +66,8 @@ extern void
 chdb_search_append_literal(StringInfo buf, Datum value, Oid typid);
 extern void
 chdb_search_append_string(StringInfo buf, const char* s);
+extern void
+chdb_search_append_vector(StringInfo buf, Datum value, Oid typid);
 extern char*
 chdb_search_order_expr(Relation index, ScanKey orderby);
 
