@@ -108,7 +108,7 @@ chdb_search_wants_phrase_search(Relation index);
 extern ChdbColumn*
 chdb_search_columns(Relation index);
 extern char*
-chdb_search_table_name(Oid indexoid);
+chdb_search_table_name(Relation index);
 extern char*
 chdb_search_create_sql(Relation index);
 extern char*
@@ -132,10 +132,12 @@ typedef struct ChdbMetaPageData {
     uint64 flushed_lsn; /* WAL position when the store was last written */
 } ChdbMetaPageData;
 
-extern void
+extern uint64
 chdb_meta_init(Relation index, ForkNumber fork);
 extern void
 chdb_meta_read(Relation index, ChdbMetaPageData* out);
+extern uint64
+chdb_meta_generation(Relation index);
 extern void
 chdb_meta_note_flush(Relation index);
 
@@ -203,8 +205,8 @@ chdb_search_forget_statement(Oid indexoid, const char* sql);
 #include "pg-clickhouse-decode.h"
 
 /*
- * A running `SELECT ctid[, distances]` against the worker. Column 0 decodes to
- * int8 (the packed TID), the rest to float8.
+ * A running SELECT against the worker, each column decoded to a Postgres type:
+ * for a scan `SELECT ctid[, distances]`, int8 (the packed TID) then float8s.
  */
 typedef struct ChdbStream {
     chdbSearchConn* conn;
@@ -220,7 +222,18 @@ typedef struct ChdbStream {
 
 extern ChdbStream*
 chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext cxt);
-/* Next row into s->vals; false at the end, which also closes the stream. */
+extern ChdbStream*
+chdb_search_stream_query(
+    Oid indexoid,
+    const char* sql,
+    const Oid* types,
+    int ncols,
+    MemoryContext cxt
+);
+/*
+ * Next row into s->vals, valid until the next call; false at the end, which
+ * also closes the stream. `tid`, if given, takes the packed ctid of column 0.
+ */
 extern bool
 chdb_search_stream_next(ChdbStream* s, ItemPointer tid);
 /* Abandons the stream, finishing it only if it ran to the end. */

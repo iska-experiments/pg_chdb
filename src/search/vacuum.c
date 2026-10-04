@@ -3,11 +3,17 @@
  * callback about each one and removes the dead ones with a lightweight
  * DELETE. amvacuumcleanup runs OPTIMIZE ... FINAL when enough rows died to be
  * worth rewriting parts: lightweight deletes only mask rows until a merge.
+ * It also sweeps the tables of other generations, which a rebuild leaves
+ * behind (see ddl.c).
  */
 
 #include "postgres.h"
 
+#include <stdlib.h>
+
+#include "catalog/pg_type_d.h"
 #include "commands/vacuum.h"
+#include "utils/builtins.h"
 #include "utils/memutils.h"
 
 #include "query.h"
@@ -22,13 +28,11 @@ typedef struct VacuumStats {
 } VacuumStats;
 
 static void
-delete_batch(Oid indexoid, uint64* dead, size_t n) {
+delete_batch(Oid indexoid, const char* table, uint64* dead, size_t n) {
     StringInfoData buf;
 
     initStringInfo(&buf);
-    appendStringInfo(
-        &buf, "DELETE FROM %s WHERE ctid IN (", chdb_search_table_name(indexoid)
-    );
+    appendStringInfo(&buf, "DELETE FROM %s WHERE ctid IN (", table);
     for (size_t i = 0; i < n; i++) {
         appendStringInfo(&buf, "%s" UINT64_FORMAT, i ? "," : "", dead[i]);
     }
@@ -60,6 +64,8 @@ chdb_search_ambulkdelete(
     }
     old = MemoryContextSwitchTo(cxt);
 
+    char* table = chdb_search_table_name(index);
+
     /* Read everything before deleting: one connection cannot do both. */
     ChdbStream* s = chdb_search_stream_open(
         oid, chdb_search_build_select(index, NULL, 0, NULL, 0, -1), 0, cxt
@@ -80,7 +86,7 @@ chdb_search_ambulkdelete(
     chdb_search_stream_close(s);
 
     for (size_t i = 0; i < ndead; i += DELETE_BATCH) {
-        delete_batch(oid, dead + i, Min(DELETE_BATCH, ndead - i));
+        delete_batch(oid, table, dead + i, Min(DELETE_BATCH, ndead - i));
         vacuum_delay_point(false);
     }
     vs->base.tuples_removed += ndead;
@@ -90,6 +96,55 @@ chdb_search_ambulkdelete(
     return &vs->base;
 }
 
+/*
+ * Drops the tables of every generation but the metapage's: the old one after
+ * a committed rebuild, the new one after a rolled-back rebuild whose abort
+ * callback never ran (a crashed backend). Names are read in full before any
+ * drop, as one connection cannot stream and run statements at once.
+ */
+static void
+sweep_tables(Relation index) {
+    Oid oid           = RelationGetRelid(index);
+    uint64 generation = chdb_meta_generation(index);
+    MemoryContext cxt = AllocSetContextCreate(
+        CurrentMemoryContext, "chdb_search sweep", ALLOCSET_SMALL_SIZES
+    );
+    MemoryContext old = MemoryContextSwitchTo(cxt);
+    List* stale       = NIL;
+    ListCell* lc;
+
+    ChdbStream* s = chdb_search_stream_query(
+        oid,
+        psprintf(
+            "SELECT name FROM system.tables WHERE database = 'idx_%u' "
+            "AND name LIKE 't\\\\_%%' AND name NOT LIKE '%%\\\\_tx\\\\_%%'",
+            oid
+        ),
+        (Oid[]){ TEXTOID },
+        1,
+        cxt
+    );
+
+    while (chdb_search_stream_next(s, NULL)) {
+        char* name = TextDatumGetCString(s->vals[0]);
+        char* end;
+        uint64 found = strtoull(name + 2, &end, 10);
+
+        if (*end == '\0' && found != generation) {
+            stale = lappend(stale, pstrdup(name));
+        }
+    }
+    chdb_search_stream_close(s);
+
+    foreach (lc, stale) {
+        chdb_search_run(
+            oid, psprintf("DROP TABLE IF EXISTS idx_%u.%s", oid, (char*)lfirst(lc))
+        );
+    }
+    MemoryContextSwitchTo(old);
+    MemoryContextDelete(cxt);
+}
+
 IndexBulkDeleteResult*
 chdb_search_amvacuumcleanup(IndexVacuumInfo* info, IndexBulkDeleteResult* stats) {
     VacuumStats* vs = (VacuumStats*)stats;
@@ -97,6 +152,7 @@ chdb_search_amvacuumcleanup(IndexVacuumInfo* info, IndexBulkDeleteResult* stats)
     if (info->analyze_only) {
         return stats;
     }
+    sweep_tables(info->index);
     if (!vs) {
         /* No dead heap tuples, so ambulkdelete was skipped and nothing to merge. */
         vs                        = palloc0(sizeof(*vs));
@@ -112,10 +168,7 @@ chdb_search_amvacuumcleanup(IndexVacuumInfo* info, IndexBulkDeleteResult* stats)
         if (vs->base.tuples_removed / vs->scanned >= ratio) {
             chdb_search_run(
                 RelationGetRelid(info->index),
-                psprintf(
-                    "OPTIMIZE TABLE %s FINAL",
-                    chdb_search_table_name(RelationGetRelid(info->index))
-                )
+                psprintf("OPTIMIZE TABLE %s FINAL", chdb_search_table_name(info->index))
             );
         }
     }

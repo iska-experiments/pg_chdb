@@ -197,26 +197,8 @@ RESET client_min_messages;
 ----------------------------------------------------------------------------
 VACUUM docs;
 
-----------------------------------------------------------------------------
--- REINDEX, TRUNCATE, DROP INDEX, DROP TABLE
-----------------------------------------------------------------------------
-SET client_min_messages = debug1;
-REINDEX INDEX docs_title;
--- (TRUNCATE rebuilds the indexes too; its core DEBUG lines carry OIDs.)
-RESET client_min_messages;
-TRUNCATE docs;
-SET client_min_messages = debug1;
-BEGIN;
-DROP INDEX docs_title;
-ROLLBACK;
-DROP INDEX docs_title;
-\echo -- a rolled-back CREATE INDEX drops its store
-BEGIN;
-CREATE INDEX docs_rolled ON docs USING chdb (title text_ops);
-ROLLBACK;
+-- Rebuilds and drops of the index and its store are in search_am_rebuild.
 DROP TABLE docs;
-RESET client_min_messages;
-
 DROP EXTENSION chdb_search;
 
 -- The worker stays connected to the database, which could not be dropped for
