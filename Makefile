@@ -9,9 +9,10 @@ MAX_CONCURRENT_TESTS ?=
 
 DATA         = $(sort $(wildcard sql/$(EXTENSION)--*.sql) sql/$(EXTENSION)--$(EXTVERSION).sql)
 DOCS         = $(wildcard doc/*.md)
-# search_* tests need the access method built with the stub worker client.
-TESTS        ?= $(filter-out test/sql/search_%.sql,$(wildcard test/sql/*.sql)) \
-                $(if $(CHDB_SEARCH_STUB),$(wildcard test/sql/search_*.sql))
+# The stub worker client (CHDB_SEARCH_STUB=1) answers nothing, so of the search
+# tests only search_am, which checks the generated statements, runs against it.
+TESTS        ?= $(if $(CHDB_SEARCH_STUB),$(filter-out test/sql/search_worker.sql \
+                test/sql/search_e2e.sql,$(wildcard test/sql/*.sql)),$(wildcard test/sql/*.sql))
 REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
 REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION) $(if $(MAX_CONCURRENT_TESTS),--max-concurrent-tests $(MAX_CONCURRENT_TESTS))
 MODULE_big   = $(EXTENSION)
@@ -53,7 +54,7 @@ PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chd
                -DCHC_ERR_MSG_LEN=4096
 
 # Clean up generated files.
-EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc src/helper/chdb_helper src/helper/*.o src/search/chdb_search$(DLSUFFIX) src/search/*.o src/search/*.bc sql/chdb_search--*.sql test/schedule*
+EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc src/helper/chdb_helper src/helper/*.o src/search/chdb_search$(DLSUFFIX) src/search/*.o src/search/*.bc src/search/client.mode sql/chdb_search--*.sql test/schedule*
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -110,8 +111,15 @@ uninstall: uninstall-hook
 # through a sub-make of its own. Pass CHDB_SEARCH_STUB=1 to link the
 # per-backend fake in src/search/client_stub.c instead of the worker client,
 # for building and testing the access method without a worker.
-$(SEARCH_MODULE): $(wildcard src/search/*.c src/search/*.h) $(OBJS) src/version.h
+$(SEARCH_MODULE): $(wildcard src/search/*.c src/search/*.h) $(OBJS) src/version.h src/search/client.mode
 	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) LIBCHDB_DIR=$(LIBCHDB_DIR) CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)
+
+# Which client the module was linked with, rewritten only when that changes,
+# so switching CHDB_SEARCH_STUB relinks it.
+src/search/client.mode: FORCE
+	@echo '$(CHDB_SEARCH_STUB)' | cmp -s - $@ || echo '$(CHDB_SEARCH_STUB)' > $@
+.PHONY: FORCE
+FORCE:
 
 sql/chdb_search--$(SEARCH_VERSION).sql: sql/chdb_search.sql chdb_search.control
 	cp $< $@
@@ -145,14 +153,18 @@ uninstall-helper:
 install: install-helper
 uninstall: uninstall-helper
 
+# The search tests share the database's worker, extension and table names, so
+# they run one at a time after the others.
 .PHONY: test/schedule$(MAX_CONCURRENT_TESTS)
-test/schedule$(MAX_CONCURRENT_TESTS): schedule = $(if $(TESTS),$(patsubst test/sql/%.sql,%,$(TESTS)),)
+test/schedule$(MAX_CONCURRENT_TESTS): schedule = $(patsubst test/sql/%.sql,%,$(filter-out test/sql/search_%,$(TESTS)))
+test/schedule$(MAX_CONCURRENT_TESTS): serial = $(patsubst test/sql/%.sql,%,$(filter test/sql/search_%,$(TESTS)))
 test/schedule$(MAX_CONCURRENT_TESTS):
 ifneq ($(MAX_CONCURRENT_TESTS),)
 	@perl -E 'say "test: ", join " ", splice @ARGV, 0, $(MAX_CONCURRENT_TESTS) while @ARGV' $(schedule) > $@
 else
 	@echo $(if $(schedule),test: $(schedule),) > $@
 endif
+	@$(if $(serial),printf 'test: %s\n' $(serial) >> $@,:)
 
 installcheck: test/schedule$(MAX_CONCURRENT_TESTS)
 
