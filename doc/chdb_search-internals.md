@@ -191,6 +191,17 @@ a scan gets an all-null index tuple. There is no `amgetbitmap`: a lossy
 bitmap would recheck the quals with the Postgres implementations, which know
 the default tokenizer only, and drop every match of another tokenizer.
 
+The custom scan (`planner/`) is the other way a search runs: a
+`set_rel_pathlist` hook (`planner/hook.c`) matches the relation's
+restriction clauses and the query's pathkeys to the index's operator
+families (`planner/match.c`), prices the path below the index scan's
+(`planner/cost.c`), and packs what it matched into the plan
+(`planner/plan.c`); at execution (`planner/exec.c`) the arguments become
+scan keys and the statement comes from `query.c`, as the index scan's does,
+and each ctid is fetched through the table access method under the query's
+snapshot. `planner/explain.c` shows the pushed clauses, the LIMIT and the
+statement.
+
 ## Storage Phases
 
 *   **Phase 0** (this tree): a local directory under `$PGDATA/pg_chdb`. It

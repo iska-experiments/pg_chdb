@@ -184,12 +184,22 @@ documented.
   tokenizer only, so every match of another tokenizer on a lossy page would be
   dropped; the AM streams the whole TID set anyway. EvalPlanQual rechecks
   still evaluate the fallbacks for non-default tokenizers.
-* CustomScan (`src/search/customscan.c`): `set_rel_pathlist_hook` adds a
-  `chdb_search` path when a relation has a chdb index and the quals include
-  our operators. It pushes LIMIT, plain column filters on stored columns, and
-  ORDER BY on stored columns or vector distance into one query, returning
-  ctids plus requested stored columns (no heap fetch when every output column
-  is stored, after visibility check through the visibility map).
+* CustomScan (`src/search/planner/`, `planner.h` is its contract):
+  `set_rel_pathlist_hook` adds a `chdb_search` path when a heap relation has
+  a chdb index and the quals include our operators or their function forms,
+  or the query's pathkeys are a distance of an indexed column. It pushes the
+  quals the index would take, the ORDER BY, and the LIMIT when the whole
+  query is the scan (one relation, every qual pushed, nothing between the
+  scan and the LIMIT that changes the count; not for a filtered HNSW search
+  unless `chdb_vector.filter_strategy = prefilter`, as ClickHouse
+  post-filters the LIMIT nearest candidates). Each pushed expression is a
+  `ChdbPushed` (index column, strategy, argument), evaluated at execution
+  into the same ScanKeys the index scan renders through `query.c`, so both
+  send one statement. The rows are fetched from the heap by ctid through
+  `table_index_fetch_tuple`; a pushed LIMIT the heap thinned is asked for
+  again, doubled. Returning stored columns without a heap fetch, and the
+  score, are the later stages: they add a kind of `ChdbPushed` for the
+  SELECT list, a `custom_scan_tlist` and a virtual scan tuple.
 * Aggregate pushdown (`create_upper_paths_hook`): `count(*)`, `count(col)`,
   `min/max/sum/avg` and `GROUP BY` over stored columns when every qual is
   pushable. MVCC: the pushed query excludes ctids VACUUM has not yet removed

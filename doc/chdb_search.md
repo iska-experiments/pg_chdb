@@ -29,10 +29,13 @@ columns stored beside the text there too.
 The index is a filter, not a ranker: a row matches exactly when the tokens
 the index derives from it contain the tokens of the query, and there is no
 relevance score. Order results by columns, or by vector distance with the
-[chdb_vector] extension. chDB allows one process per store, so a background
-worker per database owns the store and backends talk to it over a Unix
-socket; libchdb itself runs in a child of the worker, so a crash in it costs
-one request. See [The Worker and the Engine](#the-worker-and-the-engine).
+[chdb_vector] extension. A query over an indexed table is planned as a
+[custom scan](#the-custom-scan) that sends the predicates, the order and the
+`LIMIT` to ClickHouse as one statement, or as a scan of the index. chDB
+allows one process per store, so a background worker per database owns the
+store and backends talk to it over a Unix socket; libchdb itself runs in a
+child of the worker, so a crash in it costs one request. See [The Worker
+and the Engine](#the-worker-and-the-engine).
 
 ## Installation
 
@@ -148,6 +151,62 @@ ClickHouse's default pipeline only, `lowerUTF8` then `splitByNonAlpha`,
 lowercasing by Unicode whatever the cluster's locale. An index built with
 another tokenizer or preprocessor answers differently, so for such a column
 the operators are meaningful through the index only.
+
+## The Custom Scan
+
+A `SELECT` from a table with a chdb index whose `WHERE` holds a search
+predicate, or whose `ORDER BY` is a distance operator of an indexed column,
+is planned as a `Custom Scan (chdb_search)`: one ClickHouse statement that
+applies every predicate the index can take, orders the rows and takes the
+`LIMIT`, and returns the tuple ids, which the scan fetches from the heap.
+The index scan the planner also considers sends the same statement through
+the access method and then pays its per-tuple overhead, so the custom scan
+is costed below it;
+[`chdb_search.enable_custom_scan`](#chdb_searchenable_custom_scan) turns it
+off and
+[`chdb_search.custom_scan_cost_factor`](#chdb_searchcustom_scan_cost_factor)
+tunes the preference.
+
+```sql
+EXPLAIN (COSTS OFF)
+SELECT id FROM docs WHERE body @@@ 'running shoes' AND price < 100 AND id > 7;
+                                      QUERY PLAN
+------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Filter: (id > 7)
+   Pushed Cond: (body @@@ 'running shoes'::text), (price < '100'::numeric)
+   ClickHouse: SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body",
+     'running shoes') AND "price" < toDecimal256('100', 0)
+```
+
+*   **What goes to ClickHouse.** The operators and the functions of
+    [Functions and Operators](#functions-and-operators) on indexed text
+    columns, the function forms included, which the index scan cannot use;
+    the comparisons on `columnar_ops` columns; and an `ORDER BY` on a
+    distance operator of an indexed column, ascending. Everything else, a
+    predicate on a column not in the index say, stays with the scan as its
+    `Filter`. `EXPLAIN` shows the pushed clauses and the statement, masked
+    as the log masks it under
+    [`chdb_search.mask_oids`](#chdb_searchmask_oids); `EXPLAIN ANALYZE`
+    adds the rows the store returned, which the heap fetch may have thinned,
+    and how many statements it took.
+*   **The LIMIT.** When the `ORDER BY` went to the store and nothing stayed
+    with the scan, and no grouping, `DISTINCT`, window function,
+    set-returning function or row lock stands between the scan and the
+    `LIMIT`, the `LIMIT` (with its `OFFSET`) goes along, so the store sorts
+    and returns that many rows and no more. A row the heap hides, deleted or
+    updated since the store took it, is made up for: the scan asks again
+    for twice as many, skipping the rows it has seen. A filtered vector
+    search is the exception: ClickHouse's HNSW index finds the `LIMIT`
+    nearest rows first and applies the `WHERE` to those, so the scan asks
+    for as many rows as the index serves, as an index scan does, unless
+    `chdb_vector.filter_strategy` is `prefilter` (see [chdb_vector]).
+*   **Visibility and rechecks.** The rows come from the heap under the
+    query's snapshot, so the custom scan returns what a sequential scan
+    would, less the rows a transaction's own uncommitted writes add (see
+    [Consistency](#consistency)). Row locks and `FOR UPDATE` recheck the
+    pushed clauses with their Postgres implementations, as an index scan
+    rechecks its conditions.
 
 ## Consistency
 
@@ -277,11 +336,28 @@ Seconds a backend waits for a worker to start, and for a busy worker to
 answer where the wait cannot be cancelled. From `1` to `3600`; defaults to
 `30`.
 
+### `chdb_search.enable_custom_scan`
+
+```sql
+SET chdb_search.enable_custom_scan = off;
+```
+
+Whether the planner considers [the custom scan](#the-custom-scan). Off, a
+search is a scan of the index, which sends the same statement through the
+access method, row by row. Defaults to `on`.
+
+### `chdb_search.custom_scan_cost_factor`
+
+Multiplier on the estimated run cost of a custom scan, which is otherwise
+priced as the index scan of the same index is, less the index's own share.
+Below `1` the planner prefers the custom scan to the index scan for the same
+rows, above `1` the index scan; `0` makes it free. Defaults to `0.5`.
+
 ### `chdb_search.mask_oids`
 
 Replaces index OIDs, store generations, transaction ids and WAL positions
-by `N` in the ClickHouse statements the index logs at `DEBUG1`, for tests.
-Defaults to `off`.
+by `N` in the ClickHouse statements the index logs at `DEBUG1` and `EXPLAIN`
+shows, for tests. Defaults to `off`.
 
 ### Resource Limits
 
@@ -326,6 +402,10 @@ database named `idx_0`.
     `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
 *   The Postgres implementations of the operators tokenize as the default
     pipeline does; other tokenizers are usable through the index only.
+*   The custom scan plans a table of its own: a search inside a join takes
+    it when the search predicate names constants or the query's parameters,
+    while one that depends on the other side of the join, as `LATERAL` does,
+    is served by the index scan.
 
 ## Authors
 

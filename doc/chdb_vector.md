@@ -36,6 +36,10 @@ ClickHouse's HNSW index serves, `ORDER BY <function>(col, q) LIMIT n`, with
 `n` the server's `max_limit_for_vector_search_queries` (1000), the most the
 index returns: as a pgvector scan returns at most `hnsw.ef_search` rows, a
 `LIMIT` above that gets those rows only. The settings below go with it.
+The [custom scan] of chdb_search sends the query's own `LIMIT` instead when
+nothing filters the search, or when `chdb_vector.filter_strategy` is
+`prefilter`: with `auto` or `postfilter` ClickHouse applies the `WHERE` to
+the `LIMIT` nearest candidates, which would return fewer rows than match.
 
 ## Operator Classes
 
@@ -98,3 +102,4 @@ Copyright (c) 2026, ClickHouse
   [pgvector]: https://github.com/pgvector/pgvector
     "Open-source vector similarity search for Postgres"
   [chdb_search]: ./chdb_search.md "chdb_search Docs"
+  [custom scan]: ./chdb_search.md#the-custom-scan "chdb_search Docs: The Custom Scan"
