@@ -34,7 +34,8 @@ RESET ROLE;
 DROP ROLE search_worker_nobody;
 
 -- Kill the worker; the next call starts another that finds the same store.
-SELECT pid AS old_pid FROM pg_stat_activity WHERE backend_type = 'chdb_search worker' \gset
+SELECT pid AS old_pid FROM pg_stat_activity
+ WHERE backend_type = 'chdb_search worker' AND datname = current_database() \gset
 SELECT pg_terminate_backend(:old_pid);
 -- psql variables do not reach inside the DO block's quoting.
 SELECT set_config('chdb_search_test.old_pid', :'old_pid', false) IS NOT NULL AS saved;
@@ -46,13 +47,15 @@ BEGIN
     END LOOP;
 END $$;
 SELECT * FROM chdb_search_query('SELECT count() FROM idx_0.t') AS (n bigint);
-SELECT pid <> :old_pid AS restarted FROM pg_stat_activity WHERE backend_type = 'chdb_search worker';
+SELECT pid <> :old_pid AS restarted FROM pg_stat_activity
+ WHERE backend_type = 'chdb_search worker' AND datname = current_database();
 
 -- DROP removes the database.
 SELECT chdb_search_drop();
 SELECT * FROM chdb_search_query('SELECT count() FROM idx_0.t') AS (n bigint);
 
 -- Leave no worker holding the database open for the next run to drop.
-SELECT pid AS old_pid FROM pg_stat_activity WHERE backend_type = 'chdb_search worker' \gset
+SELECT pid AS old_pid FROM pg_stat_activity
+ WHERE backend_type = 'chdb_search worker' AND datname = current_database() \gset
 SELECT pg_terminate_backend(:old_pid);
 DROP TABLE docs;
