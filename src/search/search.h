@@ -24,6 +24,13 @@ extern int chdb_search_max_buffer_kb;
 extern double chdb_search_vacuum_optimize_ratio;
 extern bool chdb_search_mask_oids;
 
+/* chdb_search.unavailable_index: what a scan does with a store it cannot trust. */
+typedef enum ChdbUnavailableAction {
+    CHDB_UNAVAILABLE_ERROR, /* raise, so a broken index is never silent */
+    CHDB_UNAVAILABLE_SKIP,  /* let the planner use another path */
+} ChdbUnavailableAction;
+extern int chdb_search_unavailable_index;
+
 /*
  * How an indexed column is stored and searched, chosen by its operator class.
  * Unknown operator classes (added by other extensions) are treated as columnar.
@@ -99,6 +106,23 @@ extern void
 chdb_search_warn_failure(Oid indexoid);
 
 /* ---- meta.c ---- */
+/*
+ * Whether this server can serve the index's store now. Phase 0 keeps the
+ * store in a local directory that base backups, standbys and pg_rewind do
+ * not make current, so a server in recovery has no store it can trust; the
+ * generation and LSN comparison against the worker (follow-up) will refine
+ * this. A scan proves this true before returning any row.
+ */
+extern bool
+chdb_search_store_unavailable(Relation index);
+/*
+ * Acts on an unavailable store per chdb_search.unavailable_index: raises in
+ * error mode, or sets *skip so the caller yields no rows. *skip is false and
+ * nothing is raised when the store is available.
+ */
+extern void
+chdb_search_check_available(Relation index, bool* skip);
+
 #define CHDB_META_MAGIC 0x43484453 /* "CHDS" */
 #define CHDB_META_VERSION 1
 #define CHDB_METAPAGE_BLKNO 0

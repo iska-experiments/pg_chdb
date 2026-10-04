@@ -62,9 +62,17 @@ chdb_search_ambulkdelete(
     size_t ndead = 0, cap = 0;
     ItemPointerData tid;
 
+    bool skip;
+
     /* The result outlives this call, the working memory does not. */
     if (!vs) {
         vs = palloc0(sizeof(*vs));
+    }
+    /* Deleting against a store this server cannot trust would corrupt it. */
+    chdb_search_check_available(index, &skip);
+    if (skip) {
+        MemoryContextDelete(cxt);
+        return &vs->base;
     }
     old = MemoryContextSwitchTo(cxt);
 
