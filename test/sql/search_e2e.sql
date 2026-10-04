@@ -96,6 +96,9 @@ SET enable_indexscan = off;
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 RESET enable_indexscan;
 SET enable_seqscan = off;
+-- A search ClickHouse cannot run raises, rather than finding nothing.
+SELECT chdb_search_exec(format('DROP TABLE idx_%s.t', :idx));
+SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 REINDEX INDEX prod_idx;
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 
