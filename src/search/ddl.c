@@ -39,7 +39,7 @@
  *     INDEX "tags_idx" "tags" TYPE text(tokenizer = array,
  *       preprocessor = lowerUTF8("tags")))
  *     ENGINE = MergeTree ORDER BY ctid
- *     SETTINGS fsync_after_insert = 1, fsync_part_directory = 1,
+ *     SETTINGS disk = disk(type = 'callback', storage_name = 'pg_16401'),
  *       enable_block_number_column = 1, enable_block_offset_column = 1
  *   INSERT INTO idx_16401.t_7342 (ctid, xmin, "body", "tags", "author")
  *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'running shoes')
@@ -117,20 +117,21 @@ chdb_search_create_sql(Relation index) {
         );
     }
     /*
-     * A part is fsynced as it is written, so that the rows a flush sends are
-     * on disk before the COMMIT that follows it is acknowledged, as Postgres
-     * promises for its own data; ClickHouse's default leaves them to the
-     * kernel. The block columns let VACUUM's DELETE patch parts in place
-     * (vacuum.c) instead of rewriting them with a mutation, which the Phase
-     * 1 disk does not allow; a store from before they were set takes them
-     * with ALTER TABLE ... MODIFY SETTING, no REINDEX. One SETTINGS clause:
+     * The parts live on the index's callback object storage, whose blobs
+     * the worker holds (pagestore/), and are durable when the worker says a
+     * commit is, so that the rows a flush sends are safe before the COMMIT
+     * that follows it is acknowledged, as Postgres promises for its own
+     * data. The block columns let VACUUM's DELETE patch parts in place
+     * (vacuum.c) instead of rewriting them with a mutation, which the disk
+     * does not allow; a store from before they were set takes them with
+     * ALTER TABLE ... MODIFY SETTING, no REINDEX. One SETTINGS clause:
      * ClickHouse rejects a second.
      */
-    appendStringInfoString(
+    appendStringInfo(
         &buf,
-        ") ENGINE = MergeTree ORDER BY ctid "
-        "SETTINGS fsync_after_insert = 1, fsync_part_directory = 1, "
-        "enable_block_number_column = 1, enable_block_offset_column = 1"
+        ") ENGINE = MergeTree ORDER BY ctid SETTINGS " CHDB_STORE_DISK_FMT
+        ", enable_block_number_column = 1, enable_block_offset_column = 1",
+        RelationGetRelid(index)
     );
     if (chdb_search_wants_phrase_search(cols, index->rd_att->natts)) {
         /* ClickHouse gates the index argument behind a MergeTree setting. */

@@ -74,7 +74,9 @@
  * meta table recording per generation the WAL position of the last flush
  * into it, which a backend compares with its metapage before trusting the
  * store. The engine makes the meta table with the database, so that the
- * comparison can be made of a store that has nothing else.
+ * comparison can be made of a store that has nothing else. Both tables keep
+ * their parts on the index's callback object storage (CHDB_STORE_DISK_FMT),
+ * whose blobs the worker holds; the meta DDL takes the index OID twice.
  */
 #define CHDB_STORE_DB_FMT "idx_%" PRIu32
 #define CHDB_STORE_TABLE_FMT CHDB_STORE_DB_FMT ".t_%" PRIu64
@@ -86,10 +88,12 @@
  * access method names in a table's SETTINGS, both from the index OID.
  */
 #define CHDB_STORE_STORAGE_FMT "pg_%" PRIu32
+#define CHDB_STORE_DISK_FMT                                                            \
+    "disk = disk(type = 'callback', storage_name = '" CHDB_STORE_STORAGE_FMT "')"
 #define CHDB_STORE_META_DDL                                                            \
     "CREATE TABLE IF NOT EXISTS " CHDB_STORE_META_FMT                                  \
     " (generation UInt64, lsn UInt64) ENGINE = ReplacingMergeTree(lsn) "               \
-    "ORDER BY generation SETTINGS fsync_after_insert = 1, fsync_part_directory = 1"
+    "ORDER BY generation SETTINGS " CHDB_STORE_DISK_FMT
 
 /*
  * The store directory under the data directory: a <dboid> subdirectory holding

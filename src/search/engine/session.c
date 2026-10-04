@@ -114,7 +114,7 @@ prepare_database(uint32_t index) {
     for (size_t i = 0; i < sizeof(ddl) / sizeof(ddl[0]); i++) {
         char* sql = NULL;
 
-        if (asprintf(&sql, ddl[i], index) < 0) {
+        if (asprintf(&sql, ddl[i], index, index) < 0) {
             return strdup("out of memory");
         }
 
@@ -187,6 +187,13 @@ session_prepare(const chdbSearchRequest* req, bool* no_store) {
     return err;
 }
 
+/*
+ * The callback disk has no hard links, so a DELETE can only patch parts, as
+ * VACUUM's do (vacuum.c); the session's default makes any other DELETE, a
+ * debug function's say, do the same instead of failing as a mutation.
+ */
+#define CHDB_SESSION_DELETE_MODE "--lightweight_delete_mode=lightweight_update_force"
+
 void
 session_open(const char* path) {
     char* arg = NULL;
@@ -195,7 +202,8 @@ session_open(const char* path) {
         fprintf(stderr, "chdb_search: out of memory\n");
         exit(1);
     }
-    session_conn = chdb_connect(2, (char*[]){ "chdb", arg, NULL });
+    session_conn =
+        chdb_connect(3, (char*[]){ "chdb", arg, CHDB_SESSION_DELETE_MODE, NULL });
     if (!session_conn || !*session_conn) {
         fprintf(stderr, "chdb_search: could not open the chDB store at %s\n", path);
         exit(1);

@@ -24,13 +24,13 @@ static const struct config_enum_entry unavailable_index_options[] = {
 };
 
 /*
- * Prefixes whose run of digits the mask replaces: OID, generation (in a
- * table name, a literal and a predicate), xid, and the lists of numbers that
- * are the generation and LSN of a meta row and the excluded xids of a
- * staging table.
+ * Prefixes whose run of digits the mask replaces: OID (in a database and a
+ * storage name), generation (in a table name, a literal and a predicate),
+ * xid, and the lists of numbers that are the generation and LSN of a meta
+ * row and the excluded xids of a staging table.
  */
 static const char* const masked_prefixes[] = {
-    "idx_", ".t_", "'t_", "_tx_", "generation = ", "VALUES (", "xmin NOT IN (",
+    "idx_", "'pg_", ".t_", "'t_", "_tx_", "generation = ", "VALUES (", "xmin NOT IN (",
 };
 
 /*
