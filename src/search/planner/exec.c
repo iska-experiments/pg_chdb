@@ -34,6 +34,7 @@
 
 #include "../query.h"
 #include "../search.h"
+#include "../stream.h"
 #include "planner.h"
 
 static Node*

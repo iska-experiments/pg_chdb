@@ -27,6 +27,7 @@
 
 #include "query.h"
 #include "search.h"
+#include "stream.h"
 
 /* ctids per DELETE, bounding statement size. */
 #define DELETE_BATCH 10000

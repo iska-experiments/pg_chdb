@@ -32,6 +32,7 @@
 
 #include "query.h"
 #include "search.h"
+#include "stream.h"
 
 /* The placeholder: anywhere Postgres evaluates it is outside a custom scan. */
 PG_FUNCTION_INFO_V1(chdb_search_score);

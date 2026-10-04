@@ -35,6 +35,7 @@
 #include "../native.h"
 #include "query.h"
 #include "search.h"
+#include "stream.h"
 
 typedef struct ScanOpaque {
     MemoryContext cxt;

@@ -33,6 +33,7 @@
 #include "utils/memutils.h"
 
 #include "search.h"
+#include "stream.h"
 
 static ChdbMetaPageData*
 meta_of(Page page) {
