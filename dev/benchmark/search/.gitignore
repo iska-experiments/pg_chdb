@@ -1,0 +1,6 @@
+# The repository ignores results/ (pg_regress's) and dev/benchmark ignores
+# *.csv (the datasets); keep this benchmark's results, less the query
+# files bench.sh generates from queries.sql.
+!results/
+!results/*.csv
+results/sql/
