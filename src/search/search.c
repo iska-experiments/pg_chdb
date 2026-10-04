@@ -29,8 +29,6 @@ _PG_init(void) {
         return;
     }
 
-    CHDB_GUCS("chdb_search");
-
     DefineCustomIntVariable(
         "chdb_search.worker_timeout",
         "Seconds to wait for the chdb_search worker to start.",
@@ -45,6 +43,9 @@ _PG_init(void) {
         NULL,
         NULL
     );
+
+    /* Last: reserving the prefix drops placeholders for GUCs not yet defined. */
+    CHDB_GUCS("chdb_search");
 }
 
 PG_FUNCTION_INFO_V1(chdb_search_version);
