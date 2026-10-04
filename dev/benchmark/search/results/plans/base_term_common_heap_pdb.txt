@@ -1,0 +1,19 @@
+Custom Scan (ParadeDB Base Scan) on hn_pdb (actual rows=798740.00 loops=1)
+  Table: hn_pdb
+  Index: hn_pdb_text
+  Heap Fetches: 798740
+  Buffer Hits:
+    Total: 614683
+    Columnar Fields: 8142
+    Heap: 605976
+    Metadata: 47
+    Postings: 308
+    Term Dictionary: 210
+  Exec Method: NormalScanExecState
+  Scores: false
+  Tantivy Query: {"with_index":{"query":{"match":{"field":"text","value":"google","tokenizer":null,"distance":null,"transposition_cost_one":null,"prefix":null,"conjunction_mode":true}}}}
+  Buffers: shared hit=614683
+Planning:
+  Buffers: shared hit=345
+Planning Time: 1.841 ms
+Execution Time: 800.509 ms

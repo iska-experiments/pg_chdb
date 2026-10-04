@@ -1,0 +1,22 @@
+Custom Scan (ParadeDB Base Scan) on hn_pdb (actual rows=32731.00 loops=1)
+  Table: hn_pdb
+  Index: hn_pdb_text
+  Heap Fetches: 0
+  Buffer Hits:
+    Total: 16603
+    CTID Map: 6
+    Columnar Fields: 15586
+    Metadata: 52
+    Postings: 218
+    Segment Statistics: 82
+    Term Dictionary: 261
+    Other: 398
+  Exec Method: ColumnarExecState
+  Columnar: id
+  Scores: false
+  Tantivy Query: {"with_index":{"query":{"match":{"field":"text","value":"postgres","tokenizer":null,"distance":null,"transposition_cost_one":null,"prefix":null,"conjunction_mode":true}}}}
+  Buffers: shared hit=16603
+Planning:
+  Buffers: shared hit=314
+Planning Time: 1.721 ms
+Execution Time: 28.956 ms

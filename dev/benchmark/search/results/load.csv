@@ -1,0 +1,10 @@
+step,seconds
+COPY hn FROM file:// Parquet via the chdb hook (28737557 rows),200.892
+ALTER TABLE hn ADD PRIMARY KEY (id),85.431
+CREATE TABLE hn_pdb (LIKE hn INCLUDING ALL),0.014
+INSERT INTO hn_pdb SELECT * FROM hn,199.461
+VACUUM (FREEZE; ANALYZE) hn,345.578
+VACUUM (FREEZE; ANALYZE) hn_pdb,30.138
+CHECKPOINT,30.846
+total (sum of the steps above plus DROP/CREATE TABLE),893.5
+download of hacknernews.parquet (7134977202 bytes; not part of load.sql),635

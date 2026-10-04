@@ -1,0 +1,30 @@
+Timing is on.
+SET
+Time: 0.100 ms
+LOAD
+Time: 0.424 ms
+DROP TABLE
+Time: 1168.695 ms (00:01.169)
+CREATE TABLE
+Time: 6.750 ms
+load: COPY hn FROM 'file:///home/kaushik/.cache/bench/pg_chdb-bench/hacknernews.parquet'
+COPY 28737557
+Time: 200891.990 ms (03:20.892)
+ALTER TABLE
+Time: 85431.301 ms (01:25.431)
+CREATE TABLE
+Time: 14.160 ms
+INSERT 0 28737557
+Time: 199460.962 ms (03:19.461)
+VACUUM
+Time: 345578.008 ms (05:45.578)
+VACUUM
+Time: 30138.142 ms (00:30.138)
+CHECKPOINT
+Time: 30845.474 ms (00:30.845)
+Timing is off.
+   rows   | rows_with_text | heap_with_toast |         first          |          last          
+----------+----------------+-----------------+------------------------+------------------------
+ 28737557 |       24139205 | 13 GB           | 1969-12-31 18:00:00-06 | 2021-10-03 12:03:13-05
+(1 row)
+

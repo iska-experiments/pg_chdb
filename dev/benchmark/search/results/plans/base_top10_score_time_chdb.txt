@@ -1,0 +1,14 @@
+Limit (actual rows=10.00 loops=1)
+  Buffers: shared hit=144
+  ->  Custom Scan (chdb_search) on hn (actual rows=10.00 loops=1)
+        Filter: ("time" >= '2019-12-31 18:00:00-06'::timestamp with time zone)
+        Rows Removed by Filter: 112
+        Pushed Cond: (text @@? 'google privacy'::text)
+        Pushed Score: score(id)
+        ClickHouse: SELECT ctid, xmin, toFloat32(log(27859931.5 / 877626.5 + 1) * ifNull(hasAllTokens(lowerUTF8("text"), ['google'], 'splitByNonAlpha'), 0) + log(28569292.5 / 168265.5 + 1) * ifNull(hasAllTokens(lowerUTF8("text"), ['privacy'], 'splitByNonAlpha'), 0)) AS _score FROM idx_283819.t_17211516599647588876 WHERE hasAnyTokens("text", 'google privacy') ORDER BY _score DESC, ctid
+        Store Rows: 122
+        Buffers: shared hit=144
+Planning:
+  Buffers: shared hit=142
+Planning Time: 0.942 ms
+Execution Time: 1251.730 ms

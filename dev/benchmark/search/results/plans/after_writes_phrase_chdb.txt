@@ -1,0 +1,9 @@
+Custom Scan (chdb_search) on hn (actual rows=213002.00 loops=1)
+  Pushed Cond: (text @@~ 'open source'::text)
+  ClickHouse: SELECT ctid, xmin FROM idx_283822.t_18014825827069792175 WHERE hasPhrase("text", 'open source')
+  Store Rows: 213002
+  Buffers: shared hit=196510 read=5
+Planning:
+  Buffers: shared hit=71 read=32
+Planning Time: 0.715 ms
+Execution Time: 1088.552 ms

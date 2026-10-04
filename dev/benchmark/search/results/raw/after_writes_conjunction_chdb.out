@@ -1,0 +1,13 @@
+pgbench (18.6)
+transaction type: /home/kaushik/code/pg_chdb-bench/dev/benchmark/search/results/sql/conjunction_chdb.sql
+scaling factor: 1
+query mode: simple
+number of clients: 1
+number of threads: 1
+maximum number of tries: 1
+number of transactions per client: 23
+number of transactions actually processed: 23/23
+number of failed transactions: 0 (0.000%)
+latency average = 46.047 ms
+initial connection time = 0.932 ms
+tps = 21.717044 (without initial connection time)

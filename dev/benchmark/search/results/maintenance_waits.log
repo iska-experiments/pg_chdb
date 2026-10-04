@@ -1,0 +1,32 @@
+18:09:36 DELETE CPU -
+18:09:51 VACUUM CPU -
+18:09:51 progress hn scanning heap 1270019 1681882 0
+18:09:56 VACUUM Extension Extension
+18:09:56 progress hn vacuuming indexes 1681882 1681882 0
+18:10:11 DELETE LWLock WALWrite
+18:10:16 DELETE CPU -
+18:10:31 VACUUM CPU -
+18:10:31 progress hn_pdb scanning heap 527101 1665043 0
+18:10:36 VACUUM IO WalSync
+18:10:36 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:10:41 VACUUM IO WalSync
+18:10:41 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:10:46 VACUUM CPU -
+18:10:46 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:11:16 DELETE CPU -
+18:11:31 VACUUM CPU -
+18:11:31 progress hn vacuuming indexes 1681882 1681882 0
+18:11:46 DELETE CPU -
+18:11:51 DELETE IO DataFileWrite
+18:12:06 VACUUM IO WalSync
+18:12:06 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:12:11 VACUUM IO WalSync
+18:12:11 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:12:16 VACUUM CPU -
+18:12:16 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:12:21 VACUUM IO WalSync
+18:12:21 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:12:26 VACUUM IO WalSync
+18:12:26 progress hn_pdb vacuuming indexes 1665043 1665043 0
+18:12:31 VACUUM IO WalSync
+18:12:31 progress hn_pdb vacuuming indexes 1665043 1665043 0

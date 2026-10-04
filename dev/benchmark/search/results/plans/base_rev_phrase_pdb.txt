@@ -1,0 +1,25 @@
+Gather (actual rows=211972.00 loops=1)
+  Workers Planned: 2
+  Workers Launched: 2
+  Buffers: shared hit=20132
+  ->  Parallel Custom Scan (ParadeDB Base Scan) on hn_pdb (actual rows=70657.33 loops=3)
+        Table: hn_pdb
+        Index: hn_pdb_text
+        Heap Fetches: 0
+        Buffer Hits:
+          Total: 7281
+          Columnar Fields: 6818
+          Positions: 138
+          Postings: 146
+          Segment Statistics: 22
+          Term Dictionary: 89
+          Other: 68
+        Exec Method: ColumnarExecState
+        Columnar: id
+        Scores: false
+        Tantivy Query: {"with_index":{"query":{"tokenized_phrase":{"field":"text","phrase":"open source","slop":null}}}}
+        Buffers: shared hit=20089
+Planning:
+  Buffers: shared hit=332
+Planning Time: 1.619 ms
+Execution Time: 43.886 ms

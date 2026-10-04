@@ -1,0 +1,13 @@
+# ParadeDB index schema: SELECT * FROM paradedb.schema('hn_pdb_text')
+ name | field_type | stored | indexed | fast | fieldnorms | expand_dots |            tokenizer             |  record  | normalizer 
+------+------------+--------+---------+------+------------+-------------+----------------------------------+----------+------------
+ ctid | U64        | f      | t       | t    | f          |             |                                  |          | 
+ id   | I64        | f      | t       | t    | f          |             |                                  |          | 
+ text | Str        | f      | t       | f    | t          |             | unicode_words_removeemojis:false | position | 
+(3 rows)
+
+# chdb store table, from the engine's system.tables (after the last REINDEX)
+CREATE TABLE idx_283822.t_5783977663169162741 (`ctid` UInt64, `xmin` UInt32, `text` Nullable(String), INDEX text_idx text TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(text)) GRANULARITY 100000000) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = '[HIDDEN]', key_prefix = '[HIDDEN]'), enable_block_number_column = 1, enable_block_offset_column = 1, index_granularity = 8192
+# tokenization of one sample string
+chdb (splitByNonAlpha, before lowerUTF8): {Visit,google,com,Google,s,G,Suite,open,source}
+ParadeDB (unicode_words): {visit,google.com,google's,g,suite,open,source}

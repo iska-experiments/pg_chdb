@@ -1,0 +1,9 @@
+Custom Scan (chdb_search) on hn (actual rows=67327.00 loops=1)
+  Pushed Cond: (text @@? 'postgres mysql'::text)
+  ClickHouse: SELECT ctid, xmin FROM idx_283819.t_17211516599647588876 WHERE hasAnyTokens("text", 'postgres mysql')
+  Store Rows: 67327
+  Buffers: shared hit=63125
+Planning:
+  Buffers: shared hit=103
+Planning Time: 0.762 ms
+Execution Time: 129.803 ms

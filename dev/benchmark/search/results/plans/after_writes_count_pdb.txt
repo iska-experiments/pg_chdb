@@ -1,0 +1,15 @@
+Custom Scan (ParadeDB Aggregate Scan) on hn_pdb (actual rows=1.00 loops=1)
+  Index: hn_pdb_text
+  Tantivy Query: {"with_index":{"query":{"match":{"field":"text","value":"google","tokenizer":null,"distance":null,"transposition_cost_one":null,"prefix":null,"conjunction_mode":true}}}}
+    Applies to Aggregates: COUNT(*)
+    Aggregate Definition: {"0":{"filter":"*"}}
+  Visibility:
+    Segments Skipped: 38
+    Segments Checked: 3
+    Blocks Total: 1665043
+    Blocks Requiring Checks: 1665043
+  Buffers: shared hit=611
+Planning:
+  Buffers: shared hit=322
+Planning Time: 1.440 ms
+Execution Time: 5.795 ms

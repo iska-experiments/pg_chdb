@@ -1,0 +1,5 @@
+NOTICE:  index "hn_text_chdb" does not exist, skipping
+phrase_idx chdb phrase: rows 212166
+phrase_idx chdb term_common: rows 877626
+chdb,create index (support_phrase_search),49.301,358.7,11067926064,10968989696,38,9.96
+chdb,create index (again),41.936,181.6,8421601144,8343347200,38,9.42

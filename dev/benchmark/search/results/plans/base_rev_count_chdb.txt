@@ -1,0 +1,14 @@
+Custom Scan (chdb_search aggregate) (actual rows=1.00 loops=1)
+  Pushed Cond: (text @@@ 'google'::text)
+  ClickHouse: SELECT count() FROM idx_283819.t_17211516599647588876 WHERE hasAllTokens("text", 'google')
+  Store Rows: 1
+  Buffers: shared hit=116
+  ->  Aggregate (never executed)
+        ->  Custom Scan (chdb_search) on hn (never executed)
+              Pushed Cond: (text @@@ 'google'::text)
+              ClickHouse: SELECT ctid, xmin FROM idx_283819.t_17211516599647588876 WHERE hasAllTokens("text", 'google')
+              Store Rows: 0
+Planning:
+  Buffers: shared hit=162
+Planning Time: 1.282 ms
+Execution Time: 4.732 ms

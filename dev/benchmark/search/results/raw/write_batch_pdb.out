@@ -1,0 +1,13 @@
+pgbench (18.6)
+transaction type: /home/kaushik/code/pg_chdb-bench/dev/benchmark/search/results/sql/write_batch_pdb.sql
+scaling factor: 1
+query mode: simple
+number of clients: 1
+number of threads: 1
+maximum number of tries: 1
+number of transactions per client: 100
+number of transactions actually processed: 100/100
+number of failed transactions: 0 (0.000%)
+latency average = 36.341 ms
+initial connection time = 0.899 ms
+tps = 27.516796 (without initial connection time)

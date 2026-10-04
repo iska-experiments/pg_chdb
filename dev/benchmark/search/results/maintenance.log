@@ -1,0 +1,10 @@
+WARNING:  only 2 parallel workers were available for index build
+DETAIL:  for large tables, increasing the number of workers can reduce the time it takes to build the index
+HINT:  `SET max_parallel_maintenance_workers = <number>`
+engine,step,seconds,cpu_seconds,wal_bytes,index_bytes,units,load_avg
+chdb,reindex,39.097,190.5,8485099288,8422080512,38,13.77
+chdb,delete 288476 rows,15.872,10.0,2343532456,13533396992,6,6.05
+chdb,vacuum,31.108,12.6,651691728,13543497728,9,5.61
+pdb,reindex,169.627,475.8,4970385816,4960632832,32,5.58
+pdb,delete 288476 rows,10.197,9.0,2360023368,4960632832,32,5.26
+pdb,vacuum,175.475,13.3,652457688,4964974592,32,10.46

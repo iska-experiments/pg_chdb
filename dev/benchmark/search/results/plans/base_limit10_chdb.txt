@@ -1,0 +1,11 @@
+Limit (actual rows=10.00 loops=1)
+  Buffers: shared hit=18
+  ->  Custom Scan (chdb_search) on hn (actual rows=10.00 loops=1)
+        Pushed Cond: (text @@@ 'google'::text)
+        ClickHouse: SELECT ctid, xmin FROM idx_283819.t_17211516599647588876 WHERE hasAllTokens("text", 'google')
+        Store Rows: 10
+        Buffers: shared hit=18
+Planning:
+  Buffers: shared hit=103
+Planning Time: 0.963 ms
+Execution Time: 24.821 ms

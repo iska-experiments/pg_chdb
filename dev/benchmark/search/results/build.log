@@ -1,0 +1,7 @@
+WARNING:  key_field is deprecated as of 0.26.0 and is a no-op; it no longer needs to be provided
+WARNING:  only 2 parallel workers were available for index build
+DETAIL:  for large tables, increasing the number of workers can reduce the time it takes to build the index
+HINT:  `SET max_parallel_maintenance_workers = <number>`
+engine,step,seconds,wal_bytes,index_bytes,units,load_avg
+chdb,create index,32.989,8474216496,8397029376,38,7.10
+pdb,create index,208.225,10024834000,4902535168,32,24.55

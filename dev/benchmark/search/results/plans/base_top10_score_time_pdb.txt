@@ -1,0 +1,29 @@
+Limit (actual rows=10.00 loops=1)
+  Buffers: shared hit=704392
+  ->  Gather Merge (actual rows=10.00 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=704392
+        ->  Parallel Custom Scan (ParadeDB Base Scan) on hn_pdb (actual rows=8.00 loops=3)
+              Table: hn_pdb
+              Index: hn_pdb_text
+              Heap Fetches: 4
+              Buffer Hits:
+                Total: 239203
+                Columnar Fields: 2790
+                Field Norms: 1229
+                Heap: 4
+                Postings: 192
+                Term Dictionary: 261
+                Other: 234727
+              Exec Method: TopKScanExecState
+              Scores: true
+                 TopK Order By: pdb.score() desc
+                 TopK Limit: 10
+                 Queries: 1
+              Tantivy Query: {"boolean":{"must":[{"heap_filter":{"indexed_query":{"boolean":{"must":[{"with_index":{"query":{"match":{"field":"text","value":"google privacy","tokenizer":null,"distance":null,"transposition_cost_one":null,"prefix":null,"conjunction_mode":false}}}}]}},"always_filters":[{"heap_filter":"(\"time\" >= '2019-12-31 18:00:00-06'::timestamp with time zone)"}]}}]}}
+              Buffers: shared hit=704345
+Planning:
+  Buffers: shared hit=331
+Planning Time: 2.133 ms
+Execution Time: 542.892 ms

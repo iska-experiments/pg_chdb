@@ -1,0 +1,13 @@
+Limit (actual rows=10.00 loops=1)
+  Buffers: shared hit=69
+  ->  Custom Scan (chdb_search) on hn (actual rows=10.00 loops=1)
+        Pushed Cond: (text @@? 'google privacy'::text)
+        Pushed Score: score(id)
+        Pushed Limit: 10
+        ClickHouse: SELECT ctid, xmin, toFloat32(log(27127844.5 / 854283.5 + 1) * ifNull(hasAllTokens(lowerUTF8("text"), ['google'], 'splitByNonAlpha'), 0) + log(27818101.5 / 164026.5 + 1) * ifNull(hasAllTokens(lowerUTF8("text"), ['privacy'], 'splitByNonAlpha'), 0)) AS _score FROM idx_287392.t_16056899636494460493 WHERE hasAnyTokens("text", 'google privacy') ORDER BY _score DESC, ctid LIMIT 10
+        Store Rows: 10
+        Buffers: shared hit=69
+Planning:
+  Buffers: shared hit=142
+Planning Time: 0.604 ms
+Execution Time: 991.009 ms

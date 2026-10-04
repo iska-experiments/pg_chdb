@@ -1,0 +1,23 @@
+Limit (actual rows=10.00 loops=1)
+  Buffers: shared hit=71
+  ->  Custom Scan (ParadeDB Base Scan) on hn_pdb (actual rows=10.00 loops=1)
+        Table: hn_pdb
+        Index: hn_pdb_text
+        Heap Fetches: 10
+        Buffer Hits:
+          Total: 71
+          Columnar Fields: 6
+          Heap: 6
+          Metadata: 47
+          Postings: 5
+          Term Dictionary: 7
+        Exec Method: TopKScanExecState
+        Scores: false
+           TopK Limit: 10
+           Queries: 1
+        Tantivy Query: {"with_index":{"query":{"match":{"field":"text","value":"google","tokenizer":null,"distance":null,"transposition_cost_one":null,"prefix":null,"conjunction_mode":true}}}}
+        Buffers: shared hit=71
+Planning:
+  Buffers: shared hit=306
+Planning Time: 1.561 ms
+Execution Time: 0.394 ms

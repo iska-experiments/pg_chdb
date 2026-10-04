@@ -1,0 +1,7 @@
+engine,step,seconds,cpu_seconds,wal_bytes,index_bytes,units,load_avg
+chdb,create index,32.989,,8474216496,8397029376,38,7.10
+pdb,create index,208.225,,10024834000,4902535168,32,24.55
+chdb,create index (support_phrase_search),49.301,358.7,11067926064,10968989696,38,9.96
+chdb,create index (again),41.936,181.6,8421601144,8343347200,38,9.42
+chdb,create index (text; time columnar_ops),42.611,158.4,8408672152,8333819904,38,7.06
+pdb,create index (id; text; time),196.723,504.0,5284158360,5289967616,32,8.66

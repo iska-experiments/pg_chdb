@@ -1,0 +1,10 @@
+WARNING:  key_field is deprecated as of 0.26.0 and is a no-op; it no longer needs to be provided
+WARNING:  only 2 parallel workers were available for index build
+DETAIL:  for large tables, increasing the number of workers can reduce the time it takes to build the index
+HINT:  `SET max_parallel_maintenance_workers = <number>`
+time_in_index chdb top10_score_time: rows 10
+time_in_index chdb top10_score: rows 10
+time_in_index pdb top10_score_time: rows 10
+time_in_index pdb top10_score: rows 10
+chdb,create index (text; time columnar_ops),42.611,158.4,8408672152,8333819904,38,7.06
+pdb,create index (id; text; time),196.723,504.0,5284158360,5289967616,32,8.66
