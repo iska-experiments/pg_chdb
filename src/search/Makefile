@@ -7,10 +7,10 @@ export CHDB_SEARCH_STUB
 ifneq ($(CHDB_SEARCH_STUB),)
 $(info chdb_search: linking the stub worker client)
 endif
-CLIENT       = $(if $(CHDB_SEARCH_STUB),client_stub.c,client.c)
+CLIENT       = $(if $(CHDB_SEARCH_STUB),client_stub.c stub_answers.c,client.c)
 # The custom scan of planner/ is part of the module: one set of GUCs, one
 # library to load.
-OBJS         = ../native.o ../native_writer.o ../channel.o ../helper_setup.o ../spawn.o $(subst .c,.o, $(filter-out client.c client_stub.c,$(wildcard *.c planner/*.c)) $(CLIENT))
+OBJS         = ../native.o ../native_writer.o ../channel.o ../helper_setup.o ../spawn.o $(subst .c,.o, $(filter-out client.c client_stub.c stub_answers.c,$(wildcard *.c planner/*.c)) $(CLIENT))
 
 include ../module.mk
 

@@ -4,21 +4,31 @@
  * a worker: statements are accepted, inserted data is dropped, and a select
  * answers with the rows these GUCs describe.
  *
- *   chdb_search_stub.ctids  the packed ctids ((block << 16) | offset, so
- *                           (0,1) is 1 and (1,1) is 65537) a select returns,
- *                           comma-separated, one row each, with one Float64
- *                           column holding the ctid per ` AS _distance` in
- *                           the statement; 'garbage' returns bytes that are
- *                           not a Native block; empty, the default, returns
- *                           no block at all
- *   chdb_search_stub.fail   reading the answer fails, as a lost worker would
- *   chdb_search_stub.meta   what the store says of the index's generation when
- *                           the fail-safe check (meta.c) asks: empty, the
- *                           default, agrees with the metapage; 'none' has
- *                           neither table nor flush for it; a number is the
- *                           WAL position of its last flush
+ *   chdb_search_stub.ctids        the packed ctids ((block << 16) | offset,
+ *                                 so (0,1) is 1 and (1,1) is 65537) a select
+ *                                 returns, comma-separated, one row each,
+ *                                 with one Float64 column holding the ctid
+ *                                 per ` AS _distance` in the statement and
+ *                                 one Float32 per ` AS _score`; 'garbage'
+ *                                 returns bytes that are not a Native block;
+ *                                 empty, the default, returns no block at
+ *                                 all. A plain count() is their number.
+ *   chdb_search_stub.fail         reading the answer fails, as a lost worker
+ *                                 would
+ *   chdb_search_stub.meta         what the store says of the index's
+ *                                 generation when the fail-safe check
+ *                                 (meta.c) asks: empty, the default, agrees
+ *                                 with the metapage; 'none' has neither
+ *                                 table nor flush for it; a number is the
+ *                                 WAL position of its last flush
+ *   chdb_search_stub.tokens       what tokens() makes of any needle,
+ *                                 comma-separated
+ *   chdb_search_stub.frequencies  `token:n` pairs, comma-separated: the
+ *                                 count() of the rows with a token, as the
+ *                                 score asks it (score.c); zero for the rest
  *
- * The AM logs every statement it generates at DEBUG1; nothing is logged here.
+ * The answers themselves are encoded in stub_answers.c. The AM logs every
+ * statement it generates at DEBUG1; nothing is logged here.
  */
 
 #include "postgres.h"
@@ -27,20 +37,18 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "catalog/pg_type_d.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 
-#include "pg-clickhouse-encode.h"
-#include "pg-clickhouse.h"
-
-#include "../native_writer.h"
 #include "client.h"
 #include "search.h"
+#include "stub.h"
 
-static char* stub_ctids = NULL;
-static bool stub_fail   = false;
-static char* stub_meta  = NULL;
+char* chdb_search_stub_ctids       = NULL;
+char* chdb_search_stub_meta        = NULL;
+char* chdb_search_stub_tokens      = NULL;
+char* chdb_search_stub_frequencies = NULL;
+static bool stub_fail              = false;
 
 struct chdbSearchConn {
     chdbChannel ch;
@@ -62,7 +70,7 @@ chdb_search_client_init(void) {
         "chdb_search_stub.ctids",
         "Packed ctids the stub worker client's selects return, comma-separated.",
         "Empty returns no rows; 'garbage' returns bytes that are not a Native block.",
-        &stub_ctids,
+        &chdb_search_stub_ctids,
         "",
         PGC_USERSET,
         0,
@@ -88,7 +96,31 @@ chdb_search_client_init(void) {
         "What the stub worker client's store says of the index's generation.",
         "Empty agrees with the metapage; 'none' has no table and no flush for it; a "
         "number is the WAL position of its last flush.",
-        &stub_meta,
+        &chdb_search_stub_meta,
+        "",
+        PGC_USERSET,
+        0,
+        NULL,
+        NULL,
+        NULL
+    );
+    DefineCustomStringVariable(
+        "chdb_search_stub.tokens",
+        "What the stub worker client's tokens() makes of any needle, comma-separated.",
+        NULL,
+        &chdb_search_stub_tokens,
+        "",
+        PGC_USERSET,
+        0,
+        NULL,
+        NULL,
+        NULL
+    );
+    DefineCustomStringVariable(
+        "chdb_search_stub.frequencies",
+        "The rows the stub worker client counts with a token, as token:n pairs.",
+        "Comma-separated; a token not listed counts zero.",
+        &chdb_search_stub_frequencies,
         "",
         PGC_USERSET,
         0,
@@ -144,101 +176,6 @@ answer(chdbSearchConn* conn, const void* data, size_t len) {
     set_data_fd(conn, fds[0], "a pipe");
 }
 
-/* The writer's rows as one block in the caller's context; `cxt` goes. */
-static size_t
-take_block(pgch_writer* w, MemoryContext cxt, MemoryContext old, void** out) {
-    pgch_buf buf = {};
-
-    if (pgch_writer_rows(w)) {
-        pgch_writer_flush(w, &buf, NULL);
-    }
-    MemoryContextSwitchTo(old);
-    *out = palloc(buf.len + 1);
-    memcpy(*out, buf.data, buf.len);
-    MemoryContextDelete(cxt);
-    return buf.len;
-}
-
-/* The ctids GUC as one block, with `ndist` distance columns. Zero for no rows. */
-static size_t
-encode_ctids(const char* ctids, int ndist, void** out) {
-    MemoryContext cxt = AllocSetContextCreate(
-        CurrentMemoryContext, "chdb_search stub block", ALLOCSET_SMALL_SIZES
-    );
-    MemoryContext old = MemoryContextSwitchTo(cxt);
-    StringInfoData structure;
-
-    /* Encoded as the row writer encodes rows, so the AM reads it as the worker's. */
-    initStringInfo(&structure);
-    appendStringInfoString(&structure, "ctid UInt64");
-    for (int i = 0; i < ndist; i++) {
-        appendStringInfo(&structure, ", _distance%d Float64", i);
-    }
-
-    pgch_writer* w = chdb_writer_for(cxt, structure.data, NULL);
-
-    for (const char* p = ctids; *p;) {
-        char* end;
-        uint64 ctid = strtoull(p, &end, 10);
-
-        if (end == p || (*end != ',' && *end != '\0')) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                errmsg("chdb_search stub: invalid ctid list \"%s\"", ctids)
-            );
-        }
-        pgch_append_datum(w, 0, Int64GetDatum((int64)ctid), INT8OID, false);
-        for (int i = 0; i < ndist; i++) {
-            pgch_append_datum(w, 1 + i, Float8GetDatum((double)ctid), FLOAT8OID, false);
-        }
-        p = *end == ',' ? end + 1 : end;
-    }
-    return take_block(w, cxt, old, out);
-}
-
-/*
- * The store's answer to the fail-safe check of meta.c, (flushes, last flush,
- * tables) for the index's generation: by default what the metapage says, so
- * that the check passes as it does against a store that is current.
- */
-static size_t
-encode_meta(Oid indexoid, void** out) {
-    MemoryContext cxt = AllocSetContextCreate(
-        CurrentMemoryContext, "chdb_search stub block", ALLOCSET_SMALL_SIZES
-    );
-    MemoryContext old = MemoryContextSwitchTo(cxt);
-    Relation index    = index_open(indexoid, AccessShareLock);
-    ChdbMetaPageData meta;
-    uint64 rows = 1, tables = 1;
-
-    chdb_meta_read(index, &meta);
-    index_close(index, AccessShareLock);
-    if (strcmp(stub_meta, "none") == 0) {
-        rows = tables = meta.flushed_lsn = 0;
-    } else if (*stub_meta) {
-        meta.flushed_lsn = strtoull(stub_meta, NULL, 10);
-    }
-
-    pgch_writer* w = chdb_writer_for(cxt, "n UInt64, lsn UInt64, t UInt64", NULL);
-
-    pgch_append_datum(w, 0, Int64GetDatum((int64)rows), INT8OID, false);
-    pgch_append_datum(w, 1, Int64GetDatum((int64)meta.flushed_lsn), INT8OID, false);
-    pgch_append_datum(w, 2, Int64GetDatum((int64)tables), INT8OID, false);
-    return take_block(w, cxt, old, out);
-}
-
-/* Counts the distance columns a scan's statement selects. */
-static int
-count_distances(const char* sql) {
-    int n = 0;
-
-    for (const char* p = sql; (p = strstr(p, " AS _distance")); p += 1) {
-        n++;
-    }
-    return n;
-}
-
 /* The channel closes with the memory context, so the connection is not freed. */
 chdbSearchConn*
 chdb_search_connect(void) {
@@ -280,12 +217,10 @@ chdb_search_select(
     if (stub_fail) {
         /* Write-only, so the first read fails as a broken connection does. */
         set_data_fd(conn, open("/dev/null", O_WRONLY | O_CLOEXEC), "/dev/null");
-    } else if (strcmp(stub_ctids, "garbage") == 0) {
+    } else if (strcmp(chdb_search_stub_ctids, "garbage") == 0) {
         answer(conn, "not a Native block", 18);
     } else {
-        len = strstr(sql, ".meta WHERE generation = ")
-                  ? encode_meta(indexoid, &block)
-                  : encode_ctids(stub_ctids, count_distances(sql), &block);
+        len = chdb_stub_answer(sql, indexoid, &block);
         answer(conn, block, len);
         pfree(block);
     }
