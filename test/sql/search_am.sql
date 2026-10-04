@@ -134,6 +134,25 @@ RESET enable_seqscan;
 RESET client_min_messages;
 DROP TABLE kw;
 
+-- text[] defaults to text_array_ops. Any other type without a class of its
+-- own takes columnar_ops, which refuses a type its family has no operators
+-- for: the column would be stored at every write and serve no query. The
+-- integer and float families have their cross-type pairs, so i2 = 1 is
+-- pushed down as written.
+CREATE TABLE more (n int[], j jsonb, i2 int2, tg text[]);
+INSERT INTO more VALUES ('{1}', '{}', 1, '{sport}');
+CREATE INDEX more_tg ON more USING chdb (tg);
+SELECT c.opcname FROM pg_index i JOIN pg_opclass c ON c.oid = i.indclass[0]
+ WHERE i.indexrelid = 'more_tg'::regclass;
+CREATE INDEX ON more USING chdb (n);
+CREATE INDEX ON more USING chdb (j);
+CREATE INDEX more_i2 ON more USING chdb (i2);
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) SELECT * FROM more WHERE tg @@@ 'sport';
+EXPLAIN (COSTS OFF) SELECT * FROM more WHERE i2 = 1 AND i2 < 20000000000;
+RESET enable_seqscan;
+DROP TABLE more;
+
 -- A column's kind comes from its class's options support function, not the
 -- family's name: a class without text options, as another extension might
 -- declare, stores a plain column, and its operators are still rendered by

@@ -103,7 +103,7 @@ SELECT opcname, opcdefault, opcintype::regtype
     opcname     | opcdefault | opcintype  
 ----------------+------------+------------
  columnar_ops   | t          | anyelement
- text_array_ops | f          | text[]
+ text_array_ops | t          | text[]
  text_ops       | t          | text
 (3 rows)
 
@@ -230,6 +230,43 @@ DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "constraint" = 'x' 
 RESET enable_seqscan;
 RESET client_min_messages;
 DROP TABLE kw;
+-- text[] defaults to text_array_ops. Any other type without a class of its
+-- own takes columnar_ops, which refuses a type its family has no operators
+-- for: the column would be stored at every write and serve no query. The
+-- integer and float families have their cross-type pairs, so i2 = 1 is
+-- pushed down as written.
+CREATE TABLE more (n int[], j jsonb, i2 int2, tg text[]);
+INSERT INTO more VALUES ('{1}', '{}', 1, '{sport}');
+CREATE INDEX more_tg ON more USING chdb (tg);
+SELECT c.opcname FROM pg_index i JOIN pg_opclass c ON c.oid = i.indclass[0]
+ WHERE i.indexrelid = 'more_tg'::regclass;
+    opcname     
+----------------
+ text_array_ops
+(1 row)
+
+CREATE INDEX ON more USING chdb (n);
+ERROR:  type integer[] has no operators in chdb operator family columnar_ops
+CREATE INDEX ON more USING chdb (j);
+ERROR:  type jsonb has no operators in chdb operator family columnar_ops
+CREATE INDEX more_i2 ON more USING chdb (i2);
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) SELECT * FROM more WHERE tg @@@ 'sport';
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using more_tg on more
+   Index Cond: (tg @@@ 'sport'::text)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM more WHERE i2 = 1 AND i2 < 20000000000;
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Index Scan using more_i2 on more
+   Index Cond: ((i2 < '20000000000'::bigint) AND (i2 = 1))
+(2 rows)
+
+RESET enable_seqscan;
+DROP TABLE more;
 -- A column's kind comes from its class's options support function, not the
 -- family's name: a class without text options, as another extension might
 -- declare, stores a plain column, and its operators are still rendered by
