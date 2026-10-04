@@ -8,8 +8,6 @@
 
 #include "postgres.h"
 
-#include "catalog/pg_type_d.h"
-
 #include "query.h"
 #include "search.h"
 
@@ -83,7 +81,7 @@ chdb_search_append_quals(StringInfo buf, Relation index, ScanKey keys, int nkeys
 
         Oid argtype = OidIsValid(key->sk_subtype) ? key->sk_subtype : col->typid;
 
-        if (col->kind == CHDB_COL_COLUMNAR) {
+        if (key->sk_strategy >= CHDB_STRATEGY_EQ) {
             const char* op = compare_operator(key->sk_strategy);
 
             /* NaN and the infinities compare as Postgres does, not ClickHouse. */
@@ -97,7 +95,7 @@ chdb_search_append_quals(StringInfo buf, Relation index, ScanKey keys, int nkeys
             appendStringInfo(
                 buf, "%s(%s, ", text_function(key->sk_strategy, col->kind), col->name
             );
-            chdb_search_append_literal(buf, key->sk_argument, TEXTOID);
+            chdb_search_append_literal(buf, key->sk_argument, argtype);
             appendStringInfoChar(buf, ')');
         }
     }

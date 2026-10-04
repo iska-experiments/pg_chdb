@@ -56,7 +56,7 @@
 
 #include "catalog/pg_attribute.h"
 #include "catalog/pg_type_d.h"
-#include "utils/lsyscache.h"
+#include "fmgr.h"
 #include "utils/pg_locale.h"
 
 #include "pg-clickhouse.h"
@@ -93,17 +93,32 @@ chdb_search_table_name(Relation index) {
     );
 }
 
-static ChdbColumnKind
-kind_of(Relation index, int i) {
-    char* fam = get_opfamily_name(index->rd_opfamily[i], false);
+/*
+ * A class's options support function (number 1) says how its columns are
+ * stored: ours resolve to the C functions below, which are compared by
+ * address, so neither a family's name nor the extension's schema matters,
+ * and a class of another extension, or one without the proc, is columnar.
+ */
+ChdbColumnKind
+chdb_search_proc_kind(Oid proc) {
+    FmgrInfo finfo;
 
-    if (strcmp(fam, "text_ops") == 0) {
+    if (!OidIsValid(proc)) {
+        return CHDB_COL_COLUMNAR;
+    }
+    fmgr_info(proc, &finfo);
+    if (finfo.fn_addr == chdb_search_text_options) {
         return CHDB_COL_TEXT;
     }
-    if (strcmp(fam, "text_array_ops") == 0) {
+    if (finfo.fn_addr == chdb_search_text_array_options) {
         return CHDB_COL_TEXT_ARRAY;
     }
     return CHDB_COL_COLUMNAR;
+}
+
+static ChdbColumnKind
+kind_of(Relation index, int i) {
+    return chdb_search_proc_kind(index_getprocid(index, i + 1, 1));
 }
 
 /*
@@ -225,7 +240,7 @@ chdb_search_create_sql(Relation index) {
         );
     }
     appendStringInfoString(&buf, ") ENGINE = MergeTree ORDER BY ctid");
-    if (chdb_search_wants_phrase_search(index)) {
+    if (chdb_search_wants_phrase_search(index, cols)) {
         /* ClickHouse gates the index argument behind a MergeTree setting. */
         appendStringInfoString(
             &buf, " SETTINGS allow_experimental_text_index_phrase_search = 1"

@@ -59,8 +59,9 @@ typedef enum ChdbUnavailableAction {
 extern int chdb_search_unavailable_index;
 
 /*
- * How an indexed column is stored and searched, chosen by its operator class.
- * Unknown operator classes (added by other extensions) are treated as columnar.
+ * How an indexed column is stored and searched, chosen by its operator
+ * class's options support function (ddl.c). Classes of other extensions are
+ * columnar: their operators are still rendered by strategy number.
  */
 typedef enum ChdbColumnKind {
     CHDB_COL_TEXT,       /* text_ops: String with a text() skip index */
@@ -99,6 +100,9 @@ extern bytea*
 chdb_search_amoptions(Datum reloptions, bool validate);
 extern double
 chdb_search_index_optimize_ratio(Relation index);
+/* The options support functions, which ddl.c tells a column's kind by. */
+extern PGDLLEXPORT Datum chdb_search_text_options(PG_FUNCTION_ARGS);
+extern PGDLLEXPORT Datum chdb_search_text_array_options(PG_FUNCTION_ARGS);
 
 /* ---- textindex.c ---- */
 extern char*
@@ -109,9 +113,12 @@ chdb_search_skip_index_args(
     ChdbColumnKind kind
 );
 extern bool
-chdb_search_wants_phrase_search(Relation index);
+chdb_search_wants_phrase_search(Relation index, const ChdbColumn* cols);
 
 /* ---- ddl.c ---- */
+/* The kind of column an operator class with this support function 1 makes. */
+extern ChdbColumnKind
+chdb_search_proc_kind(Oid proc);
 extern ChdbColumn*
 chdb_search_columns(Relation index);
 extern char*

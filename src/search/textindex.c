@@ -30,6 +30,8 @@ chdb_search_skip_index_args(
     ChdbTextOptions* o = all ? (ChdbTextOptions*)all[attno - 1] : NULL;
     StringInfoData buf;
 
+    /* The kind came from the proc that declared these, so they are ours. */
+    Assert(!o || kind != CHDB_COL_TEXT || VARSIZE(o) >= sizeof(ChdbTextOptions));
     initStringInfo(&buf);
     if (kind == CHDB_COL_TEXT_ARRAY) {
         /* Elements compare in lower case, as chdb.has_token(text[], text) does. */
@@ -85,14 +87,14 @@ chdb_search_skip_index_args(
 
 /* Whether any text column asks for phrase search, which needs a table setting. */
 bool
-chdb_search_wants_phrase_search(Relation index) {
+chdb_search_wants_phrase_search(Relation index, const ChdbColumn* cols) {
     bytea** all = RelationGetIndexAttOptions(index, false);
 
     for (int i = 0; all && i < index->rd_att->natts; i++) {
         ChdbTextOptions* o = (ChdbTextOptions*)all[i];
 
-        /* Other operator classes have option structs without the field. */
-        if (o && VARSIZE(o) >= sizeof(ChdbTextOptions) && o->support_phrase_search) {
+        /* Only a text column's options have the field. */
+        if (cols[i].kind == CHDB_COL_TEXT && o && o->support_phrase_search) {
             return true;
         }
     }

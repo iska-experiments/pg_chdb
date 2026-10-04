@@ -224,7 +224,11 @@ chdb_search_text_options(PG_FUNCTION_ARGS) {
     PG_RETURN_VOID();
 }
 
-/* Support function 1 of the classes without options: declares none. */
+/*
+ * Support function 1 of the classes without options: declares none. The
+ * access method tells a column's kind by which of these procs its class
+ * names (ddl.c), so text_array_ops has one of its own.
+ */
 PG_FUNCTION_INFO_V1(chdb_search_no_options);
 Datum
 chdb_search_no_options(PG_FUNCTION_ARGS) {
@@ -232,4 +236,10 @@ chdb_search_no_options(PG_FUNCTION_ARGS) {
      * CopyIndexAttOptions. */
     init_local_reloptions((local_relopts*)PG_GETARG_POINTER(0), sizeof(int32));
     PG_RETURN_VOID();
+}
+
+PG_FUNCTION_INFO_V1(chdb_search_text_array_options);
+Datum
+chdb_search_text_array_options(PG_FUNCTION_ARGS) {
+    return chdb_search_no_options(fcinfo);
 }
