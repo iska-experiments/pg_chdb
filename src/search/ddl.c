@@ -19,16 +19,12 @@
  * id (truncated, so a diagnostic only); visibility is always decided by
  * fetching the heap tuple.
  *
- * Column naming. Every indexed attribute becomes a column named after the
- * index attribute (the heap column for plain columns), always quoted, so a
- * column named index or constraint is not a keyword and one named inf or
- * nan is not a float literal. `ctid` and `xmin` are reserved, and duplicate
- * names (two expression columns, say) are rejected because the table would
- * be unusable.
- *
- * Types. Every column uses pgch_ch_type_for, so text is Nullable(String) and
- * text[] is Array(Nullable(String)); ClickHouse's text index accepts both and
- * NULLs survive. A NULL array is stored as the empty array.
+ * Columns. columns.c names and types the indexed attributes and decides the
+ * kind of each (text, text array or plain) from its operator class. Names
+ * are always quoted; types come from pgch_ch_type_for, so text is
+ * Nullable(String) and text[] is Array(Nullable(String)); ClickHouse's text
+ * index accepts both and NULLs survive. A NULL array is stored as the empty
+ * array.
  *
  * Example, for CREATE INDEX ON docs USING chdb (body text_ops
  * (tokenizer = 'ngrams', ngram_size = 3), tags text_array_ops, author columnar_ops):
@@ -54,36 +50,9 @@
 
 #include <string.h>
 
-#include "catalog/pg_attribute.h"
-#include "catalog/pg_type_d.h"
-#include "fmgr.h"
-#include "utils/pg_locale.h"
-
 #include "pg-clickhouse.h"
 
 #include "search.h"
-
-/*
- * `"<name>"`, whatever the name: pgch_quote_ch_ident leaves a plain word
- * bare, and ClickHouse then reads index, constraint or projection as the
- * keyword and inf or nan as a Float64 literal, so `WHERE inf = 1` found
- * nothing and `inf > 0` every row, with no error and no recheck.
- */
-static char*
-quote_ident(const char* name) {
-    StringInfoData buf;
-
-    initStringInfo(&buf);
-    appendStringInfoChar(&buf, '"');
-    for (const char* p = name; *p; p++) {
-        if (*p == '"' || *p == '\\') {
-            appendStringInfoChar(&buf, *p == '"' ? '"' : '\\');
-        }
-        appendStringInfoChar(&buf, *p);
-    }
-    appendStringInfoChar(&buf, '"');
-    return buf.data;
-}
 
 /* `idx_<oid>.t_<generation>`: the table the index's metapage names. */
 char*
@@ -91,108 +60,6 @@ chdb_search_table_name(Relation index) {
     return psprintf(
         "idx_%u.t_" UINT64_FORMAT, RelationGetRelid(index), chdb_meta_generation(index)
     );
-}
-
-/*
- * A class's options support function (number 1) says how its columns are
- * stored: ours resolve to the C functions below, which are compared by
- * address, so neither a family's name nor the extension's schema matters,
- * and a class of another extension, or one without the proc, is columnar.
- */
-ChdbColumnKind
-chdb_search_proc_kind(Oid proc) {
-    FmgrInfo finfo;
-
-    if (!OidIsValid(proc)) {
-        return CHDB_COL_COLUMNAR;
-    }
-    fmgr_info(proc, &finfo);
-    if (finfo.fn_addr == chdb_search_text_options) {
-        return CHDB_COL_TEXT;
-    }
-    if (finfo.fn_addr == chdb_search_text_array_options) {
-        return CHDB_COL_TEXT_ARRAY;
-    }
-    return CHDB_COL_COLUMNAR;
-}
-
-static ChdbColumnKind
-kind_of(Relation index, int i) {
-    return chdb_search_proc_kind(index_getprocid(index, i + 1, 1));
-}
-
-/*
- * ClickHouse compares String columns bytewise while Postgres orders text by
- * its collation, and the scan does not recheck: under en_US `author >= 'a'`
- * finds 'ann' and 'Bob' by seqscan but only 'ann' through the index, and a
- * nondeterministic collation even breaks `=`. So a filterable text column
- * needs a bytewise collation, as btree's text_pattern_ops does.
- */
-static void
-check_text_collation(Relation index, int i, Oid typid) {
-    bool bytewise;
-
-    if (typid != TEXTOID && typid != VARCHAROID && typid != BPCHAROID &&
-        typid != NAMEOID) {
-        return;
-    }
-#if PG_VERSION_NUM >= 180000
-    bytewise = pg_newlocale_from_collation(index->rd_indcollation[i])->collate_is_c;
-#else
-    bytewise = lc_collate_is_c(index->rd_indcollation[i]);
-#endif
-    if (!bytewise) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-            errmsg(
-                "chdb columnar_ops on a text column requires a C or POSIX collation"
-            ),
-            errhint("Declare the column COLLATE \"C\" or index (col COLLATE \"C\").")
-        );
-    }
-}
-
-ChdbColumn*
-chdb_search_columns(Relation index) {
-    int natts        = index->rd_att->natts;
-    ChdbColumn* cols = palloc0(sizeof(ChdbColumn) * natts);
-
-    for (int i = 0; i < natts; i++) {
-        Form_pg_attribute a = TupleDescAttr(index->rd_att, i);
-        const char* name    = NameStr(a->attname);
-
-        if (strcmp(name, "ctid") == 0 || strcmp(name, "xmin") == 0) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_RESERVED_NAME),
-                errmsg("column name \"%s\" is reserved by chdb indexes", name),
-                errdetail("The ClickHouse table uses \"ctid\" and \"xmin\" itself.")
-            );
-        }
-        for (int j = 0; j < i; j++) {
-            if (strcmp(NameStr(TupleDescAttr(index->rd_att, j)->attname), name) == 0) {
-                ereport(
-                    ERROR,
-                    errcode(ERRCODE_DUPLICATE_COLUMN),
-                    errmsg("chdb index has two columns named \"%s\"", name),
-                    errhint(
-                        "Give expression columns distinct names with a view or "
-                        "generated column."
-                    )
-                );
-            }
-        }
-
-        cols[i].name = quote_ident(name);
-        cols[i].kind = kind_of(index, i);
-        if (cols[i].kind == CHDB_COL_COLUMNAR) {
-            check_text_collation(index, i, a->atttypid);
-        }
-        cols[i].typid = a->atttypid;
-        cols[i].type = pgch_ch_type_for(a->atttypid, a->atttypmod, a->attnotnull, NULL);
-    }
-    return cols;
 }
 
 /* `ctid UInt64, xmin UInt32, name type, ...`, the Native block's schema. */
@@ -227,7 +94,7 @@ chdb_search_create_sql(Relation index) {
         }
 
         /* The index name is a column name plus a suffix, quoted as a whole. */
-        char* idxname = quote_ident(
+        char* idxname = chdb_search_quote_ident(
             psprintf("%s_idx", NameStr(TupleDescAttr(index->rd_att, i)->attname))
         );
 

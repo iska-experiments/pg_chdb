@@ -115,12 +115,17 @@ chdb_search_skip_index_args(
 extern bool
 chdb_search_wants_phrase_search(Relation index, const ChdbColumn* cols);
 
-/* ---- ddl.c ---- */
+/* ---- columns.c ---- */
+/* `"<name>"`, with quotes and backslashes escaped, whatever the name. */
+extern char*
+chdb_search_quote_ident(const char* name);
 /* The kind of column an operator class with this support function 1 makes. */
 extern ChdbColumnKind
 chdb_search_proc_kind(Oid proc);
 extern ChdbColumn*
 chdb_search_columns(Relation index);
+
+/* ---- ddl.c ---- */
 extern char*
 chdb_search_table_name(Relation index);
 extern char*
