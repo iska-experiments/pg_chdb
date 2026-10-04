@@ -300,7 +300,11 @@ requirement; they travel with every request and apply to the engine's query.
     flushes or merges have changed them under it, so the first search
     after a change pays for reopening the table.
 *   Every byte the engine writes is WAL: a part's files as it flushes them,
-    and again as merges rewrite them. WAL_NUMBERS_PLACEHOLDER
+    and again as merges rewrite them. Measured on 200,000 rows of sixty
+    words with three indexed columns, a build adds 11 bytes of WAL per row
+    to the heap's 532, a bulk insert 20, a merge of every part 5, and a
+    single-row commit writes a part of its own, some 29 kB (4.8 kB for an
+    index on one short column). `dev/benchmark/pagestore.sql` measures it.
 *   `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
 *   The Postgres implementations of the operators tokenize as the default
     pipeline does; other tokenizers are usable through the index only, as

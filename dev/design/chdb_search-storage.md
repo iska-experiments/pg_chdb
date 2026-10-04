@@ -230,7 +230,22 @@ deltas: the heap alone, the build, one transaction of many rows, single-row
 commits (each a flush and a part) and `OPTIMIZE TABLE ... FINAL`, with the
 same script at the stage-1 commit for the share that is the store's.
 
-WAL_NUMBERS_PLACEHOLDER
+Measured on this tree against the stage-1 commit (200,000 rows of sixty
+words from a vocabulary of thirty, three indexed columns, `fsync = off`,
+one machine): the heap alone writes 532 bytes of WAL per row; the index
+build adds 11 bytes per row (2 MB for the 200,000); a bulk insert of
+another 200,000 rows writes 552 bytes per row, 20 of them the index's,
+through a staging table whose parts commit attaches to the table (23 when
+commit copied them with `INSERT ... SELECT`); 200 single-row commits
+write 29 kB each, a part of some twenty-five blobs with their directory
+markers and the metapage, 4.8 kB in the steady state for an index on one
+short column; and `OPTIMIZE TABLE ... FINAL` over the 244 parts of
+400,200 rows writes 0.1 to 2 MB, at most 5 bytes per row, as much as the
+background merges before it have left to merge (three runs). The store
+compresses to some 3% of the heap, and every merge rewrites its inputs
+into the WAL once, so the ClickHouse defaults for `min_bytes_for_wide_part`
+and `max_bytes_to_merge_at_max_space_in_pool` stand: capping merges
+would trade a few bytes of WAL per row for more parts to search.
 
 Two-phase commit: the buffer flushes at `XACT_EVENT_PRE_PREPARE` as it does
 at pre-commit. `ROLLBACK PREPARED` then leaves rows in the store whose heap
