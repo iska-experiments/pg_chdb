@@ -1,9 +1,8 @@
 # Named, not globbed: the control files of the other modules live here too.
 EXTENSION    = chdb
-# The default_version a control file names, so a module's versioned script
-# always matches its control file.
-ctl_version  = $(shell grep -m 1 'default_version' $(1).control | \
-               sed -e "s/[[:space:]]*default_version[[:space:]]*=[[:space:]]*'\([^']*\)',\{0,1\}/\1/")
+# ctl_version, ext_module and libchdb_program, shared with the modules built
+# against pg_chdb elsewhere.
+include src/rules.mk
 EXTVERSION   = $(call ctl_version,$(EXTENSION))
 DISTVERSION  = $(shell grep -m 1 '^[[:space:]]\{2\}"version":' META.json | \
                sed -e 's/[[:space:]]*"version":[[:space:]]*"\([^"]*\)",\{0,1\}/\1/')
@@ -16,9 +15,11 @@ TESTS        ?= $(wildcard test/sql/*.sql)
 REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
 REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION) $(if $(MAX_CONCURRENT_TESTS),--max-concurrent-tests $(MAX_CONCURRENT_TESTS))
 MODULE_big   = $(EXTENSION)
-PG_CONFIG   ?= pg_config
 TAP_TESTS   ?= 1
 OBJS         = $(subst .c,.o, $(wildcard src/*.c))
+
+# The programs linking libchdb, each built by a sub-make beside its sources.
+HELPER       = src/helper/chdb_helper
 
 # One jobserver sized to the machine's processors reaches every sub-make, so a
 # bare make builds with every core; a -j on the command line still wins.
@@ -42,27 +43,11 @@ CLANG_FORMAT ?= clang-format
 LIBCHDB_VERSION ?= v26.9.0
 LIBCHDB_BUILD   ?= dynamic
 
-# Header-only dependencies, vendored as submodules. clickhouse-c comes from
-# pg-clickhouse-c's own pin, its signatures naming clickhouse-c types, so a
-# second checkout on the include path would silently win.
-PGCH_DIR     = $(CURDIR)/vendor/pg-clickhouse-c
-CH_C_DIR     = $(PGCH_DIR)/clickhouse-c
-
-# Suppress annoying pre-c99 warning, error on 	/other warnings.
-PG_CFLAGS    = -Wno-declaration-after-statement -Wall -Werror
-
-# -isystem keeps the vendored headers' warnings out of the -Werror build.
-# PGCH_MSG_PREFIX prefixes messages pg-clickhouse-c raises like our own.
-# clickhouse-c copies what it raises through chc_err.msg, 256 bytes by default,
-# which clips the longer type names out of a decoding error.
-PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chdb: "' \
-               -DCHC_ERR_MSG_LEN=4096
-
 # Clean up generated files.
-EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc src/helper/chdb_helper src/helper/*.o test/schedule*
+EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc test/schedule*
 
-PGXS := $(shell $(PG_CONFIG) --pgxs)
-include $(PGXS)
+# The vendored headers, compiler flags and PGXS, shared with the modules below.
+include src/module.mk
 
 # Set default prove flags.
 ifeq ($(PROVE_FLAGS),)
@@ -72,7 +57,7 @@ endif
 # Build against, install, uninstall a local copy of libchdb.
 ifneq ($(BUNDLE_LIBCHDB),)
 LIBCHDB_DIR = vendor/libchdb-$(LIBCHDB_VERSION)-$(OS)-$(ARCH)
-src/helper/chdb_helper: $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
+$(HELPER): $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
 ifneq ($(LIBCHDB_BUILD),static)
 install: install-libchdb
 uninstall: uninstall-libchdb
@@ -80,12 +65,10 @@ endif
 endif
 
 # Require the versioned SQL script.
-all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper src/hook/chdb_hook$(DLSUFFIX)
+all: sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX)
 
-# PGXS tracks no header dependencies, and the vendored libraries are all header.
-# *.bc compiles same sources, so needs same headers.
-$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h \
-                        $(wildcard src/*.h $(PGCH_DIR)/*.h $(CH_C_DIR)/*.h)
+# The vendored headers are module.mk's; clickhouse.h first, as fetching it is a rule.
+$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h $(wildcard src/*.h)
 
 # Versioned SQL script.
 sql/$(EXTENSION)--$(EXTVERSION).sql: sql/$(EXTENSION).sql
@@ -98,7 +81,7 @@ src/version.h: META.json
 # Hook module.
 HOOK_MODULE := src/hook/chdb_hook$(DLSUFFIX)
 $(HOOK_MODULE): $(wildcard src/hook/*.c src/hook/*.h) $(OBJS)
-	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) NO_FILE_SCHEME=$(NO_FILE_SCHEME)
+	@$(MAKE) -C $(dir $@) all NO_FILE_SCHEME=$(NO_FILE_SCHEME)
 
 # Install and uninstall the chdb_hook module.
 install-hook: $(HOOK_MODULE)
@@ -108,48 +91,41 @@ uninstall-hook:
 install: install-hook
 uninstall: uninstall-hook
 
-# An extension module of its own: built by a sub-make under src/<name>/ and
-# installed here like chdb_hook, with its control file and versioned script.
-# Eval it below this point, once PGXS has set DLSUFFIX:
-#   $(eval $(call ext_module,chdb_<name>,<extra prerequisites>,<sub-make arguments>))
-define ext_module
-$(1)_VERSION := $$(call ctl_version,$(1))
-$(1)_SO := src/$(patsubst chdb_%,%,$(1))/$(1)$$(DLSUFFIX)
-$$($(1)_SO): $$(wildcard $$(dir $$($(1)_SO))*.c $$(dir $$($(1)_SO))*.h) $(2)
-	@$$(MAKE) -C $$(dir $$@) all $(3)
-sql/$(1)--$$($(1)_VERSION).sql: sql/$(1).sql
-	cp $$< $$@
-install-$(patsubst chdb_%,%,$(1)): $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
-	$$(INSTALL_SHLIB) $$< '$$(DESTDIR)$$(pkglibdir)/'
-	$$(MKDIR_P) '$$(DESTDIR)$$(datadir)/extension'
-	$$(INSTALL_DATA) $(1).control sql/$(1)--$$($(1)_VERSION).sql '$$(DESTDIR)$$(datadir)/extension/'
-uninstall-$(patsubst chdb_%,%,$(1)):
-	rm -f $$(DESTDIR)$$(pkglibdir)/$(1)$$(DLSUFFIX)
-	rm -f $$(DESTDIR)$$(datadir)/extension/$(1).control $$(DESTDIR)$$(datadir)/extension/$(1)--$$($(1)_VERSION).sql
-all: $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
-install: install-$(patsubst chdb_%,%,$(1))
-uninstall: uninstall-$(patsubst chdb_%,%,$(1))
-EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc
-endef
-
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
 	git submodule update --init --recursive
 
-# The only program linking libchdb, kept beside the library that starts it.
-src/helper/chdb_helper: $(wildcard src/helper/*.c) src/setup.h
-	@$(MAKE) -C $(dir $@) all LIBCHDB_DIR=$(LIBCHDB_DIR) LIBCHDB_BUILD=$(LIBCHDB_BUILD)
+# chdb_helper answers one COPY.
+$(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
 
-# Install the helper. Write beside the live copy and rename over it: install
-# unlinks its target first, so a COPY starting in that moment finds no helper.
-# rename leaves no such gap.
-install-helper: src/helper/chdb_helper
-	@to=$(DESTDIR)$(pkglibdir)/chdb_helper; \
-	  $(INSTALL_PROGRAM) $< $$to.new && mv -f $$to.new $$to
-uninstall-helper:
-	rm -f $(DESTDIR)$(pkglibdir)/chdb_helper
-install: install-helper
-uninstall: uninstall-helper
+# What extensions built against pg_chdb link and include: the objects every
+# module here links but chdb.o, archived as libpgchdb.a into pkglibdir, and
+# the headers, the Makefiles they are built with and the vendored headers,
+# under the server's include directory in extension/chdb, where PGXS's
+# HEADERS would put a module's own. chdb.mk names where they went.
+CHDB_LIB       := src/libpgchdb.a
+CHDB_HEADERS   := $(addprefix src/,channel.h gucs.h helper.h module.h native.h \
+                  native_insert.h native_writer.h setup.h spawn.h srf.h)
+CHDB_MAKEFILES := $(addprefix src/,libchdb.mk module.mk rules.mk)
+chdb_incdir     = $(includedir_server)/extension/chdb
+$(CHDB_LIB): $(filter-out src/chdb.o,$(OBJS))
+	rm -f $@ && $(AR) $(AROPT) $@ $^
+all: $(CHDB_LIB)
+EXTRA_CLEAN += $(CHDB_LIB)
+
+install-headers: $(CHDB_LIB)
+	$(MKDIR_P) '$(DESTDIR)$(chdb_incdir)/vendor/pg-clickhouse-c/clickhouse-c'
+	$(INSTALL_DATA) $(CHDB_HEADERS) $(CHDB_MAKEFILES) '$(DESTDIR)$(chdb_incdir)/'
+	$(INSTALL_DATA) $(wildcard $(PGCH_DIR)/*.h) '$(DESTDIR)$(chdb_incdir)/vendor/pg-clickhouse-c/'
+	$(INSTALL_DATA) $(wildcard $(CH_C_DIR)/*.h) '$(DESTDIR)$(chdb_incdir)/vendor/pg-clickhouse-c/clickhouse-c/'
+	sed -e 's|@VERSION@|$(DISTVERSION)|' -e 's|@INCLUDEDIR@|$(chdb_incdir)|' \
+	    -e 's|@PKGLIBDIR@|$(pkglibdir)|' src/chdb.mk.in > '$(DESTDIR)$(chdb_incdir)/chdb.mk'
+	$(INSTALL_STLIB) $(CHDB_LIB) '$(DESTDIR)$(pkglibdir)/'
+uninstall-headers:
+	rm -rf '$(DESTDIR)$(chdb_incdir)' '$(DESTDIR)$(pkglibdir)/$(notdir $(CHDB_LIB))'
+install: install-headers
+uninstall: uninstall-headers
+.PHONY: install-headers uninstall-headers
 
 .PHONY: test/schedule$(MAX_CONCURRENT_TESTS)
 test/schedule$(MAX_CONCURRENT_TESTS): schedule = $(if $(TESTS),$(patsubst test/sql/%.sql,%,$(TESTS)),)
@@ -238,6 +214,3 @@ kv-rest:
 
 start-kv-rest: kv-rest
 	KVREST_PORT="$${KVREST_PORT:-9182}" ./kv-rest &
-
-# Run make print-VARIABLE_NAME to print VARIABLE_NAME's flavor and value.
-print-%	: ; $(info $* is $(flavor $*) variable set to "$($*)") @true

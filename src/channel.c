@@ -9,8 +9,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "mb/pg_wchar.h"
 #include "miscadmin.h"
+#include "portability/instr_time.h"
+#include "postmaster/interrupt.h"
 #include "storage/latch.h"
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
@@ -33,8 +34,10 @@ chdb_channel_init(chdbChannel* ch, int data, int err) {
     memset(ch, 0, sizeof(*ch));
     ch->data      = data;
     ch->err       = err;
+    ch->aside_fd  = -1;
     ch->recv_what = "error receiving from chDB";
     ch->send_what = "error sending to chDB";
+    ch->wait_what = "timed out waiting for chDB";
 }
 
 void
@@ -79,16 +82,66 @@ chdb_channel_prepare_fd(int fd) {
     set_flag(fd, F_GETFL, F_SETFL, O_NONBLOCK);
 }
 
-/* Sleeps until `fd` is ready, letting a cancel or a shutdown through. */
+/* Waits for `fd` or the aside descriptor, serving the latter when it is ready. */
 static void
-wait_fd(int fd, uint32 event) {
-    WaitLatchOrSocket(
-        MyLatch,
-        event | WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
-        fd,
-        CHDB_CHANNEL_POLL_MS,
-        PG_WAIT_EXTENSION
-    );
+wait_either(chdbChannel* ch, int fd, uint32 event, long timeout) {
+    WaitEvent events[2];
+    WaitEventSet* set = CreateWaitEventSet(NULL, 4);
+    bool aside        = false;
+
+    AddWaitEventToSet(set, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
+    AddWaitEventToSet(set, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET, NULL, NULL);
+    AddWaitEventToSet(set, event, fd, NULL, NULL);
+    AddWaitEventToSet(set, WL_SOCKET_READABLE, ch->aside_fd, NULL, &aside);
+
+    int n = WaitEventSetWait(set, timeout, events, lengthof(events), PG_WAIT_EXTENSION);
+
+    FreeWaitEventSet(set);
+    for (int i = 0; i < n; i++) {
+        if (events[i].user_data == &aside) {
+            ch->aside(ch);
+        }
+    }
+}
+
+/*
+ * Sleeps until `fd` is ready, letting a cancel or a shutdown through. While
+ * interrupts are held none gets through, so a channel with a hold timeout
+ * fails once the waits of one call, timed from the first in `since`, have
+ * spent it: a peer that never answers would otherwise hang the backend past
+ * pg_cancel_backend, pg_terminate_backend and statement_timeout.
+ */
+static void
+wait_fd(chdbChannel* ch, int fd, uint32 event, instr_time* since) {
+    long timeout = CHDB_CHANNEL_POLL_MS;
+
+    if (ch->hold_timeout_ms > 0 && InterruptHoldoffCount > 0) {
+        instr_time now;
+
+        INSTR_TIME_SET_CURRENT(now);
+        if (INSTR_TIME_IS_ZERO(*since)) {
+            *since = now;
+        }
+        INSTR_TIME_SUBTRACT(now, *since);
+
+        long left = ch->hold_timeout_ms - (long)INSTR_TIME_GET_MILLISEC(now);
+
+        if (left <= 0) {
+            ch->fail(ch, ch->wait_what, ETIMEDOUT);
+        }
+        timeout = Min(timeout, left);
+    }
+    if (ch->aside_fd >= 0) {
+        wait_either(ch, fd, event, timeout);
+    } else {
+        WaitLatchOrSocket(
+            MyLatch,
+            event | WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+            fd,
+            timeout,
+            PG_WAIT_EXTENSION
+        );
+    }
     ResetLatch(MyLatch);
 }
 
@@ -117,57 +170,28 @@ drain_err(chdbChannel* ch) {
 
 void
 chdb_channel_drain_err(chdbChannel* ch) {
+    instr_time since = { 0 };
+
     while (ch->err >= 0) {
         CHECK_FOR_INTERRUPTS();
         drain_err(ch);
         if (ch->err >= 0) {
-            wait_fd(ch->err, WL_SOCKET_READABLE);
+            wait_fd(ch, ch->err, WL_SOCKET_READABLE, &since);
         }
     }
 }
 
-/*
- * The capture stops at whatever byte filled the buffer, so pull the cut back
- * to a character boundary: half a character reaches the client as text and
- * fails its encoding check.
- */
-const char*
-chdb_channel_error(chdbChannel* ch) {
-    /* Strip trailing newlines. */
-    while (ch->err_len && (ch->err_buf[ch->err_len - 1] == '\n' ||
-                           ch->err_buf[ch->err_len - 1] == '\r')) {
-        ch->err_len--;
-    }
-    ch->err_len =
-        (size_t)pg_encoding_mbcliplen(PG_UTF8, ch->err_buf, ch->err_len, ch->err_len);
-    ch->err_buf[ch->err_len] = '\0';
-    if (!ch->err_len) {
-        return NULL;
-    }
-
-    const char* id  = strstr(ch->err_buf, "Request ID:");
-    const char* eol = id ? strchr(id, '\n') : NULL;
-    if (eol) {
-        memmove((char*)id, eol + 1, strlen(eol + 1) + 1);
-        ch->err_len = strlen(ch->err_buf);
-    }
-
-    const char* version = strstr(ch->err_buf, " (version ");
-    const char* close   = version ? strchr(version, ')') : NULL;
-    if (close) {
-        memmove((char*)version, close + 1, strlen(close + 1) + 1);
-        ch->err_len = strlen(ch->err_buf);
-    }
-
-    return ch->err_buf;
-}
-
 bool
 chdb_channel_try_write(chdbChannel* ch, int fd, const void* p, size_t len) {
-    const char* at = p;
+    const char* at   = p;
+    instr_time since = { 0 };
 
     while (len) {
         CHECK_FOR_INTERRUPTS();
+        if (ShutdownRequestPending) {
+            errno = ECANCELED;
+            return false;
+        }
         ssize_t put = write(fd, at, len);
 
         if (put > 0) {
@@ -175,7 +199,7 @@ chdb_channel_try_write(chdbChannel* ch, int fd, const void* p, size_t len) {
             len -= put;
         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
             drain_err(ch);
-            wait_fd(fd, WL_SOCKET_WRITEABLE);
+            wait_fd(ch, fd, WL_SOCKET_WRITEABLE, &since);
         } else if (errno != EINTR) {
             return false;
         }
@@ -197,9 +221,11 @@ chdb_channel_send_exact(chdbChannel* ch, const void* p, size_t len) {
  */
 static size_t
 read_some(chdbChannel* ch, void* buf, size_t len) {
+    instr_time since = { 0 };
+
     for (;;) {
         CHECK_FOR_INTERRUPTS();
-        if (ch->data < 0) {
+        if (ch->data < 0 || ShutdownRequestPending) {
             ch->fail(ch, ch->recv_what, 0);
         }
 
@@ -213,7 +239,7 @@ read_some(chdbChannel* ch, void* buf, size_t len) {
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             drain_err(ch);
-            wait_fd(ch->data, WL_SOCKET_READABLE);
+            wait_fd(ch, ch->data, WL_SOCKET_READABLE, &since);
         } else if (errno != EINTR) {
             ch->fail(ch, ch->recv_what, errno);
         }
@@ -243,7 +269,7 @@ next_chunk(chdbChannel* ch) {
             return false;
         }
         chdb_channel_recv_exact(ch, &ch->chunk_left, sizeof(ch->chunk_left));
-        if (ch->chunk_left > CHDB_CHANNEL_CHUNK_MAX) {
+        if (ch->chunk_left > CHDB_CHUNK_MAX) {
             ch->fail(ch, "bad chunk from chDB", 0);
         }
         ch->data_ended = ch->chunk_left == 0;
@@ -283,7 +309,7 @@ chdb_channel_write(chdbChannel* ch, const void* p, size_t len) {
     const char* at = p;
 
     while (len) {
-        uint32_t n = ch->chunked ? (uint32_t)Min(len, CHDB_CHANNEL_CHUNK_MAX)
+        uint32_t n = ch->chunked ? (uint32_t)Min(len, CHDB_CHUNK_MAX)
                                  : (uint32_t)Min(len, UINT32_MAX);
 
         if (ch->chunked) {

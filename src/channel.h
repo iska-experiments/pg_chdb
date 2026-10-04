@@ -3,26 +3,30 @@
 
 #include "postgres.h"
 
+#include "setup.h" /* CHDB_CHUNK_MAX bounds a chunk */
+
 /*
  * A duplex byte channel to a process that runs chDB, with an optional pipe for
- * its error text. Two ways open one: helper.c forks chdb_helper for a COPY,
- * and the chdb_search client connects to the worker's socket. Past that, both
- * trade Native blocks the same way, so native.c takes a channel and neither
- * side carries its own copy of the waiting, interrupt and cleanup code.
+ * its error text. helper.c forks chdb_helper for a COPY on one; an extension
+ * built against pg_chdb may open one on a socket to a process of its own.
+ * Past that, all trade Native blocks the same way, so native.c takes a
+ * channel and no caller carries its own copy of the waiting, interrupt and
+ * cleanup code.
  *
  * The descriptors are nonblocking. Every wait is on the latch, so a cancel or
- * a shutdown gets through, and the error pipe is drained whenever the data
- * channel would block, since a full pipe stalls the peer.
+ * a shutdown gets through, a background worker's ShutdownRequestPending among
+ * them, and the error pipe is drained whenever the data channel would block,
+ * since a full pipe stalls the peer. While interrupts are held, as they are in
+ * a transaction's commit and abort callbacks, nothing gets through, so a
+ * channel given a hold timeout fails instead once a call has waited that long.
  *
  * A channel is either plain, where end of stream is end of data, or chunked:
  * uint32 byte count and that many bytes, ended by a zero count. The chunked
- * form lets one connection carry many requests.
+ * form lets one connection carry many requests, and CHDB_CHUNK_MAX of setup.h
+ * bounds a chunk.
  */
 
 #define CHDB_CHANNEL_ERR_MAX 4096
-
-/* Largest chunk either side will take, so a corrupt count cannot size a buffer. */
-#define CHDB_CHANNEL_CHUNK_MAX (8 * 1024 * 1024)
 
 typedef struct chdbChannel chdbChannel;
 
@@ -37,6 +41,20 @@ struct chdbChannel {
     /* What went wrong, for the message when a read or write breaks. */
     const char* recv_what;
     const char* send_what;
+    const char* wait_what; /* a hold timeout spent */
+
+    /* Milliseconds a call may wait while interrupts are held; 0 for no bound. */
+    int hold_timeout_ms;
+
+    /*
+     * A second descriptor to watch while a call waits, -1 for none, and what
+     * to do when it is readable, which may raise. A chDB child that makes
+     * requests of its own on another socket while its parent waits on it for
+     * a reply would wait forever for the answer unless the parent served
+     * them from inside its wait.
+     */
+    int aside_fd;
+    void (*aside)(chdbChannel* ch);
 
     /* Raises. `errnum` is zero for a peer that simply went away. */
     void (*fail)(chdbChannel* ch, const char* what, int errnum);
@@ -106,5 +124,13 @@ chdb_channel_drain_err(chdbChannel* ch);
  */
 extern const char*
 chdb_channel_error(chdbChannel* ch);
+
+/*
+ * Drops what differs between runs of one chDB error from the NUL-terminated
+ * `msg` of `len` bytes: the Request ID line and the version suffix. Returns the
+ * new length. For error text that arrived whole, outside a channel's capture.
+ */
+extern size_t
+chdb_channel_scrub_error(char* msg, size_t len);
 
 #endif /* CHDB_CHANNEL_H */

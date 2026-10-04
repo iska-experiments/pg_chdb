@@ -1,10 +1,13 @@
 /*
  * Support CREATE TABLE using columns and optional rows from URL supported by chDB
- * Get columns from explicit structure or infer them with DESCRIBE
+ * Get columns from explicit structure or infer them with DESCRIBE, and copy the
+ * rows into the new relation
  */
 
 #include "postgres.h"
 
+#include "access/table.h"
+#include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -15,6 +18,9 @@
 
 #include "../native.h"
 #include "create.h"
+#include "options.h"
+#include "relation.h"
+#include "url.h"
 
 /* Remove `name` from `create` options and return its value, or NULL if absent */
 static char*
@@ -237,4 +243,75 @@ chdb_url_columns(chdbCopyContext* ctx) {
     pfree(structure.data);
 
     return columns;
+}
+
+/*
+ * Parse URL from CREATE TABLE option
+ * Reject unsupported schemes and check server file privileges for file URLs
+ */
+static scheme
+option_url_scheme(const char* url, const char* option) {
+    scheme scheme = chdb_url_scheme(url);
+
+    if (scheme == no_scheme) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+            errmsg(
+                "chdb: cannot read URL \"%s\" specified by option \"%s\"", url, option
+            )
+        );
+    }
+    if (scheme == file_scheme) {
+        chdb_check_server_file_privileges(true);
+    }
+
+    return scheme;
+}
+
+/*
+ * Add columns inferred from URL to `create`
+ * Store URL options in `from` and chDB options in `ctx` for subsequent copy
+ */
+void
+chdb_create_columns_from_url(
+    CreateStmt* create,
+    chdbCreateFromURL* from,
+    chdbCopyContext* ctx
+) {
+    List* storage = NIL;
+
+    chdb_create_from_url(create, from);
+
+    /* Pass data options to chDB and keep PostgreSQL storage parameters */
+    chdb_copy_options(ctx, create->options, &storage);
+    create->options = storage;
+
+    if (from->structure_url) {
+        ctx->url          = from->structure_url;
+        ctx->scheme       = option_url_scheme(ctx->url, CHDB_STRUCTURE_FROM);
+        create->tableElts = chdb_url_columns(ctx);
+    }
+}
+
+/* Copy rows from `url` into newly created `relation` */
+void
+chdb_copy_url_into(RangeVar* relation, char* url, chdbCopyContext* ctx) {
+    CopyStmt* copy = makeNode(CopyStmt);
+
+    copy->relation = relation;
+    copy->is_from  = true;
+    copy->filename = url;
+
+    ctx->url      = url;
+    ctx->scheme   = option_url_scheme(url, CHDB_COPY_FROM);
+    ctx->cmd_type = CHDB_CMD_SELECT;
+
+    /* Make newly created relation visible */
+    CommandCounterIncrement();
+    chdb_open_copy_relation(copy, ctx);
+    chdb_copy(ctx);
+
+    /* Keep relation lock until transaction ends */
+    table_close(ctx->rel, NoLock);
 }

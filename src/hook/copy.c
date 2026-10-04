@@ -1,13 +1,11 @@
 /*
- * Turning a COPY into a chDB query and running it through a helper process.
+ * Running a COPY through a chDB helper process: the structure clause of the
+ * columns it moves, the query of tablefunc.c, and the Native stream of
+ * native.h in the direction the command wants.
  */
-
-#include <inttypes.h>
-#include <math.h>
 
 #include "postgres.h"
 
-#include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/rel.h"
@@ -17,43 +15,9 @@
 
 #include "../helper.h"
 #include "../native.h"
+#include "../native_writer.h"
 #include "copy.h"
-
-/*
- * The names of the ClickHouse functions that correspond to each supported URL
- * scheme.
- */
-static char const* const table_function[] = {
-    [http_scheme] = "url",
-    [s3_scheme]   = "s3",
-    [gcs_scheme]  = "gcs", /* Alias of s3, but keep it explicit.*/
-    [az_scheme]   = "azureBlobStorage",
-    [abfs_scheme] = "azureBlobStorage",
-    [file_scheme] = "file",
-    [hdfs_scheme] = "hdfs",
-};
-
-/*
- * Decomposition of an Azure URL into the arguments that `azureBlobStorage()`
- * expects.
- */
-typedef struct azureURLParts {
-    char* account_url;
-    char* container;
-    char* path;
-} azureURLParts;
-
-/* Creates the chDB query for a COPY. */
-static size_t
-make_ch_query(chdbCopyContext* ctx, StringInfo query, char** names, char** values);
-
-/* Parses `url` into `parts`. */
-static void
-parse_azure_url(chdbCopyContext*, azureURLParts* parts);
-
-/* Extracts and returns the local file path from `url`. */
-static char*
-get_local_path_from_file_url(const char* url);
+#include "tablefunc.h"
 
 /*
  * Structure clause for the columns `attnums` names, similar to how
@@ -76,7 +40,7 @@ structure_for_attnums(TupleDesc desc, List* attnums) {
             &buf,
             "%s %s",
             pgch_quote_ch_ident(NameStr(attr->attname)),
-            pgch_ch_type_for(attr->atttypid, attr->atttypmod, attr->attnotnull, NULL)
+            chdb_ch_type_for(attr->atttypid, attr->atttypmod, attr->attnotnull)
         );
     }
 
@@ -157,7 +121,7 @@ chdb_copy(chdbCopyContext* ctx) {
 
     char* names[CHDB_MAX_TABLEFUNC_ARGS];
     char* values[CHDB_MAX_TABLEFUNC_ARGS];
-    size_t param_count = make_ch_query(ctx, &ch_query, names, values);
+    size_t param_count = chdb_table_function_query(ctx, &ch_query, names, values);
 
     /* Hand off to the helper. */
     chdbHelperContext hcx = {
@@ -201,7 +165,7 @@ chdb_describe(chdbCopyContext* ctx) {
     }
     initStringInfo(&ch_query);
 
-    size_t param_count    = make_ch_query(&describe, &ch_query, names, values);
+    size_t param_count = chdb_table_function_query(&describe, &ch_query, names, values);
     chdbHelperContext hcx = {
         .cmd         = describe.cmd_type,
         .max_memory  = describe.max_memory,
@@ -215,368 +179,4 @@ chdb_describe(chdbCopyContext* ctx) {
     chdb_helper_finish(helper);
 
     return columns;
-}
-
-/* Convenience constant function to append a parameter to a query. */
-#define PARAM(format, name, val)                                                       \
-    Assert(i + 1 <= CHDB_MAX_TABLEFUNC_ARGS);                                          \
-    appendStringInfoString(query, format);                                             \
-    names[i]  = name;                                                                  \
-    values[i] = val;                                                                   \
-    i++;
-
-#define GCS_HOST "storage.googleapis.com"
-#define AWS_HOST ".amazonaws.com"
-
-/* Truncate on insert changes nothing outside INSERT INTO FUNCTION */
-static const char*
-truncate_setting(chdbCopyContext* ctx, const char* setting) {
-    return ctx->cmd_type == CHDB_CMD_INSERT ? setting : "";
-}
-
-static size_t
-make_ch_query(chdbCopyContext* ctx, StringInfo query, char** names, char** values) {
-    /* Start the query. */
-    appendStringInfo(
-        query,
-        "%s %s(",
-        ctx->cmd_type == CHDB_CMD_DESCRIBE ? "DESCRIBE TABLE"
-        : ctx->cmd_type == CHDB_CMD_SELECT ? "SELECT * FROM"
-                                           : "INSERT INTO FUNCTION",
-        table_function[ctx->scheme]
-    );
-
-    /*
-     * TODO: For streaming queries, the buffer is sized to fit one block of
-     * output: each fetch returns up to max_block_size rows (default 65409).
-     * Consider estimating row size and adjusting the batch size accordingly.
-     * Use `SETTINGS max_block_size = N` to set it per-query.
-     */
-
-    size_t i = 0;
-    /* chDB infers a format the copy did not name from the file extension. */
-    char* format = ctx->format[0] ? ctx->format : "auto";
-
-    switch (ctx->scheme) {
-    case s3_scheme:
-    case gcs_scheme: {
-        /*
-         * https://clickhouse.com/docs/sql-reference/table-functions/s3#syntax
-         * https://clickhouse.com/docs/sql-reference/table-functions/gcs#syntax
-         */
-
-        /* First parameter: the base URL. */
-        char* uri = strstr(ctx->url, "://");
-        if (!uri) {
-            /* Should not happen, validated by the hook. */
-            elog(
-                ERROR,
-                "chdb: malformed %s URL %s",
-                table_function[ctx->scheme],
-                ctx->url
-            );
-        }
-        uri += strlen("://");
-        char* slash = strchr(uri, '/');
-
-        if (ctx->scheme == s3_scheme) {
-            if (slash && slash - uri >= strlen(AWS_HOST) &&
-                !pg_strncasecmp(slash - strlen(AWS_HOST), AWS_HOST, strlen(AWS_HOST))) {
-                /* s3://{bucket}.s3.{region}.amazonaws.com/{path} */
-                PARAM("{url:String}", "url", psprintf("https://%s", uri));
-            } else {
-                /* s3://{bucket}/{path} */
-                PARAM("{url:String}", "url", ctx->url);
-            }
-        } else {
-            /* If it contains the host name, just emit. */
-            if (slash && (slash - uri) >= strlen(GCS_HOST) &&
-                !pg_strncasecmp(uri, GCS_HOST, strlen(GCS_HOST))) {
-                /* gs://storage.googleapis.com/{bucket}/{path} */
-                PARAM("{url:String}", "url", psprintf("https://%s", uri));
-            } else {
-                /* gs://{bucket}/{path} */
-                PARAM("{url:String}", "url", psprintf("https://%s/%s", GCS_HOST, uri));
-            }
-        }
-
-        if (ctx->access_key[0] != '\0') {
-            /* access_key implies access secret and maybe s3 session_token. */
-            PARAM(", {access_key:String}", "access_key", ctx->access_key);
-            PARAM(", {access_secret:String}", "access_secret", ctx->access_secret);
-            if (ctx->session_token[0] != '\0' && ctx->scheme == s3_scheme) {
-                PARAM(", {session_token:String}", "session_token", ctx->session_token);
-            }
-        } else {
-            /*
-             * Consider adding a superuser-only GUC to allow using environment
-             * or file credentials. If enabled we'd simply omit this parameter
-             * and append the `s3_allow_server_credentials_in_user_queries=1`
-             * setting.
-             */
-            appendStringInfoString(query, ", NOSIGN");
-        }
-
-        /* Append remaining arguments and settings. */
-        PARAM(", {format:String}", "format", format);
-        PARAM(", {structure:String}", "structure", ctx->structure);
-        if (ctx->compression[0] != '\0') {
-            PARAM(", {compression:String}", "compression", ctx->compression);
-        }
-        appendStringInfo(
-            query,
-            ") SETTINGS %ss3_request_timeout_ms = %u",
-            truncate_setting(ctx, "s3_truncate_on_insert = 1, "),
-            ctx->timeout
-        );
-        break;
-    }
-    case http_scheme:
-        /* https://clickhouse.com/docs/sql-reference/table-functions/url#syntax */
-
-        /* First parameter: the base URL. */
-        PARAM("{url:String}", "url", ctx->url);
-        PARAM(", {format:String}", "format", format);
-        PARAM(", {structure:String}", "structure", ctx->structure);
-        appendStringInfo(
-            query,
-            ") SETTINGS http_connection_timeout=%u, http_max_tries=1",
-            (uint32_t)ceil(ctx->timeout / (double)1000)
-        );
-        break;
-    case az_scheme:
-    case abfs_scheme: {
-        /*
-         * https://clickhouse.com/docs/sql-reference/table-functions/azureBlobStorage#syntax
-         */
-
-        /* Parse the Azure URL to get the account URL, container, and path. */
-        azureURLParts parts;
-        parse_azure_url(ctx, &parts);
-
-        /* Append required args. */
-        PARAM("{url:String}", "url", parts.account_url);
-        PARAM(", {container:String}", "container", parts.container);
-        PARAM(", {path:String}", "path", parts.path);
-        PARAM(", {account_name:String}", "account_name", ctx->access_key);
-        PARAM(", {account_key:String}", "account_key", ctx->access_secret);
-
-        /* Append remaining arguments (different order from the others) and
-         * settings. */
-        PARAM(", {format:String}", "format", format);
-        PARAM(
-            ", {compression:String}",
-            "compression",
-            ctx->compression[0] ? ctx->compression : "auto"
-        );
-        PARAM(", {structure:String}", "structure", ctx->structure);
-        appendStringInfo(
-            query,
-            ") SETTINGS %sazure_request_timeout_ms=%u",
-            truncate_setting(ctx, "azure_truncate_on_insert = 1, "),
-            ctx->timeout
-        );
-        break;
-    }
-    case file_scheme:
-        /* https://clickhouse.com/docs/sql-reference/table-functions/file#syntax */
-
-        /* First parameter: the path to the file. */
-        PARAM("{path:String}", "path", get_local_path_from_file_url(ctx->url));
-
-        /* Append remaining arguments and settings. */
-        PARAM(", {format:String}", "format", format);
-        PARAM(", {structure:String}", "structure", ctx->structure);
-        if (ctx->compression[0] != '\0') {
-            PARAM(", {compression:String}", "compression", ctx->compression);
-        }
-        appendStringInfo(
-            query,
-            ")%s",
-            truncate_setting(ctx, " SETTINGS engine_file_truncate_on_insert=1")
-        );
-        break;
-    case hdfs_scheme:
-        /* https://clickhouse.com/docs/sql-reference/table-functions/hdfs#syntax */
-
-        /* First parameter: the base URL. */
-        PARAM("{url:String}", "url", ctx->url);
-
-        /* Append remaining arguments and settings. */
-        PARAM(", {format:String}", "format", format);
-        PARAM(", {structure:String}", "structure", ctx->structure);
-        appendStringInfo(
-            query, ")%s", truncate_setting(ctx, " SETTINGS hdfs_truncate_on_insert = 1")
-        );
-        break;
-    default:
-        elog(ERROR, "unsupported URL scheme %d", ctx->scheme);
-        break;
-    }
-
-    /* file and hdfs name a setting only for INSERT, so DESCRIBE may open the clause */
-    if (ctx->cmd_type == CHDB_CMD_DESCRIBE) {
-        bool joins = ctx->scheme != file_scheme && ctx->scheme != hdfs_scheme;
-
-        appendStringInfo(
-            query, "%sdescribe_compact_output=1", joins ? ", " : " SETTINGS "
-        );
-    } else if (ctx->cmd_type == CHDB_CMD_SELECT && ctx->preserve_nested) {
-        bool joins = ctx->scheme != file_scheme && ctx->scheme != hdfs_scheme;
-
-        /* Table functions parse structure per query; keep Nested fields together. */
-        appendStringInfo(query, "%sflatten_nested=0", joins ? ", " : " SETTINGS ");
-    }
-
-    if (
-#if PG_VERSION_NUM >= 190000
-        log_min_messages[MyBackendType] <= DEBUG1
-#else
-        log_min_messages <= DEBUG1
-#endif
-    ) {
-        /* Reassemble params for logging. */
-        StringInfoData params;
-        initStringInfo(&params);
-        bool first = true;
-        for (size_t j = 0; j < i; j++) {
-            if (!first) {
-                appendStringInfoString(&params, ", ");
-            }
-            appendStringInfo(&params, "%s: \"%s\"", names[j], values[j]);
-            first = false;
-        }
-
-        /* Log the query and params for the TAP tests to examine. */
-        ereport(
-            LOG_SERVER_ONLY,
-            errmsg("executing chDB query"),
-            errdetail("query: %s", query->data),
-            errcontext("params: { %s }", params.data)
-        );
-    }
-
-    return i;
-}
-
-/*
-* Decomposition of an Azure URL into the arguments the `azureBlobStorage`
-  engine expects.
-*/
-static void
-parse_azure_url(chdbCopyContext* ctx, azureURLParts* parts) {
-    /*
-     * Based on Azure URL parsing for the url() function in ClickHouse 26.7:
-     * https://github.com/ClickHouse/ClickHouse/blob/0b235b0/src/Storages/StorageURL.cpp#L2016-L2087
-     */
-    char* uri = strstr(ctx->url, "://");
-    if (!uri) {
-        /* Should not happen, validated by the hook. */
-        elog(ERROR, "chdb: malformed Azure URL %s", ctx->url);
-    }
-
-    uri += 3;
-
-    /*
-     * Split off the query string (a SAS token such as `?sp=...&sig=...`)
-     * before parsing the host and path.
-     */
-    char* query = strchr(uri, '?');
-    if (query) {
-        /* NUL terminate the URL and split off the query. */
-        *query = '\0';
-        query++;
-    }
-
-    /*
-     * Hadoop-style
-     * `abfss://<container>@<account>.dfs.core.windows.net/<blob path>`.
-     */
-    if (ctx->scheme == abfs_scheme) {
-        char* at = strchr(uri, '@');
-        if (!at) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                errmsg("chdb: Azure ABFS URL missing the container part"),
-                errhint("abfs://<container>@<account>.dfs.core.windows.net/<path>")
-            );
-        }
-
-        parts->container    = pnstrdup(uri, at - uri);
-        char* host_and_path = at + 1;
-        char* slash         = strchr(host_and_path, '/');
-        char* host =
-            slash ? pnstrdup(host_and_path, slash - host_and_path) : host_and_path;
-        parts->path        = slash ? slash + 1 : "";
-        char* dot          = strchr(host, '.');
-        char* account      = dot ? host : psprintf("%s.blob.core.windows.net", host);
-        parts->account_url = query ? psprintf("https://%s?%s", account, query)
-                                   : psprintf("https://%s", account);
-        return;
-    }
-
-    /*
-     * `<account>.blob.core.windows.net/<container>/<blob>` or
-     * `<host>/<container>/<blob>`.
-     */
-    char* path = strstr(uri, "/");
-
-    /*
-     * `az://<account>.blob.core.windows.net/<container>/<blob>` or
-     * `azure://<host>/<container>/<blob>`
-     */
-    const char* host = path ? pnstrdup(uri, path - uri) : uri;
-    path             = path ? path + 1 : "";
-
-    const char* dot = strchr(host, '.');
-    if (!dot) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-            errmsg("chdb: Azure URL missing the storage account host"),
-            errhint("az://<account>.blob.core.windows.net/<container>/<path>")
-        );
-    }
-
-    parts->account_url =
-        query ? psprintf("https://%s?%s", host, query) : psprintf("https://%s", host);
-    char* slash = strchr(path, '/');
-    parts->container =
-        slash ? pnstrdup(path, slash - path) : pnstrdup(path, strlen(path));
-    parts->path = slash ? slash + 1 : "";
-
-    if (strlen(parts->container) == 0) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-            errmsg("chdb: Azure URL missing the container name"),
-            errhint("az://<account>.blob.core.windows.net/<container>/<path>")
-        );
-    }
-}
-
-/*
- * Get the local path from a file:// URL. Must be an absolute path or else it
- * raises an error.
- */
-static char*
-get_local_path_from_file_url(const char* url) {
-    /* https://github.com/ClickHouse/ClickHouse/blob/0b235b0/src/Storages/StorageURL.cpp#L2000-L2014*/
-    char* path = (char*)strstr(url, "://"); /* borrowed from url */
-    if (!path) {
-        /* Should not happen, validated by the hook. */
-        elog(ERROR, "chdb: malformed file URL %s", url);
-    }
-
-    path += 3;
-    if (!is_absolute_path(path)) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_INVALID_NAME),
-            errmsg("chdb: relative path not allowed for COPY to file URL")
-        );
-    }
-
-    return path;
 }

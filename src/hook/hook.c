@@ -1,42 +1,25 @@
 /*
- * Handle COPY and CREATE TABLE commands that use URLs supported by chDB
- * Apply validation performed by PostgreSQL DoCopy()
+ * The chdb_hook module: a process utility hook that takes over a COPY or a
+ * CREATE TABLE naming a URL chDB supports, with the checks DoCopy() would
+ * apply (relation.c) and the statement's options (options.c), and leaves
+ * every other statement to Postgres.
  */
 
 #include "postgres.h"
 
-#include "access/sysattr.h"
 #include "access/table.h"
-#include "access/xact.h"
-#include "catalog/pg_authid.h"
-#include "catalog/pg_class.h"
-#include "commands/copy.h"
-#include "commands/defrem.h"
-#include "executor/executor.h"
 #include "miscadmin.h"
-#include "parser/parse_node.h"
-#include "parser/parse_relation.h"
 #include "tcop/utility.h"
-#include "utils/acl.h"
-#include "utils/rel.h"
-#include "utils/rls.h"
 
 #include "../gucs.h"
 #include "../module.h"
 #include "copy.h"
 #include "create.h"
+#include "options.h"
+#include "relation.h"
+#include "url.h"
 
 CHDB_MODULE_MAGIC("chdb_hook");
-
-/*
- * Remove file_scheme if CHDB_NO_FILE_SCHEME is defined. Works because the
- * `scheme_for()` considers only schemes < `CHDB_NO_SCHEME`.
- */
-#ifdef CHDB_NO_FILE_SCHEME
-#define CHDB_NO_SCHEME file_scheme
-#else
-#define CHDB_NO_SCHEME no_scheme
-#endif
 
 void
 InitializeUtilityHook(void);
@@ -56,22 +39,6 @@ chDBProcessUtilityHook(
     DestReceiver* dest,
     QueryCompletion* completionTag
 );
-
-/*
- * Strings for the URL schemes that the COPY hook understands. Same as for the
- * schemes used for dispatch in the ClickHouse 26.7 `url()` function. Must
- * allocate one more than the longest list, so that each ends in a NULL.
- * https://clickhouse.com/docs/sql-reference/table-functions/url#scheme-dispatch
- */
-static char const* const scheme_name[no_scheme][4] = {
-    [http_scheme] = { "http", "https" },
-    [s3_scheme]   = { "s3" },
-    [gcs_scheme]  = { "gs", "gcs", "oss" },
-    [az_scheme]   = { "az", "azure" },
-    [abfs_scheme] = { "abfs", "abfss" },
-    [file_scheme] = { "file" },
-    [hdfs_scheme] = { "hdfs" },
-};
 
 /*
  * GUCs for settings to be passed to chDB, referenced by CHDB_GUCS().
@@ -106,294 +73,6 @@ InitializeUtilityHook(void) {
     ProcessUtility_hook = chDBProcessUtilityHook;
 }
 
-static scheme
-scheme_for(const char* str) {
-    if (str) {
-        const char* ptr = strstr(str, "://");
-        if (ptr) {
-            size_t len = ptr - str;
-
-            for (size_t sch = http_scheme; sch < CHDB_NO_SCHEME; sch++) {
-                for (size_t i = 0; scheme_name[sch][i]; i++) {
-                    if (strlen(scheme_name[sch][i]) == len &&
-                        memcmp(str, scheme_name[sch][i], len) == 0) {
-                        return sch;
-                    }
-                }
-            }
-        }
-    }
-
-    return no_scheme;
-}
-
-/*
- * A file:// URL reads and writes files on the server, which Postgres gates on
- * membership in a role. Apply the same gate as DoCopy() does.
- */
-static void
-check_server_file_privileges(bool is_from) {
-    if (is_from) {
-        if (!has_privs_of_role(GetUserId(), ROLE_PG_READ_SERVER_FILES)) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                errmsg("chdb: permission denied to COPY from a file"),
-                errdetail(
-                    "Only roles with privileges of the \"pg_read_server_files\" role "
-                    "may COPY from a file."
-                )
-            );
-        }
-    } else if (!has_privs_of_role(GetUserId(), ROLE_PG_WRITE_SERVER_FILES)) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-            errmsg("chdb: permission denied to COPY to a file"),
-            errdetail(
-                "Only roles with privileges of the \"pg_write_server_files\" role may "
-                "COPY to a file."
-            )
-        );
-    }
-}
-
-/*
- * Opens and locks relation named by COPY statement, with privilege checks that
- * DoCopy() applies to a normal COPY: INSERT or SELECT on relation or on each
- * copied column, then row-level security. Errors out unless the current user
- * may copy the relation. Fills `ctx` with the locked relation and the columns
- * it checked; the caller must close the relation.
- */
-static void
-open_copy_relation(CopyStmt* copy, chdbCopyContext* ctx) {
-    LOCKMODE lockmode = copy->is_from ? RowExclusiveLock : AccessShareLock;
-    Relation rel      = table_openrv(copy->relation, lockmode);
-
-    ParseState* pstate = make_parsestate(NULL);
-    ParseNamespaceItem* nsitem =
-        addRangeTableEntryForRelation(pstate, rel, lockmode, NULL, false, false);
-#if PG_VERSION_NUM >= 160000
-    RTEPermissionInfo* perminfo = nsitem->p_perminfo;
-    perminfo->requiredPerms     = copy->is_from ? ACL_INSERT : ACL_SELECT;
-#else
-    /* Delete test/expected/permissions_1.out when Postgres 15 dropped. */
-    RangeTblEntry* perminfo = nsitem->p_rte;
-    perminfo->requiredPerms = (copy->is_from ? ACL_INSERT : ACL_SELECT);
-#endif
-
-    ctx->rel     = rel;
-    ctx->attnums = CopyGetAttnums(RelationGetDescr(rel), rel, copy->attlist);
-
-    /* Only the copied columns require privileges. */
-    Bitmapset** cols =
-        copy->is_from ? &perminfo->insertedCols : &perminfo->selectedCols;
-    ListCell* lc;
-    foreach (lc, ctx->attnums) {
-        *cols =
-            bms_add_member(*cols, lfirst_int(lc) - FirstLowInvalidHeapAttributeNumber);
-    }
-#if PG_VERSION_NUM >= 160000
-    ExecCheckPermissions(pstate->p_rtable, pstate->p_rteperminfos, true);
-#else
-    ExecCheckRTPerms(pstate->p_rtable, true);
-#endif
-
-    /* A COPY FROM hands this to the executor rather than building its own. */
-    ctx->rtable = pstate->p_rtable;
-#if PG_VERSION_NUM >= 160000
-    ctx->rteperminfos = pstate->p_rteperminfos;
-#endif
-
-    /*
-     * chDB copies the whole relation, so policies cannot be applied to the
-     * rows. Postgres runs a query-based COPY TO, which we don't yet support.
-     */
-    if (check_enable_rls(RelationGetRelid(rel), InvalidOid, false) == RLS_ENABLED) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-            errmsg(
-                "chdb: COPY %s not supported with row-level security",
-                copy->is_from ? "FROM" : "TO"
-            ),
-            errdetail(
-                "Row-level security policies apply to relation \"%s\" for this role.",
-                RelationGetRelationName(rel)
-            )
-        );
-    }
-
-    /*
-     * COPY TO scans storage directly, so reject what Postgres rejects for the
-     * relation form of the command. A COPY FROM target is checked by
-     * CheckValidResultRel once the executor state exists.
-     */
-    if (!copy->is_from && rel->rd_rel->relkind != RELKIND_RELATION) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_WRONG_OBJECT_TYPE),
-            errmsg(
-                "chdb: cannot copy from relation \"%s\"", RelationGetRelationName(rel)
-            ),
-            errdetail_relkind_not_supported(rel->rd_rel->relkind)
-        );
-    }
-}
-
-/*
- * Copy of `structure` with every newline turned into a space
- * Workaround for https://github.com/chdb-io/chdb-core/issues/158
- */
-static char*
-structure_on_one_line(const char* structure) {
-    char* flat = pstrdup(structure);
-
-    for (char* cursor = flat; *cursor != '\0'; cursor++) {
-        if (*cursor == '\n' || *cursor == '\r') {
-            *cursor = ' ';
-        }
-    }
-
-    return flat;
-}
-
-/*
- * Fill `ctx` from `options`
- * Collect options unused by chDB in `*others`, or reject them when `others` is NULL
- */
-static void
-contextualize_options(chdbCopyContext* ctx, List* options, List** others) {
-    ListCell* lc;
-    ctx->access_key     = "";
-    ctx->access_secret  = "";
-    ctx->session_token  = "";
-    ctx->format         = "";
-    ctx->structure      = "";
-    ctx->compression    = "";
-    ctx->timeout        = 30000; /* Same as ClickHouse. */
-    ctx->encoding_check = CHC_ENC_FAIL;
-
-    foreach (lc, options) {
-        DefElem* elem = (DefElem*)lfirst(lc);
-        if (strcmp(elem->defname, "access_key") == 0) {
-            ctx->access_key = defGetString(elem);
-        } else if (strcmp(elem->defname, "access_secret") == 0) {
-            ctx->access_secret = defGetString(elem);
-        } else if (strcmp(elem->defname, "session_token") == 0) {
-            ctx->session_token = defGetString(elem);
-        } else if (strcmp(elem->defname, "format") == 0) {
-            ctx->format = defGetString(elem);
-        } else if (strcmp(elem->defname, "structure") == 0) {
-            ctx->structure = structure_on_one_line(defGetString(elem));
-        } else if (strcmp(elem->defname, "compression") == 0) {
-            ctx->compression = defGetString(elem);
-        } else if (strcmp(elem->defname, "timeout") == 0) {
-            int64 timeout = defGetInt64(elem);
-            if (timeout < 0 || timeout > UINT32_MAX) {
-                ereport(
-                    ERROR,
-                    errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("chdb: argument to COPY option \"timeout\" must be a uint32")
-                );
-            }
-            ctx->timeout = (uint32_t)timeout;
-        } else if (strcmp(elem->defname, "encoding_check") == 0) {
-            const char* val = defGetString(elem);
-            pgch_encoding_check v;
-
-            if (!pgch_parse_encoding_check(val, &v)) {
-                ereport(
-                    ERROR,
-                    errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
-                    errmsg("invalid value for option \"encoding_check\": \"%s\"", val),
-                    errhint("Valid values are: fail, truncate, remove, replace")
-                );
-            }
-            ctx->encoding_check = v;
-        } else if (others) {
-            *others = lappend(*others, elem);
-        } else {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_SYNTAX_ERROR),
-                errmsg("chdb: option \"%s\" not supported", elem->defname)
-            );
-        }
-    }
-}
-
-/*
- * Parse URL from CREATE TABLE option
- * Reject unsupported schemes and check server file privileges for file URLs
- */
-static scheme
-option_url_scheme(const char* url, const char* option) {
-    scheme scheme = scheme_for(url);
-
-    if (scheme == no_scheme) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-            errmsg(
-                "chdb: cannot read URL \"%s\" specified by option \"%s\"", url, option
-            )
-        );
-    }
-    if (scheme == file_scheme) {
-        check_server_file_privileges(true);
-    }
-
-    return scheme;
-}
-
-/*
- * Add columns inferred from URL to `create`
- * Store URL options in `from` and chDB options in `ctx` for subsequent copy
- */
-static void
-create_columns_from_url(
-    CreateStmt* create,
-    chdbCreateFromURL* from,
-    chdbCopyContext* ctx
-) {
-    List* storage = NIL;
-
-    chdb_create_from_url(create, from);
-
-    /* Pass data options to chDB and keep PostgreSQL storage parameters */
-    contextualize_options(ctx, create->options, &storage);
-    create->options = storage;
-
-    if (from->structure_url) {
-        ctx->url          = from->structure_url;
-        ctx->scheme       = option_url_scheme(ctx->url, CHDB_STRUCTURE_FROM);
-        create->tableElts = chdb_url_columns(ctx);
-    }
-}
-
-/* Copy rows from `url` into newly created `relation` */
-static void
-copy_url_into(RangeVar* relation, char* url, chdbCopyContext* ctx) {
-    CopyStmt* copy = makeNode(CopyStmt);
-
-    copy->relation = relation;
-    copy->is_from  = true;
-    copy->filename = url;
-
-    ctx->url      = url;
-    ctx->scheme   = option_url_scheme(url, CHDB_COPY_FROM);
-    ctx->cmd_type = CHDB_CMD_SELECT;
-
-    /* Make newly created relation visible */
-    CommandCounterIncrement();
-    open_copy_relation(copy, ctx);
-    chdb_copy(ctx);
-
-    /* Keep relation lock until transaction ends */
-    table_close(ctx->rel, NoLock);
-}
-
 /*
  * chDBProcessUtilityHook modifies the behaviour of DDL commands.
  */
@@ -414,7 +93,7 @@ chDBProcessUtilityHook(
     if (IsA(parsetree, CopyStmt)) {
         /* Look for a URL filename. */
         CopyStmt* copy = (CopyStmt*)parsetree;
-        scheme scheme  = scheme_for(copy->filename);
+        scheme scheme  = chdb_url_scheme(copy->filename);
 
         /* Leave COPY TO/FROM PROGRAM to Postgres, which gates it on a role. */
         if (copy->relation && !copy->is_program && scheme != no_scheme) {
@@ -431,7 +110,7 @@ chDBProcessUtilityHook(
                 PreventCommandIfReadOnly("COPY FROM");
             }
             if (scheme == file_scheme) {
-                check_server_file_privileges(copy->is_from);
+                chdb_check_server_file_privileges(copy->is_from);
             }
             chdbCopyContext ctx = {
                 .scheme      = scheme,
@@ -442,8 +121,8 @@ chDBProcessUtilityHook(
                 .max_parsers = (uint16_t)chdb_max_parsers,
             };
 
-            open_copy_relation(copy, &ctx);
-            contextualize_options(&ctx, copy->options, NULL);
+            chdb_open_copy_relation(copy, &ctx);
+            chdb_copy_options(&ctx, copy->options, NULL);
             SetQueryCompletion(qc, CMDTAG_COPY, chdb_copy(&ctx));
 
             /* Retain the lock until commit, so the copy is what we checked. */
@@ -472,12 +151,12 @@ chDBProcessUtilityHook(
 
         /* Reject read-only transaction before requesting remote schema */
         PreventCommandIfReadOnly("CREATE TABLE");
-        create_columns_from_url(create, &from, &ctx);
+        chdb_create_columns_from_url(create, &from, &ctx);
         PrevProcessUtility(
             plannedStmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc
         );
         if (from.copy_url) {
-            copy_url_into(create->relation, from.copy_url, &ctx);
+            chdb_copy_url_into(create->relation, from.copy_url, &ctx);
         }
 
         return;

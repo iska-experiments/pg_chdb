@@ -126,9 +126,10 @@ jobs:
       - name: Test No File
         # NO_FILE_SCHEME disables file://; when set, file test should fail
         # with output that includes "could not open file". This step fails if
-        # the test output does not include that text.
+        # the test output does not include that text. Remove every hook
+        # object so that whichever one reads the flag is rebuilt with it.
         run: |
-          (cd src/hook && rm -rf chdb_hook.* hook.o)
+          (cd src/hook && rm -rf chdb_hook.* *.o)
           make -j $(nproc) NO_FILE_SCHEME=1
           sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install
           make installcheck TAP_TESTS= TESTS=test/sql/file.sql || true

@@ -7,7 +7,33 @@
 #include "nodes/pg_list.h"
 #include "utils/relcache.h"
 
+#include "pg-clickhouse-decode.h"
+
 #include "channel.h"
+
+/*
+ * clickhouse-c copies what it raises through chc_err.msg, whose size the
+ * Makefiles set with -DCHC_ERR_MSG_LEN; a module built with another size
+ * would read the structs of the objects it links from native.o wrong.
+ */
+StaticAssertDecl(
+    CHC_ERR_MSG_LEN == CHDB_CHANNEL_ERR_MAX,
+    "CHC_ERR_MSG_LEN must match the channel's error buffer"
+);
+
+/*
+ * A block source over the Native blocks `helper` streams, for pgch_reader_init,
+ * allocated in the current memory context, which decoded blocks live in.
+ */
+extern pgch_block_source
+chdb_native_source(chdbChannel* helper);
+
+/*
+ * Raises `error`, what a pgch_reader over that source reports, as a failure to
+ * fetch the chDB query's result; the query text is the caller's to add.
+ */
+pg_noreturn extern void
+chdb_native_reader_error(const char* error);
 
 /* Source column name and ClickHouse type returned by DESCRIBE */
 typedef struct chdbDescribedColumn {
