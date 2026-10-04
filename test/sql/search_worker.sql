@@ -88,3 +88,6 @@ SELECT pid AS old_pid FROM pg_stat_activity
  WHERE backend_type = 'chdb_search worker' AND datname = current_database() \gset
 SELECT pg_terminate_backend(:old_pid);
 DROP TABLE docs;
+
+-- Leave the database as other tests expect to find it.
+DROP EXTENSION chdb_search;

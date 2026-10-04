@@ -186,3 +186,5 @@ SELECT pg_terminate_backend(:old_pid);
 (1 row)
 
 DROP TABLE docs;
+-- Leave the database as other tests expect to find it.
+DROP EXTENSION chdb_search;
