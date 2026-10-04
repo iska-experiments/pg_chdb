@@ -119,16 +119,17 @@ install: install-hook
 uninstall: uninstall-hook
 
 # An extension module of its own: built by a sub-make under src/<name>/ and
-# installed here like chdb_hook, with its control file and versioned script.
+# installed here like chdb_hook, with its control file and versioned script,
+# which is sql/<name>.sql with any further parts appended in the order given.
 # Eval it below this point, once PGXS has set DLSUFFIX:
-#   $(eval $(call ext_module,chdb_<name>,<extra prerequisites>,<sub-make arguments>))
+#   $(eval $(call ext_module,chdb_<name>,<extra prerequisites>,<sub-make arguments>,<further script parts>))
 define ext_module
 $(1)_VERSION := $$(call ctl_version,$(1))
 $(1)_SO := src/$(patsubst chdb_%,%,$(1))/$(1)$$(DLSUFFIX)
 $$($(1)_SO): $$(wildcard $$(dir $$($(1)_SO))*.c $$(dir $$($(1)_SO))*.h $$(dir $$($(1)_SO))*/*.c $$(dir $$($(1)_SO))*/*.h) $(2)
 	@$$(MAKE) -C $$(dir $$@) all $(3)
-sql/$(1)--$$($(1)_VERSION).sql: sql/$(1).sql
-	cp $$< $$@
+sql/$(1)--$$($(1)_VERSION).sql: sql/$(1).sql $(4)
+	cat $$^ > $$@
 install-$(patsubst chdb_%,%,$(1)): $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
 	$$(INSTALL_SHLIB) $$< '$$(DESTDIR)$$(pkglibdir)/'
 	$$(MKDIR_P) '$$(DESTDIR)$$(datadir)/extension'
@@ -177,7 +178,12 @@ $(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
 # later, as the control file says; an older server builds and tests the chdb
 # extension alone, and its TAP tests skip the search ones.
 ifeq ($(shell test $(VERSION_NUM) -ge 170000 && echo yes),yes)
-$(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)))
+# Its script is three files, each within the file budget and of one concern:
+# the extension's functions, access method and predicates; the chdb.query
+# type; the operators and operator classes, which name that type and so
+# come last.
+SEARCH_SQL_PARTS := sql/chdb_search_query.sql sql/chdb_search_opclass.sql
+$(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB),$(SEARCH_SQL_PARTS)))
 $(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h))
 # The chdb_vector extension: pgvector operator classes for the access
 # method. A plain PGXS module, it needs neither libchdb nor pgvector's

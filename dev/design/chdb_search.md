@@ -146,7 +146,7 @@ CREATE TABLE t (
 Type mapping reuses `pgch_ch_type_for` from pg-clickhouse-c; `vector` maps
 to `Array(Float32)` through `chdb_vector`'s cast to `real[]`.
 
-### Predicates and operators (`sql/chdb_search.sql`, `src/search/ops.c`)
+### Predicates and operators (`sql/chdb_search.sql`, `sql/chdb_search_opclass.sql`, `src/search/ops.c`)
 
 All functions are in schema `chdb`. Each has a plain Postgres
 implementation (so sequential scans and the heap recheck give the same
