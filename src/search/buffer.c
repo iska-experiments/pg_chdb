@@ -15,7 +15,10 @@
  * transaction flushes its buffer into a staging table <table>_tx_<xid>
  * instead, which pre-commit copies into the table and drops (abort drops it
  * too); staging.c does the sending. Inside a savepoint nothing is flushed
- * early, because rows already sent could not be taken back.
+ * early, because rows already sent could not be taken back, so the buffer
+ * grows until COMMIT: it warns once past the threshold and fails past
+ * chdb_search.max_buffer, since an error inside the savepoint can be caught
+ * and an OOM kill cannot.
  *
  * Rebuilds. A REINDEX or TRUNCATE in the same transaction indexes the
  * transaction's own tuples in its build scan and names a new table, so the
@@ -148,9 +151,38 @@ chdb_search_aminsert(
 
     chdb_rowwriter_append(p->rw, ht_ctid, GetCurrentTransactionId(), values, isnull);
 
-    if (!nested &&
-        chdb_rowwriter_bytes(p->rw) >= (size_t)chdb_search_flush_threshold_kb * 1024) {
+    size_t bytes = chdb_rowwriter_bytes(p->rw);
+
+    if (!nested && bytes >= (size_t)chdb_search_flush_threshold_kb * 1024) {
         chdb_search_stage_rows(p);
+    } else if (
+        chdb_search_max_buffer_kb && bytes >= (size_t)chdb_search_max_buffer_kb * 1024
+    ) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+            errmsg(
+                "chdb index \"%s\" buffer exceeds chdb_search.max_buffer",
+                RelationGetRelationName(index)
+            ),
+            errhint("Insert outside a savepoint, or raise the setting.")
+        );
+    } else if (
+        nested && !p->warned && bytes >= (size_t)chdb_search_flush_threshold_kb * 1024
+    ) {
+        p->warned = true;
+        ereport(
+            WARNING,
+            errmsg(
+                "chdb index \"%s\" buffers rows inserted inside a savepoint until "
+                "COMMIT",
+                RelationGetRelationName(index)
+            ),
+            errdetail(
+                "The buffer has passed chdb_search.flush_threshold and grows until the "
+                "transaction ends, up to chdb_search.max_buffer."
+            )
+        );
     }
 
     /* The index never reports a uniqueness violation. */
