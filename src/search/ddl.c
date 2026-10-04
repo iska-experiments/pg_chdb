@@ -188,7 +188,7 @@ chdb_search_run(Oid indexoid, const char* sql) {
     PG_TRY();
     {
         chdb_search_log_sql("exec", sql);
-        chdb_search_exec(conn, indexoid, sql);
+        chdb_search_exec(conn, indexoid, CHDB_SEARCH_NO_GENERATION, sql);
     }
     PG_FINALLY();
     { chdb_search_close(conn); }

@@ -52,7 +52,7 @@ build_callback(
         size_t len;
         void* block = chdb_rowwriter_take(bs->rw, &len);
 
-        chdb_search_send(bs->conn, block, len);
+        chdb_channel_write(chdb_search_channel(bs->conn), block, len);
         pfree(block);
     }
     CHECK_FOR_INTERRUPTS();
@@ -86,7 +86,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
         );
 
         chdb_search_log_sql("insert", sql);
-        chdb_search_insert(bs.conn, RelationGetRelid(index), sql);
+        chdb_search_insert(bs.conn, RelationGetRelid(index), CHDB_SEARCH_NO_GENERATION, sql);
         reltuples = table_index_build_scan(
             heap, index, indexInfo, true, true, build_callback, &bs, NULL
         );
@@ -95,7 +95,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
             size_t len;
             void* block = chdb_rowwriter_take(bs.rw, &len);
 
-            chdb_search_send(bs.conn, block, len);
+            chdb_channel_write(chdb_search_channel(bs.conn), block, len);
             pfree(block);
         }
         chdb_search_finish(bs.conn);

@@ -27,6 +27,15 @@ typedef struct ScanOpaque {
     bool started;
 } ScanOpaque;
 
+/* Reads the request's status, which raises the worker's error, and closes. */
+static void
+end_stream(ChdbStream* s) {
+    s->done = true;
+    chdb_search_finish(s->conn);
+    chdb_search_close(s->conn);
+    s->conn = NULL;
+}
+
 ChdbStream*
 chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext cxt) {
     MemoryContext old = MemoryContextSwitchTo(cxt);
@@ -39,9 +48,9 @@ chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext 
     chdb_search_log_sql("select", sql);
     PG_TRY();
     {
-        chdb_search_select(s->conn, indexoid, sql);
+        chdb_search_select(s->conn, indexoid, CHDB_SEARCH_NO_GENERATION, sql);
 
-        pgch_block_source src = chdb_native_source(chdb_search_helper(s->conn));
+        pgch_block_source src = chdb_native_source(chdb_search_channel(s->conn));
 
         pgch_reader_init(&s->reader, &src);
         if (s->reader.error) {
@@ -61,8 +70,8 @@ chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext 
 
     s->ncols = (int)pgch_reader_columns(&s->reader);
     if (s->ncols == 0) {
-        /* No block at all, not even an empty one: no rows. */
-        s->done = true;
+        /* No block at all, not even an empty one: no rows, or a failed query. */
+        end_stream(s);
     } else {
         if (s->ncols != 1 + ndist) {
             ereport(
@@ -112,10 +121,7 @@ chdb_search_stream_next(ChdbStream* s, ItemPointer tid) {
                 errmsg("chdb_search: %s", s->reader.error)
             );
         }
-        s->done = true;
-        chdb_search_finish(s->conn);
-        chdb_search_close(s->conn);
-        s->conn = NULL;
+        end_stream(s);
     }
     return false;
 }
