@@ -72,7 +72,8 @@ endif
 # Build against, install, uninstall a local copy of libchdb.
 ifneq ($(BUNDLE_LIBCHDB),)
 LIBCHDB_DIR = vendor/libchdb-$(LIBCHDB_VERSION)-$(OS)-$(ARCH)
-src/helper/chdb_helper: $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
+# chdb_search compiles against the chdb.h that comes with the library.
+src/helper/chdb_helper src/search/chdb_search$(DLSUFFIX): $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
 ifneq ($(LIBCHDB_BUILD),static)
 install: install-libchdb
 uninstall: uninstall-libchdb
@@ -133,7 +134,7 @@ EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o
 endef
 
 # The chdb_search extension: the search worker and its clients.
-$(eval $(call ext_module,chdb_search,$(OBJS),CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR)))
+$(eval $(call ext_module,chdb_search,$(OBJS),CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) LIBCHDB_DIR=$(LIBCHDB_DIR)))
 
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
