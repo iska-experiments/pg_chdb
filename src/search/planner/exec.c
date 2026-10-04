@@ -74,8 +74,11 @@ begin_scan(CustomScanState* css, EState* estate, int eflags) {
         Expr* arg     = chdb_pushed_arg(p);
 
         st->args = lappend(st->args, ExecInitExpr(arg, &css->ss.ps));
-        clauses  = lappend(clauses, p->clause);
         st->exec_params |= exec_param_walker((Node*)arg, NULL);
+    }
+    /* The predicates only: an order-by's distance is no boolean. */
+    foreach (lc, st->spec->quals) {
+        clauses = lappend(clauses, ((ChdbPushed*)lfirst(lc))->clause);
     }
     st->recheck = ExecInitQual(clauses, &css->ss.ps);
     if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY)) {
