@@ -17,3 +17,6 @@ include $(PGXS)
 
 # PGXS tracks no header dependencies, and the vendored libraries are all header.
 $(OBJS): $(wildcard *.h ../*.h $(PGCH_DIR)/*.h $(CH_C_DIR)/*.h)
+
+# client.mode, written by the top-level Makefile, changes with CHDB_SEARCH_STUB.
+$(shlib): $(wildcard client.mode)

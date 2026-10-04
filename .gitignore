@@ -14,6 +14,7 @@ _build/
 src/version.h
 /src/helper/chdb_helper
 /src/search/engine/chdb_search_engine
+/src/search/client.mode
 /sql/*--*.sql
 !/sql/*--*--*.sql
 compile_commands.json
