@@ -36,6 +36,7 @@
 #include "../native.h"
 #include "engine_proc.h"
 #include "frame.h"
+#include "pagestore/pagestore.h"
 #include "protocol.h"
 #include "sweep.h"
 
@@ -188,6 +189,7 @@ sweep_orphan_stores(void) {
             ereport(LOG, errmsg("chdb_search: swept orphan store idx_%u", (Oid)oid));
             engine_request(CHDB_CMD_DROP, (Oid)oid, "DROP");
             engine_status("DROP");
+            chdb_pagestore_remove_storage((Oid)oid);
         }
         UnlockRelationOid((Oid)oid, AccessShareLock);
     }

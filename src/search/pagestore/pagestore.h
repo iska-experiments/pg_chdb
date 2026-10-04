@@ -35,4 +35,11 @@ chdb_pagestore_engine_gone(void);
 extern void
 chdb_pagestore_list(const char* storage, chdbBlobListSink sink, void* ud);
 
+/*
+ * The engine dropped the index's database: its storage goes, with whatever
+ * a crashed engine left in it. Raises if it cannot.
+ */
+extern void
+chdb_pagestore_remove_storage(Oid indexoid);
+
 #endif /* CHDB_SEARCH_PAGESTORE_H */

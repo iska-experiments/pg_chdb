@@ -8,6 +8,8 @@
 
 #include "postgres.h"
 
+#include "store.h"
+
 /* pg_chdb/<dboid>/blobs, for the current database. */
 extern char*
 dirpath_blobs(void);
@@ -33,5 +35,13 @@ dirpath_make_parent(const char* path);
 /* Raises for a listing prefix that would leave its storage. */
 extern void
 dirpath_check_prefix(const char* prefix);
+
+/* The storages as directories: store.h's init, storages and remove_storage. */
+extern void
+dirpath_init(void);
+extern void
+dirpath_storages(chdbBlobNameSink sink, void* ud);
+extern void
+dirpath_remove_storage(const char* storage);
 
 #endif /* CHDB_SEARCH_PAGESTORE_DIRPATH_H */

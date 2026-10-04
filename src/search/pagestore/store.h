@@ -57,6 +57,12 @@ typedef struct chdbBlobStore {
     );
     /* Replaces to with a copy of from; a missing from raises. */
     void (*copy)(const char* storage, const char* from, const char* to);
+    /*
+     * Drops a storage whole, once the engine has dropped the index's database:
+     * what is left in it, half-written parts of a crashed engine say, is
+     * garbage the engine never reclaims. Nothing to drop is success.
+     */
+    void (*remove_storage)(const char* storage);
 } chdbBlobStore;
 
 /* dirstore.c: files under pg_chdb/<dboid>/blobs/<storage>/<key>. */

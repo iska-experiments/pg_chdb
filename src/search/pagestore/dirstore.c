@@ -8,8 +8,8 @@
  * A pending write goes to a temporary file outside every storage, so that no
  * listing sees it; its commit fsyncs the file and renames it over whatever
  * the key held (durable_rename), so a blob is whole or absent after a crash,
- * and its mtime is that of its last byte. Pending writes a crash left are
- * cleared when the worker starts. See store.h.
+ * and its mtime is that of its last byte. The storages themselves, as
+ * directories, are dirpath.c's. See store.h.
  */
 
 #include "postgres.h"
@@ -33,43 +33,6 @@ typedef struct Pending {
     char* tmp;  /* its path */
     char* path; /* where the commit puts it */
 } Pending;
-
-static void
-dir_init(void) {
-    char* tmp = dirpath_tmp_dir();
-    DIR* dir  = AllocateDir(tmp);
-    struct dirent* de;
-
-    if (!dir && errno == ENOENT) {
-        return;
-    }
-    while ((de = ReadDir(dir, tmp)) != NULL) {
-        if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-            unlink(psprintf("%s/%s", tmp, de->d_name));
-        }
-    }
-    FreeDir(dir);
-}
-
-static void
-dir_storages(chdbBlobNameSink sink, void* ud) {
-    char* root = dirpath_blobs();
-    DIR* dir   = AllocateDir(root);
-    struct dirent* de;
-    struct stat st;
-
-    if (!dir && errno == ENOENT) {
-        return;
-    }
-    while ((de = ReadDir(dir, root)) != NULL) {
-        if (de->d_name[0] != '.' &&
-            stat(psprintf("%s/%s", root, de->d_name), &st) == 0 &&
-            S_ISDIR(st.st_mode)) {
-            sink(ud, de->d_name);
-        }
-    }
-    FreeDir(dir);
-}
 
 /* stat of a blob: false when there is none, raising on any other failure. */
 static bool
@@ -326,16 +289,17 @@ dir_copy(const char* storage, const char* from, const char* to) {
 }
 
 const chdbBlobStore chdb_blob_dirstore = {
-    .init         = dir_init,
-    .storages     = dir_storages,
-    .exists       = dir_exists,
-    .metadata     = dir_metadata,
-    .read         = dir_read,
-    .write_begin  = dir_write_begin,
-    .write_append = dir_write_append,
-    .write_commit = dir_write_commit,
-    .write_abort  = dir_write_abort,
-    .remove       = dir_remove,
-    .list         = dir_list,
-    .copy         = dir_copy,
+    .init           = dirpath_init,
+    .storages       = dirpath_storages,
+    .exists         = dir_exists,
+    .metadata       = dir_metadata,
+    .read           = dir_read,
+    .write_begin    = dir_write_begin,
+    .write_append   = dir_write_append,
+    .write_commit   = dir_write_commit,
+    .write_abort    = dir_write_abort,
+    .remove         = dir_remove,
+    .list           = dir_list,
+    .copy           = dir_copy,
+    .remove_storage = dirpath_remove_storage,
 };

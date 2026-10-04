@@ -13,6 +13,7 @@
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 
+#include "../protocol.h"
 #include "pagestore.h"
 #include "protocol.h"
 #include "store.h"
@@ -51,6 +52,11 @@ chdb_pagestore_init(void) {
 void
 chdb_pagestore_list(const char* storage, chdbBlobListSink sink, void* ud) {
     store->list(storage, "", sink, ud);
+}
+
+void
+chdb_pagestore_remove_storage(Oid indexoid) {
+    store->remove_storage(psprintf(CHDB_STORE_STORAGE_FMT, indexoid));
 }
 
 /* ---- the body of a request ---- */

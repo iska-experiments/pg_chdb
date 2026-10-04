@@ -14,6 +14,7 @@
 
 #include "../channel.h"
 #include "engine_proc.h"
+#include "pagestore/pagestore.h"
 #include "protocol.h"
 #include "relay.h"
 #include "request.h"
@@ -109,6 +110,10 @@ serve(chdbChannel* client, MemoryContext cxt) {
 
     char* err = relay_request(client, &raw, req.ctx.cmd, &data_open);
 
+    /* The index's database is gone, so its storage can go, leftovers and all. */
+    if (!err && req.ctx.cmd == CHDB_CMD_DROP && relay_succeeded()) {
+        chdb_pagestore_remove_storage(req.index);
+    }
     if (err) {
         uint32_t zero = 0;
 
