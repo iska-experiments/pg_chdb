@@ -40,6 +40,69 @@ DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE seen > fromUnixTime
 SELECT id FROM docs WHERE body @@@ NULL;
 \o
 RESET client_min_messages;
+----------------------------------------------------------------------------
+-- Literals: parsed to the column's type, and the constants ClickHouse
+-- compares unlike Postgres (NaN, the infinities) become predicates
+----------------------------------------------------------------------------
+CREATE TABLE types (
+    i2 int2, i4 int4, i8 int8, f4 float4, f8 float8, n numeric, d date,
+    ts timestamp, u uuid, v varchar(20) COLLATE "C", arr text[]
+);
+CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v columnar_ops, arr text_array_ops);
+SET client_min_messages = debug1;
+\o /dev/null
+SELECT * FROM types WHERE i2 = 1::int2 AND i4 = 2 AND i8 = 3::int8 AND v = 'x' AND d = '2026-01-02';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE i2 = 1 AND i4 = 2 AND i8 = 3 AND d = toDate32(20455) AND v = 'x'
+SELECT * FROM types WHERE u = '00000000-0000-0000-0000-000000000001' AND arr @@= 'x';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE u = toUUID('00000000-0000-0000-0000-000000000001') AND hasAllTokens(arr, 'x')
+SELECT * FROM types WHERE f4 = 0.1::real;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE f4 = toFloat32('0.1')
+SELECT * FROM types WHERE f8 = 0.1 AND f4 > 'Infinity'::real;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE f4 > toFloat32('Infinity') AND f8 = toFloat64('0.1')
+SELECT * FROM types WHERE f8 > 1e308;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE f8 > toFloat64('1e+308')
+SELECT * FROM types WHERE f8 = 'NaN'::float8;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE isNaN(f8)
+SELECT * FROM types WHERE f8 < 'NaN';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE NOT isNaN(f8)
+SELECT * FROM types WHERE f8 > 'NaN';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
+SELECT * FROM types WHERE f8 <= 'NaN';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE f8 IS NOT NULL
+SELECT * FROM types WHERE f8 >= 'NaN' AND f4 = 'NaN'::real;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE isNaN(f4) AND isNaN(f8)
+SELECT * FROM types WHERE ts < 'infinity';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ts IS NOT NULL
+SELECT * FROM types WHERE ts = 'infinity';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
+SELECT * FROM types WHERE ts >= '-infinity';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ts IS NOT NULL
+SELECT * FROM types WHERE d > '-infinity'::date;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE d IS NOT NULL
+SELECT * FROM types WHERE d <= '-infinity'::date;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
+SELECT * FROM types WHERE n < 'NaN'::numeric;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE n IS NOT NULL
+SELECT * FROM types WHERE n >= 'Infinity'::numeric;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
+SELECT * FROM types WHERE n > '-Infinity'::numeric AND n = 1.50;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE n IS NOT NULL AND n = toDecimal256('1.50', 2)
+PREPARE p(timestamp) AS SELECT * FROM types WHERE ts < $1;
+EXECUTE p('infinity');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ts IS NOT NULL
+EXECUTE p('2026-01-01');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ts < fromUnixTimestamp64Micro(1767225600000000, 'UTC')
+\o
+RESET client_min_messages;
+-- The store has no infinities, so the writer refuses them rather than let
+-- the encoder wrap them into finite values.
+INSERT INTO types (d) VALUES ('infinity');
+ERROR:  an infinite date cannot be stored in a chdb index
+INSERT INTO types (ts) VALUES ('-infinity');
+ERROR:  an infinite timestamp without time zone cannot be stored in a chdb index
+INSERT INTO types (n) VALUES ('NaN');
+ERROR:  chdb: cannot encode "NaN" as ClickHouse Decimal256(38)
+DROP TABLE types;
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
 -- The worker stays connected to the database, which could not be dropped for
