@@ -12,10 +12,12 @@ MAX_CONCURRENT_TESTS ?=
 
 DATA         = $(sort $(wildcard sql/$(EXTENSION)--*.sql) sql/$(EXTENSION)--$(EXTVERSION).sql)
 DOCS         = $(wildcard doc/*.md)
-# The stub worker client (CHDB_SEARCH_STUB=1) answers nothing, so of the search
-# tests only search_am, which checks the generated statements, runs against it.
+# The stub worker client (CHDB_SEARCH_STUB=1) has no store, so the tests of
+# the worker and of searches end to end run only with the worker; the
+# search_stub tests, whose rows the stub's GUCs supply, run only with the stub.
 TESTS        ?= $(if $(CHDB_SEARCH_STUB),$(filter-out test/sql/search_worker.sql \
-                test/sql/search_e2e.sql,$(wildcard test/sql/*.sql)),$(wildcard test/sql/*.sql))
+                test/sql/search_e2e.sql,$(wildcard test/sql/*.sql)), \
+                $(filter-out test/sql/search_stub%.sql,$(wildcard test/sql/*.sql)))
 REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
 # UTF8: the search predicates lowercase by Unicode, and the tests say so in
 # their literals, whatever the cluster's locale (CI also runs them with

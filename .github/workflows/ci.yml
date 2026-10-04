@@ -117,7 +117,7 @@ jobs:
         # cluster's ctype, so the search tests run once more in a database
         # created with --no-locale.
         id: test-nolocale
-        run: make installcheck NO_LOCALE=1 TAP_TESTS= TESTS="$(ls test/sql/search_*.sql)"
+        run: make installcheck NO_LOCALE=1 TAP_TESTS= TESTS="$(ls test/sql/search_*.sql | grep -v search_stub)"
       - name: Show Diffs
         if: failure() && (steps.test.outcome == 'failure' || steps.test-nolocale.outcome == 'failure')
         run: find . -name regression.diffs -exec cat {} +
@@ -129,6 +129,18 @@ jobs:
           path: |
             regression.diffs
             results
+      - name: Test the access method with the stub worker client
+        # The stub answers the statements the access method generates from
+        # two GUCs, so these tests see the rows a scan fetches and the rows
+        # VACUUM judges without a worker; the worker's own tests skip.
+        id: test-stub
+        run: |
+          make -j $(nproc) CHDB_SEARCH_STUB=1
+          sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install CHDB_SEARCH_STUB=1
+          make installcheck CHDB_SEARCH_STUB=1 TESTS="$(ls test/sql/search_*.sql | grep -v -e search_worker -e search_e2e)"
+      - name: Show Stub Diffs
+        if: failure() && steps.test-stub.outcome == 'failure'
+        run: find . -name regression.diffs -exec cat {} +
       - name: Test No File
         # NO_FILE_SCHEME disables file://; when set, file test should fail
         # with output that includes "could not open file". This step fails if
