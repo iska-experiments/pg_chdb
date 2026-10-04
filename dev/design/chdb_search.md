@@ -24,7 +24,7 @@ a ranker.
 | 2 | **ClickHouse-native naming** with Postgres niceties. Functions mirror ClickHouse (`has_all_tokens`, `has_any_tokens`, `has_token`, `has_phrase`, `tokens`), plus operators for ergonomics. No ParadeDB compatibility layer. |
 | 3 | **One multi-column access method** `chdb`. One index per table backs one MergeTree table with text and vector skip indexes. Opclasses choose text vs vector per column. |
 | 4 | Vector opclasses live in a separate **`chdb_vector`** extension that requires pgvector. `chdb_search` has no pgvector dependency. |
-| 5 | Writes are **buffered per transaction and flushed at pre-commit** as one Native block. **Read-after-commit** consistency only: inside the inserting transaction the index does not see that transaction's own rows, while a sequential scan does, so plan choice decides what a same-transaction query returns. Documented as a limitation; `chdb_search.unavailable_index`-style strictness does not apply here. |
+| 5 | Writes are **buffered per transaction and flushed at pre-commit** as one Native block, and **a transaction sees its own rows**: a search through the index ships the rows buffered so far to a staging table `t_<generation>_tx_<xid>` of the transaction's own and reads it with the table in one `UNION ALL`; commit attaches the staging table's parts. A transaction that never searches its own rows still sends one block at commit. The read is the trigger, not a statement-end hook: it catches every write path and makes no parts a query will not use. |
 | 6 | **IDF-weighted overlap score**, not BM25. ClickHouse stores no term frequencies, so `chdb.score()` sums the inverse document frequency of the query tokens each row contains; document frequencies come from the text index itself. Deterministic `ORDER BY chdb.score(k) DESC LIMIT n` through the CustomScan. Real BM25 waits on an upstream change (proposal 3). |
 | 7 | Scope: index AM **plus CustomScan** (score, top-N, LIMIT pushdown, snippets later) **plus aggregate pushdown** (`count(*)`, `GROUP BY` over indexed columns). |
 | 8 | **Crash safety through Postgres pages**: a chDB disk type whose blobs live in index-relation pages written with generic WAL by the worker. Upstream PR to chdb-core. Phase 0 uses a local directory so end-to-end works before that lands. |
@@ -133,7 +133,7 @@ The ClickHouse table:
 ```sql
 CREATE TABLE t (
   ctid UInt64,                     -- (block << 16) | offset
-  xmin UInt32,                     -- inserting xid, for recheck diagnostics
+  xmin UInt32,                     -- inserting (sub)transaction id; a rolled-back savepoint's staged rows are excluded by it
   body String, title String, tags Array(String), author String, created_at DateTime64(6),
   embedding Array(Float32),
   INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(body)),
@@ -264,22 +264,35 @@ needs the upstream change in `dev/design/chdb-proposals.md` (proposal 3,
 term frequencies and document lengths in the text index). The function
 signature and the planner plumbing stay the same when that lands.
 
-### Write path (`src/search/insert.c`)
+### Write path (`src/search/buffer.c`, `staging.c`, `marks.c`)
 
-`aminsert` appends `(ctid, values)` to a per-backend, per-index buffer in
-`TopTransactionContext`. A `RegisterXactCallback` on `XACT_EVENT_PRE_COMMIT`
-ships each buffer as Native blocks over the worker socket with
-`CHDB_CMD_INSERT` into `t` and waits for the ack. Abort drops the buffer.
-Subtransaction abort drops that subtransaction's rows (buffer entries are
-tagged with the current subxid). `ambuild` streams the heap in 8 MiB
-blocks through the same path, then `ALTER TABLE t MATERIALIZE INDEX` is
-unnecessary because inserts materialize skip indexes; for large builds
-`materialize_skip_indexes_on_insert = 0` plus one `MATERIALIZE INDEX` at the
-end is faster and is the default above a GUC threshold.
+`aminsert` appends `(ctid, xmin, values)` to a per-backend, per-index buffer
+in `TopTransactionContext`; `xmin` is `GetCurrentTransactionId()`, the
+current subtransaction's id. A `RegisterXactCallback` on
+`XACT_EVENT_PRE_COMMIT` ships each buffer as one Native block over the
+worker socket with `CHDB_CMD_INSERT` into `t` and waits for the ack. Abort
+drops the buffer. Each buffer keeps a mark per subtransaction level that
+inserted into it; `ROLLBACK TO` rewinds the writer to the level's mark.
+`ambuild` streams the heap in 8 MiB blocks through the same writer.
 
-Large transactions: when a buffer exceeds `chdb_search.flush_threshold`
-(default 64 MiB) it is flushed early into a staging table `t_tx_<xid>` that
-is `INSERT ... SELECT`ed into `t` at pre-commit and dropped on abort.
+Staging. A scan of the index inside the transaction, or a buffer past
+`chdb_search.flush_threshold`, ships the buffered rows to a staging table
+`t_<generation>_tx_<fxid>` created `AS t` (same columns, skip indexes,
+ORDER BY and settings), one block per shipment. The scan then reads
+`t UNION ALL t_tx`, each leg with the full WHERE, ORDER BY and LIMIT so the
+skip and HNSW indexes serve both; the custom scan's statement is the same,
+and the score's counts and the aggregate scan read the union as a
+subquery, the WHERE in each leg. Shipping empties the writer, so the marks
+become staged levels, `(subxid, xid)` pairs: `ROLLBACK TO` of one puts its
+xid on the buffer's excluded list, which the staging leg filters with
+`xmin NOT IN (...)`; `RELEASE` passes it to the parent. Commit ships what is
+still buffered into `t`, then `ALTER TABLE t ATTACH PARTITION tuple() FROM
+t_tx` (both unpartitioned, so one partition `all`; 1.4 ms against 142 ms
+for an `INSERT ... SELECT` of 300k rows), or `INSERT INTO t SELECT * FROM
+t_tx WHERE xmin NOT IN (...)` when the list is not empty, and drops `t_tx`.
+Abort drops `t_tx`; a crash leaves it for the VACUUM sweep, which drops the
+staging tables of transactions that are over. `PREPARE TRANSACTION`
+flushes as commit does, attaching the staging table too.
 
 ### Storage
 

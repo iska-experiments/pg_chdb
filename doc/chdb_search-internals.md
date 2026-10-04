@@ -184,16 +184,28 @@ of transactions that are over (`vacuum.c`).
 
 ## Scans
 
-A scan is one ClickHouse `SELECT ctid ... FROM idx_<oid>.t_<generation>
-WHERE ...` built from the scan keys (`query.c`, `literal.c`), streamed back
-as Native blocks and decoded row by row (`scan.c`). `xs_recheck` is false:
-ClickHouse applied the quals, and the heap fetch decides visibility. A
-`ctid` past the heap's end, which a store the fail-safe has not refused can
-still hold, is skipped. The index returns no columns, yet the planner may
-pick an index-only scan when a query needs none, as `count(*)` does, so such
-a scan gets an all-null index tuple. There is no `amgetbitmap`: a lossy
-bitmap would recheck the quals with the Postgres implementations, which know
-the default tokenizer only, and drop every match of another tokenizer.
+A scan is one ClickHouse
+`SELECT ctid ... FROM idx_<oid>.t_<generation> WHERE ...` built from the
+scan keys (`query.c`, `literal.c`), streamed back as Native blocks and
+decoded row by row (`scan.c`). When the transaction has rows buffered or
+staged for the index, the builder ships the buffered ones to the staging
+table first and reads both tables as a `UNION ALL` of the same `SELECT`,
+each leg with its own `WHERE`, `ORDER BY` and `LIMIT` so that the skip and
+vector indexes serve both, ordered and limited again outside; the staging
+leg filters out the transaction ids of savepoints rolled back since their
+rows were staged. The builder's FROM clause, `chdb_search_append_from`,
+serves every statement over the index's rows: the custom scan's, the score's
+counts and the aggregate scan's, the last two reading the union as a
+subquery with the `WHERE` in each leg. So a transaction sees its own rows at
+once, and the rows it has not searched for travel as one block at commit, as
+before. `xs_recheck` is false: ClickHouse applied the quals, and the heap
+fetch decides visibility. A `ctid` past the heap's end, which a store the
+fail-safe has not refused can still hold, is skipped. The index returns no
+columns, yet the planner may pick an index-only scan when a query needs
+none, as `count(*)` does, so such a scan gets an all-null index tuple. There
+is no `amgetbitmap`: a lossy bitmap would recheck the quals with the
+Postgres implementations, which know the default tokenizer only, and drop
+every match of another tokenizer.
 
 The custom scan (`planner/`) is the other way a search runs: a
 `set_rel_pathlist` hook (`planner/hook.c`) matches the relation's
@@ -243,8 +255,9 @@ carries as its child, so the answer is always the snapshot's.
 
 ## Testing
 
-`test/sql/search_am*.sql` assert the statements the access method
-generates, logged at `DEBUG1` with `chdb_search.mask_oids`; they pass with
+`test/sql/search_am*.sql` and `search_own_writes.sql` assert the
+statements the access method generates, logged at `DEBUG1` with
+`chdb_search.mask_oids`; they pass with
 the worker and with the stub client, `make CHDB_SEARCH_STUB=1`, a
 per-backend fake (`client_stub.c`) that accepts every statement and answers
 selects from `chdb_search_stub.ctids`, fails on `chdb_search_stub.fail` and

@@ -208,7 +208,7 @@ SELECT id FROM docs WHERE body @@@ 'running shoes' AND price < 100 AND id > 7;
     `chdb_vector.filter_strategy` is `prefilter` (see [chdb_vector]).
 *   **Visibility and rechecks.** The rows come from the heap under the
     query's snapshot, so the custom scan returns what a sequential scan
-    would, less the rows a transaction's own uncommitted writes add (see
+    would, a transaction's own uncommitted rows included (see
     [Consistency](#consistency)). Row locks and `FOR UPDATE` recheck the
     pushed clauses with their Postgres implementations, as an index scan
     rechecks its conditions.
@@ -276,9 +276,9 @@ The needles are tokenized by the store with the column's own tokenizer and
 preprocessor, so the tokens are the index's whatever the tokenizer; the
 counts are asked once per statement, one small query per distinct token,
 and `EXPLAIN` asks for them too, as the statement shows the weights. The
-counts are of the store's rows, which include the versions `VACUUM` has not
-yet removed; a `raw_preprocessor` applies to the column and not to the
-needle, which is tokenized as written.
+counts are of the rows a search reads, the transaction's own included, and
+of the versions `VACUUM` has not yet removed; a `raw_preprocessor` applies
+to the column and not to the needle, which is tokenized as written.
 
 ## Aggregate Pushdown
 
@@ -331,9 +331,12 @@ SELECT author, count(*), avg(price) FROM docs WHERE body @@@ 'shoes'
     store is unavailable in `skip` mode, the node runs the plan Postgres
     would have run instead, which `EXPLAIN` shows as its child and `EXPLAIN
     ANALYZE` marks `Exact Plan` with the reason. So an insert, update or
-    delete since the last `VACUUM` costs the shortcut, not the answer. Like
-    the index, the store does not see a transaction's own uncommitted rows
-    (see [Consistency](#consistency)).
+    delete since the last `VACUUM` costs the shortcut, not the answer. A
+    transaction's own rows clear the bits of their pages, so the plan
+    Postgres would have run aggregates them; where the map is set
+    regardless, after a `COPY FREEZE` into a table the transaction created
+    or truncated, the statement reads the transaction's staged rows with
+    the table's, as a search does (see [Consistency](#consistency)).
 *   **Settings.**
     [`chdb_search.enable_aggregate_pushdown`](#chdb_searchenable_aggregate_pushdown)
     turns it off, as does
@@ -344,23 +347,31 @@ SELECT author, count(*), avg(price) FROM docs WHERE body @@@ 'shoes'
 
 ## Consistency
 
-*   **Flush at commit.** Inserts are buffered per transaction and sent to
-    the worker at pre-commit; `COMMIT` returns once the worker has them, and
-    fails if the flush fails. An abort, or a rolled back savepoint, drops
-    its rows.
-*   **Read after commit.** Once `COMMIT` returns, every later query sees the
-    rows. A transaction does not see its own uncommitted rows through the
-    index, while a sequential scan does, so plan choice decides what a query
-    in the inserting transaction returns.
+*   **A transaction sees its own rows.** A search through the index inside
+    a transaction finds the rows that transaction has inserted, updated or
+    copied so far, as a sequential scan would: the search first ships the
+    rows buffered since the last one to a staging table of the
+    transaction's own, `idx_<oid>.t_<generation>_tx_<xid>`, then reads it
+    with the index's table in one query. Only the transaction reads its
+    staging table; other sessions see the rows once it commits. Rows an
+    `UPDATE` or `DELETE` replaced or removed are hidden by the heap fetch,
+    as every stale index entry is.
+*   **Flush at commit.** Rows not yet staged are sent to the worker at
+    pre-commit, the staged ones are attached to the index's table in place,
+    and `COMMIT` returns once the worker has them all, failing if that
+    fails. An abort drops the buffer and the staging table.
+*   **Read after commit.** Once `COMMIT` returns, every later query in
+    every session sees the rows.
+*   **Savepoints.** `ROLLBACK TO` takes the savepoint's rows out of the
+    buffer, and hides the ones already staged at once: they stay out of
+    every later search and out of the commit.
 *   **Visibility through the heap.** The index returns tuple ids and the
     executor fetches each from the heap, so the rows of aborted transactions
     and the old versions that linger in the store until `VACUUM` are never
     returned. Postgres MVCC decides what a query sees.
 *   **Large transactions.** Past
     [`chdb_search.flush_threshold`](#chdb_searchflush_threshold) a
-    transaction flushes early into a staging table that commit merges and
-    abort drops. Rows staged inside a savepoint cannot be taken back from
-    it, so rolling the savepoint back excludes them from the merge instead.
+    transaction stages its rows as they come, searches or not.
 *   **Two-phase commit.** `PREPARE TRANSACTION` flushes as `COMMIT` does, so
     the rows of a prepared transaction are in the store before its fate is
     decided: `ROLLBACK PREPARED` leaves them dead in the heap, hidden until
@@ -475,8 +486,9 @@ SET chdb_search.flush_threshold = '256MB';
 ```
 
 Bytes of insert buffer per index above which a transaction stages its rows
-in ClickHouse. Takes the memory units of `postgresql.conf`; at least `64kB`.
-Defaults to `64MB`.
+in ClickHouse before a search or commit asks for them (see
+[Consistency](#consistency)). Takes the memory units of `postgresql.conf`;
+at least `64kB`. Defaults to `64MB`.
 
 ### `chdb_search.vacuum_optimize_ratio`
 
@@ -572,8 +584,7 @@ database named `idx_0`.
     to rebuild with `REINDEX`; WAL-G backs it up only while the worker is
     stopped. See [Backups and Replication](#backups-and-replication). The
     next phase keeps the store in index pages.
-*   A transaction does not see its own inserts through the index, and
-    `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
+*   `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
 *   The Postgres implementations of the operators tokenize as the default
     pipeline does; other tokenizers are usable through the index only.
 *   The custom scan plans a table of its own: a search inside a join takes
