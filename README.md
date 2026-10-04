@@ -107,6 +107,22 @@ SELECT id FROM docs WHERE body @@@ 'postgres clickhouse' AND author = 'ann';
 It requires PostgreSQL 17 or higher. See the [chdb_search
 documentation](doc/chdb_search.md) for details.
 
+### chdb_vector Extension
+
+The `chdb_vector` extension adds [pgvector] `vector` columns to the `chdb`
+index, so that one ClickHouse query answers a text predicate and a
+nearest-neighbour order:
+
+```sql
+CREATE INDEX docs_idx ON docs USING chdb (body, embedding vector_cosine_ops);
+
+SELECT id FROM docs WHERE body @@@ 'running shoes'
+ ORDER BY embedding <=> '[0.1, 0.2, 0.3]' LIMIT 10;
+```
+
+It requires chdb_search and pgvector. See the [chdb_vector
+documentation](doc/chdb_vector.md) for details.
+
 Benchmarking Formats
 --------------------
 
@@ -313,6 +329,8 @@ Copyright (c) 2026, ClickHouse
   [CREATE TABLE]: https://www.postgresql.org/docs/current/sql-createtable.html
     "Postgres Docs: CREATE TABLE"
   [lib.chdb.io]: https://lib.chdb.io "curl -sL https://lib.chdb.io | bash"
+  [pgvector]: https://github.com/pgvector/pgvector
+    "Open-source vector similarity search for Postgres"
   [`postgresql.conf` parameters]: https://www.postgresql.org/docs/devel/runtime-config-client.html#RUNTIME-CONFIG-CLIENT-OTHER
   [chdb_hook]: https://pgxn.org/dist/chdb/doc/chdb_hook.html "chdb_hook Docs on PGXN"
   [aws_s3]: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PostgreSQL.S3Import.html
