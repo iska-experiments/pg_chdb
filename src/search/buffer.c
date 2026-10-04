@@ -7,11 +7,9 @@
  * the call waits for the acknowledgement, so a committed row is searchable as
  * soon as COMMIT returns. Abort drops the buffers.
  *
- * Subtransactions. A rolled-back savepoint must take its rows with it. Each
- * buffer keeps a stack of writer checkpoints, one per subtransaction level
- * that has inserted, taken before the level's first row. ROLLBACK TO rewinds
- * the writer to the checkpoint. Releasing a savepoint merges its level into
- * the parent's.
+ * Subtransactions. A rolled-back savepoint must take its rows with it: each
+ * buffer keeps a mark per subtransaction level that has inserted, and
+ * marks.c rewinds or merges the level's rows when the savepoint ends.
  *
  * Large transactions. Past chdb_search.flush_threshold a top-level
  * transaction flushes its buffer into a staging table <table>_tx_<xid>
@@ -46,11 +44,6 @@
 
 /* ---- per-transaction buffers ---- */
 
-typedef struct Mark {
-    SubTransactionId subid;
-    pgch_checkpoint ckpt;
-} Mark;
-
 static List* pending = NIL; /* of Pending*, in TopTransactionContext */
 
 static Pending*
@@ -78,26 +71,12 @@ find_pending(Relation index) {
     return p;
 }
 
-static Mark*
-top_mark(Pending* p) {
-    return p->marks ? llast(p->marks) : NULL;
-}
-
-static void
-pop_mark(Pending* p) {
-    Mark* m = llast(p->marks);
-
-    pgch_checkpoint_free(&m->ckpt);
-    p->marks = list_delete_last(p->marks);
-    pfree(m);
-}
-
 static void
 free_pending(Pending* p) {
-    while (p->marks) {
-        pop_mark(p);
+    chdb_search_free_marks(p);
+    if (p->rw) {
+        chdb_rowwriter_free(p->rw);
     }
-    chdb_rowwriter_free(p->rw);
     pfree(p);
 }
 
@@ -147,15 +126,7 @@ chdb_search_aminsert(
     MemoryContext old      = MemoryContextSwitchTo(TopTransactionContext);
 
     if (nested) {
-        Mark* top = top_mark(p);
-
-        if (!top || top->subid != subid) {
-            Mark* m = palloc0(sizeof(*m));
-
-            m->subid = subid;
-            chdb_rowwriter_checkpoint(p->rw, &m->ckpt);
-            p->marks = lappend(p->marks, m);
-        }
+        chdb_search_mark_level(p, subid);
     }
     MemoryContextSwitchTo(old);
 
@@ -229,26 +200,6 @@ xact_callback(XactEvent event, void* arg) {
     }
 }
 
-/* Rewinds or merges the level's rows, as the savepoint is rolled back or released. */
-static void
-settle_marks(Pending* p, SubXactEvent event, SubTransactionId parentSubid) {
-    Mark* top = top_mark(p);
-
-    if (event == SUBXACT_EVENT_ABORT_SUB) {
-        chdb_rowwriter_rollback(p->rw, &top->ckpt);
-        pop_mark(p);
-    } else if (parentSubid == TopSubTransactionId) {
-        pop_mark(p); /* top level aborts as a whole, no mark needed */
-    } else if (
-        list_length(p->marks) > 1 &&
-        ((Mark*)list_nth(p->marks, list_length(p->marks) - 2))->subid == parentSubid
-    ) {
-        pop_mark(p); /* the parent's earlier checkpoint already covers these rows */
-    } else {
-        top->subid = parentSubid;
-    }
-}
-
 static bool
 revived_for(List* revived, Oid indexoid) {
     ListCell* lc;
@@ -277,11 +228,8 @@ subxact_callback(
 
     foreach (lc, pending) {
         Pending* p = lfirst(lc);
-        Mark* top  = top_mark(p);
 
-        if (top && top->subid == mySubid) {
-            settle_marks(p, event, parentSubid);
-        }
+        chdb_search_settle_marks(p, event, mySubid, parentSubid);
         if (p->superseded == mySubid) {
             /* The rebuild that set the rows aside is undone with the savepoint,
              * or passes to the parent with it. */
