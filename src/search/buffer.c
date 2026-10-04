@@ -67,8 +67,8 @@ find_pending(Relation index) {
 
     p->indexoid = RelationGetRelid(index);
     p->table    = chdb_search_table_name(index);
-    p->collist  = chdb_search_column_list(index);
     p->rw       = chdb_rowwriter_new(index);
+    p->collist  = chdb_rowwriter_column_list(p->rw);
     pending     = lappend(pending, p);
     MemoryContextSwitchTo(old);
     return p;
