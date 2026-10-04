@@ -73,10 +73,19 @@
 /*
  * The layout of a store, which ddl.c writes and the engine checks: one chDB
  * database per index, idx_<oid>, holding one MergeTree table per build,
- * t_<generation>, named after the index's metapage generation.
+ * t_<generation>, named after the index's metapage generation, and a meta
+ * table recording per generation the WAL position of the last flush into
+ * it, which a backend compares with its metapage before trusting the store
+ * (meta.c). The engine makes the meta table with the database, so that the
+ * comparison can be made of a store that has nothing else.
  */
 #define CHDB_STORE_DB_FMT "idx_%u"
 #define CHDB_STORE_TABLE_FMT CHDB_STORE_DB_FMT ".t_%" PRIu64
+#define CHDB_STORE_META_FMT CHDB_STORE_DB_FMT ".meta"
+#define CHDB_STORE_META_DDL                                                            \
+    "CREATE TABLE IF NOT EXISTS " CHDB_STORE_META_FMT                                  \
+    " (generation UInt64, lsn UInt64) ENGINE = ReplacingMergeTree(lsn) "               \
+    "ORDER BY generation SETTINGS fsync_after_insert = 1, fsync_part_directory = 1"
 
 /*
  * The store directory under the data directory: a <dboid> subdirectory holding

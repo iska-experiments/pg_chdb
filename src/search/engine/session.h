@@ -28,12 +28,16 @@ extern char*
 session_run(const char* sql, size_t len);
 
 /*
- * Settings and database every statement against an index needs first, and,
- * for a request naming a generation, that its table exists: `*no_store` is
- * set with the error when it does not.
+ * Settings, database and meta table every statement against an index needs
+ * first, and, for a request naming a generation, that its table exists:
+ * `*no_store` is set with the error when it does not.
  */
 extern char*
 session_prepare(const request* req, bool* no_store);
+
+/* The index's database was dropped, so its next request makes it again. */
+extern void
+session_forget(uint32_t index);
 
 /* Applies the request's settings, for commands that do not need the database. */
 extern char*

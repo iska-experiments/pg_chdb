@@ -35,11 +35,12 @@ LANGUAGE sql AS $$
         'SELECT toInt64(ctid), body, tags, price FROM %s ORDER BY ctid', $1
     )) AS (ctid bigint, body text, tags text[], price numeric)
 $$;
+-- The generation tables of the store; the meta table beside them stays.
 CREATE FUNCTION pg_temp.tables(oid)
 RETURNS bigint
 LANGUAGE sql AS $$
     SELECT n FROM chdb_search_query(format(
-        'SELECT count() FROM system.tables WHERE database = ''idx_%s''', $1
+        'SELECT count() FROM system.tables WHERE database = ''idx_%s'' AND name LIKE ''t\_%%''', $1
     )) AS (n bigint)
 $$;
 SELECT * FROM pg_temp.store(:'tbl') ORDER BY ctid;

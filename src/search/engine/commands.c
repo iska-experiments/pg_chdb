@@ -48,6 +48,7 @@ command_drop(int fd, const request* req) {
         } else {
             err = session_run(sql, strlen(sql));
             free(sql);
+            session_forget(req->index);
         }
     }
 
