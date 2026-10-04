@@ -68,19 +68,64 @@ session_begin(const chdbSearchRequest* req) {
     return apply_settings(&req->ctx);
 }
 
-char*
-session_prepare(const chdbSearchRequest* req) {
-    char* err = session_begin(req);
+/*
+ * Whether the table of `req`'s generation exists. The one-line text answer
+ * of EXISTS is read rather than a Native block.
+ */
+static char*
+table_exists(const chdbSearchRequest* req, bool* exists) {
     char* sql = NULL;
 
+    if (asprintf(
+            &sql, "EXISTS TABLE " CHDB_STORE_TABLE_FMT, req->index, req->generation
+        ) < 0) {
+        return strdup("out of memory");
+    }
+
+    chdb_result* res = chdb_query_n(*session_conn, sql, strlen(sql), "TSV", 3);
+    const char* err  = chdb_result_error(res);
+    char* out        = err ? strdup(err) : NULL;
+
+    *exists = !err && chdb_result_length(res) > 0 && chdb_result_buffer(res)[0] == '1';
+    chdb_destroy_query_result(res);
+    free(sql);
+
+    return out;
+}
+
+char*
+session_prepare(const chdbSearchRequest* req, bool* no_store) {
+    char* err   = session_begin(req);
+    char* sql   = NULL;
+    bool exists = false;
+
+    *no_store = false;
     if (err) {
         return err;
     }
-    if (asprintf(&sql, "CREATE DATABASE IF NOT EXISTS idx_%" PRIu32, req->index) < 0) {
+    if (asprintf(&sql, "CREATE DATABASE IF NOT EXISTS " CHDB_STORE_DB_FMT, req->index) <
+        0) {
         return strdup("out of memory");
     }
     err = session_run(sql, strlen(sql));
     free(sql);
+    if (err || req->generation == 0) {
+        return err;
+    }
+
+    /* A backend names the generation its metapage holds; the store must have it. */
+    err = table_exists(req, &exists);
+    if (!err && !exists) {
+        *no_store = true;
+        if (asprintf(
+                &err,
+                "the store has no table " CHDB_STORE_TABLE_FMT,
+                req->index,
+                req->generation
+            ) < 0) {
+            err = strdup("out of memory");
+        }
+    }
 
     return err;
 }

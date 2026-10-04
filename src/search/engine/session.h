@@ -33,8 +33,12 @@ session_run(const char* sql, size_t len);
 extern char*
 session_begin(const chdbSearchRequest* req);
 
-/* session_begin, then the index's database, created if it is missing. */
+/*
+ * session_begin, then the index's database, created if it is missing, and,
+ * for a request naming a generation, that its table exists: `*no_store` is
+ * set with the error when it does not.
+ */
 extern char*
-session_prepare(const chdbSearchRequest* req);
+session_prepare(const chdbSearchRequest* req, bool* no_store);
 
 #endif /* CHDB_SEARCH_ENGINE_SESSION_H */

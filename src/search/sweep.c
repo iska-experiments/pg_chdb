@@ -85,7 +85,7 @@ engine_request(chdbCmdType cmd, Oid index, const char* sql) {
         ereport(ERROR, errmsg("chdb_search: %s", dead));
     }
     initStringInfo(&buf);
-    chdb_search_frame_request(&buf, cmd, index, sql);
+    chdb_search_frame_request(&buf, cmd, index, 0, sql);
     if (!engine_send(buf.data, buf.len)) {
         ereport(ERROR, errmsg("chdb_search: %s", engine_death()));
     }
@@ -99,7 +99,7 @@ engine_status(const char* sql) {
     char* text =
         chdb_search_frame_status(engine_channel(), "chDB engine", sql, &status);
 
-    if (status != 0) {
+    if (status != CHDB_STATUS_OK) {
         ereport(
             ERROR,
             errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),

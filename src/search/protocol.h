@@ -16,6 +16,11 @@
  *   request    uint32  byte count of the rest of the request, at most
  *                      CHDB_SETUP_MAX
  *              uint32  index OID
+ *              uint64  store generation: the metapage generation of the
+ *                      table the statement works on, which the engine checks
+ *                      exists before running it; zero for a statement that
+ *                      creates that table, works in no table, or cleans up
+ *                      after an abort
  *              then the setup payload of src/setup.h verbatim, as
  *              chdb_helper_build_setup writes it for chdb_helper: command,
  *              limits, query and parameters. The command is CHDB_CMD_SELECT,
@@ -28,7 +33,9 @@
  *                CHDB_CMD_SELECT   worker to client, after the request
  *                EXEC, DROP        none
  *   status     worker to client, last frame of every request:
- *                uint8   zero for success
+ *                uint8   CHDB_STATUS_OK, _ERROR, or _NO_STORE when the
+ *                        request's generation names a table the store does
+ *                        not have, so the index needs a REINDEX
  *                string  error text as chDB said it, empty on success
  *                        (a debug command's answer)
  *
@@ -55,6 +62,19 @@
 #define CHDB_CMD_ENGINE_PID 'P'
 #define CHDB_CMD_ENGINE_KILL 'K'
 
+/* The status byte that ends every request. */
+#define CHDB_STATUS_OK 0
+#define CHDB_STATUS_ERROR 1
+#define CHDB_STATUS_NO_STORE 2
+
+/*
+ * The layout of a store, which the access method writes and the engine
+ * checks: one chDB database per index, idx_<oid>, holding one table per
+ * build, t_<generation>, named after the index's metapage generation.
+ */
+#define CHDB_STORE_DB_FMT "idx_%" PRIu32
+#define CHDB_STORE_TABLE_FMT CHDB_STORE_DB_FMT ".t_%" PRIu64
+
 /*
  * The store directory under the data directory: a <dboid> subdirectory holding
  * each database's chDB store, and the <dboid>.sock its worker listens on.
@@ -65,6 +85,7 @@
 /* A decoded request. The query borrows from the frame it was decoded from. */
 typedef struct chdbSearchRequest {
     uint32_t index;        /* the index OID */
+    uint64_t generation;   /* of the table the query works on, zero for none */
     chdbHelperContext ctx; /* command and limits */
     chdbSetupStr query;
     uint16_t nparams;
@@ -77,6 +98,7 @@ chdb_search_decode_request(const char* frame, size_t len, chdbSearchRequest* req
     chdbSetupCursor cur = { .at = frame, .end = frame + len };
 
     return chdb_setup_take(&cur, &req->index, sizeof(req->index)) &&
+           chdb_setup_take(&cur, &req->generation, sizeof(req->generation)) &&
            chdb_setup_parse_head(&cur, &req->ctx, &req->query, &req->nparams);
 }
 

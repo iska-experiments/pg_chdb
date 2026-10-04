@@ -25,9 +25,9 @@ io_send_chunks(int fd, const char* buf, size_t len);
 extern bool
 io_send_end(int fd);
 
-/* The status frame: success when `err` is NULL. */
+/* The status frame: `status` is CHDB_STATUS_OK when `err` is NULL. */
 extern bool
-io_send_status(int fd, const char* err);
+io_send_status(int fd, uint8_t status, const char* err);
 
 /*
  * Reads and decodes one request. 1 for a request, whose strings borrow from

@@ -17,11 +17,18 @@
 
 /*
  * Appends a whole request to `buf`: its byte count, then `cmd` against index
- * `index` with the chDB settings of the GUCs, carrying `sql` and no
- * parameters. Raises if the frame would exceed what the other side takes.
+ * `index` and store generation `generation` with the chDB settings of the
+ * GUCs, carrying `sql` and no parameters. Raises if the frame would exceed
+ * what the other side takes.
  */
 extern void
-chdb_search_frame_request(StringInfo buf, chdbCmdType cmd, Oid index, const char* sql);
+chdb_search_frame_request(
+    StringInfo buf,
+    chdbCmdType cmd,
+    Oid index,
+    uint64 generation,
+    const char* sql
+);
 
 /*
  * Reads the status frame that ends every request from `ch`: the status byte
