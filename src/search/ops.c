@@ -207,11 +207,8 @@ TEXT_PREDICATE(chdb_search_has_phrase, phrase)
  * The array tokenizer makes each element one token, compared after the
  * preprocessor. The needle is one token too, so all, any and token coincide.
  */
-PG_FUNCTION_INFO_V1(chdb_search_array_has_token);
-Datum
-chdb_search_array_has_token(PG_FUNCTION_ARGS) {
-    ArrayType* arr   = PG_GETARG_ARRAYTYPE_P(0);
-    text* t          = PG_GETARG_TEXT_PP(1);
+static bool
+array_has_token(ArrayType* arr, text* t) {
     char* needle     = chdb_search_lower(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
     ArrayIterator it = array_create_iterator(arr, 0, NULL);
     Datum d;
@@ -227,7 +224,65 @@ chdb_search_array_has_token(PG_FUNCTION_ARGS) {
         }
     }
     array_free_iterator(it);
-    PG_RETURN_BOOL(found);
+    return found;
+}
+
+PG_FUNCTION_INFO_V1(chdb_search_array_has_token);
+Datum
+chdb_search_array_has_token(PG_FUNCTION_ARGS) {
+    PG_RETURN_BOOL(array_has_token(PG_GETARG_ARRAYTYPE_P(0), PG_GETARG_TEXT_PP(1)));
+}
+
+void
+chdb_search_check_array_search(int strategy) {
+    if (strategy >= CHDB_STRATEGY_HAS_PHRASE) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+            errmsg(
+                "chdb indexes do not search text[] columns for %s",
+                strategy == CHDB_STRATEGY_HAS_PHRASE ? "phrases" : "patterns"
+            )
+        );
+    }
+}
+
+bool
+chdb_search_array_leaf(int strategy, ArrayType* arr, text* needle) {
+    chdb_search_check_array_search(strategy);
+    return array_has_token(arr, needle);
+}
+
+bool
+chdb_search_text_leaf(
+    int strategy,
+    text* hay,
+    text* needle,
+    int32 slop,
+    Oid collation
+) {
+    switch (strategy) {
+    case CHDB_STRATEGY_HAS_ALL_TOKENS:
+        return all_tokens(hay, needle);
+    case CHDB_STRATEGY_HAS_ANY_TOKENS:
+        return any_tokens(hay, needle);
+    case CHDB_STRATEGY_HAS_TOKEN:
+        return single_token(hay, needle);
+    case CHDB_STRATEGY_HAS_PHRASE:
+        if (slop) {
+            ereport(
+                ERROR,
+                errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                errmsg("phrase slop is not supported yet")
+            );
+        }
+        return phrase(hay, needle);
+    case CHDB_STRATEGY_REGEX:
+        return chdb_search_regex_matches(hay, needle, collation);
+    case CHDB_STRATEGY_WILDCARD:
+        return chdb_search_wildcard_matches(hay, needle);
+    }
+    elog(ERROR, "unknown chdb text strategy %d", strategy);
 }
 
 /* Operator estimators: the index decides, the planner only needs "selective". */

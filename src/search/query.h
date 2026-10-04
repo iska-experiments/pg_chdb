@@ -15,15 +15,78 @@
 /*
  * Strategy numbers, shared with the SQL script. The two sets are disjoint,
  * so a scan key is rendered by its number alone, whatever operator class it
- * came from. Text searches (text_ops, text_array_ops); 5 is reserved for a
- * search by a chdb.query value:
+ * came from. Text searches (text_ops, text_array_ops):
  */
 #define CHDB_STRATEGY_HAS_ALL_TOKENS 1 /* @@@ */
 #define CHDB_STRATEGY_HAS_ANY_TOKENS 2 /* @@? */
 #define CHDB_STRATEGY_HAS_TOKEN 3      /* @@= */
 #define CHDB_STRATEGY_HAS_PHRASE 4     /* @@~ */
+#define CHDB_STRATEGY_QUERY 5          /* @@@ chdb.query: a tree of the others */
 #define CHDB_STRATEGY_REGEX 6          /* @@/, match() */
 #define CHDB_STRATEGY_WILDCARD 7       /* @@%, LIKE */
+
+/*
+ * A search as a tree: the value of the chdb.query type, and what the
+ * CustomScan hands chdb_search_render_query for the OR and NOT the access
+ * method's ANDed scan keys cannot carry. The leaves are the text searches,
+ * numbered by their strategy, so a leaf renders and evaluates as the
+ * operator of that strategy does; boost carries a weight the filter ignores
+ * and the score layer multiplies by; and, or and not combine. A leaf may
+ * name an index column of its own, for a tree over several columns; one
+ * that names none is on the column of the operator it is the argument of.
+ *
+ * On the wire (querytree.c) a tree is its preorder walk: a kind byte, then
+ * for a leaf the slop (int32), the column (uint32 length, 0 for none, and
+ * the bytes) and the needle (uint32 length and the bytes); for a boost the
+ * weight (float4) and the child; for and and or the count (uint16) and the
+ * children; for not the child. Native byte order, unaligned.
+ */
+typedef enum ChdbQueryKind {
+    CHDB_Q_MATCH_ALL = CHDB_STRATEGY_HAS_ALL_TOKENS,
+    CHDB_Q_MATCH_ANY = CHDB_STRATEGY_HAS_ANY_TOKENS,
+    CHDB_Q_TERM      = CHDB_STRATEGY_HAS_TOKEN,
+    CHDB_Q_PHRASE    = CHDB_STRATEGY_HAS_PHRASE,
+    CHDB_Q_REGEX     = CHDB_STRATEGY_REGEX,
+    CHDB_Q_WILDCARD  = CHDB_STRATEGY_WILDCARD,
+    CHDB_Q_BOOST     = 8,
+    CHDB_Q_AND       = 9,
+    CHDB_Q_OR        = 10,
+    CHDB_Q_NOT       = 11,
+} ChdbQueryKind;
+
+#define CHDB_Q_IS_LEAF(kind) ((kind) < CHDB_Q_BOOST)
+
+typedef struct ChdbQuery {
+    ChdbQueryKind kind;
+    const char* needle; /* leaves */
+    const char* column; /* leaves: the index column searched, NULL for the operator's */
+    int32 slop;         /* phrase: tokens allowed between the needle's, in order */
+    float4 weight;      /* boost */
+    int nchildren;      /* and, or: at least one; boost, not: one */
+    struct ChdbQuery** children;
+} ChdbQuery;
+
+/* ---- querytree.c: building, the varlena of chdb.query and back ---- */
+extern ChdbQuery*
+chdb_search_query_leaf(ChdbQueryKind kind, const char* needle, int32 slop);
+/* and, or, not and boost over `children`, which the node keeps. */
+extern ChdbQuery*
+chdb_search_query_group(ChdbQueryKind kind, int nchildren, ChdbQuery** children);
+extern ChdbQuery*
+chdb_search_query_boost(ChdbQuery* child, float4 weight);
+/* Names `column` on every leaf of `q` that names none yet. */
+extern void
+chdb_search_query_in_column(ChdbQuery* q, const char* column);
+extern Datum
+chdb_search_query_to_datum(const ChdbQuery* q);
+extern ChdbQuery*
+chdb_search_query_from_datum(Datum d);
+
+/* ---- queryio.c: the readable form, which the type reads and prints ---- */
+extern char*
+chdb_search_query_to_string(const ChdbQuery* q);
+extern ChdbQuery*
+chdb_search_query_from_string(const char* s);
 
 /* Comparisons (columnar_ops): = < <= > >= */
 #define CHDB_STRATEGY_EQ 11
@@ -134,13 +197,34 @@ chdb_search_append_quals(
     ScanKey keys,
     int nkeys
 );
-/* `hasAllTokens(col, 'needle')` or the like: a text search by strategy. */
+/*
+ * `hasAllTokens(col, 'needle')` or the like: a text search of a column by
+ * the strategy of its operator; `slop` is a phrase's.
+ */
 extern void
 chdb_search_append_text_search(
     StringInfo buf,
     const struct ChdbColumn* col,
     StrategyNumber strategy,
-    const char* needle
+    const char* needle,
+    int32 slop
+);
+/*
+ * A query tree as one ClickHouse boolean expression over the index's
+ * columns, for the WHERE clause: `attno` is the column of a leaf that names
+ * none, or 0 when every leaf names its own. With a column, the expression
+ * is false for a NULL text as the strict operator is (a NOT would otherwise
+ * admit it); with 0 the caller owns the NULL semantics. Boost weights are
+ * ignored here; the filter decides which rows match, the score layer how
+ * well.
+ */
+extern void
+chdb_search_render_query(
+    StringInfo buf,
+    const struct ChdbColumn* cols,
+    int natts,
+    int attno,
+    const ChdbQuery* q
 );
 extern void
 chdb_search_append_literal(StringInfo buf, Datum value, Oid typid);

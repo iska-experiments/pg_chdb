@@ -33,12 +33,40 @@
 /*
  * Validates an operator class: the options support function, which decides
  * the kind of the family's columns (see ddl.c), chdb_vector's support
- * function, boolean search operators with the strategies of that kind (1..4
- * and 6..7 for text, 1..3 for text arrays, 11..15 for comparisons), and float8
- * ordering operators. The columnar_ops class is declared for anyelement, its
- * operators of concrete types live in its family, so only the family is
- * checked for contents.
+ * function, boolean search operators with the strategies of that kind (1..7
+ * for text, 1..3 and 5 for text arrays, 11..15 for comparisons), and float8
+ * ordering operators. A text search operator takes a text needle, except
+ * strategy 5, whose right operand is a chdb.query: it is known by its
+ * function rather than by the type's OID, as the kind of a class is. The
+ * columnar_ops class is declared for anyelement, its operators of concrete
+ * types live in its family, so only the family is checked for contents.
  */
+
+static bool
+strategy_allowed(ChdbColumnKind kind, bool ordering, int strategy) {
+    if (ordering) {
+        return strategy >= 1 && strategy <= CHDB_ORDER_L1;
+    }
+    switch (kind) {
+    case CHDB_COL_TEXT:
+        return strategy >= 1 && strategy <= CHDB_STRATEGY_WILDCARD;
+    case CHDB_COL_TEXT_ARRAY:
+        return (strategy >= 1 && strategy <= CHDB_STRATEGY_HAS_TOKEN) ||
+               strategy == CHDB_STRATEGY_QUERY;
+    default:
+        return strategy >= CHDB_STRATEGY_EQ && strategy <= CHDB_STRATEGY_GE;
+    }
+}
+
+/* Whether the operator is `col @@@ query`, by the function behind it. */
+static bool
+is_query_operator(Oid opr) {
+    FmgrInfo finfo;
+
+    fmgr_info(get_opcode(opr), &finfo);
+    return finfo.fn_addr == chdb_search_query_matches ||
+           finfo.fn_addr == chdb_search_array_query_matches;
+}
 bool
 chdb_search_validate(Oid opclassoid) {
     bool result = true;
@@ -129,16 +157,8 @@ chdb_search_validate(Oid opclassoid) {
         Form_pg_amop oprform = (Form_pg_amop)GETSTRUCT(&oprlist->members[i]->tuple);
         bool ordering        = oprform->amoppurpose == AMOP_ORDER;
         int strategy         = oprform->amopstrategy;
-        int lo = 1, hi = CHDB_ORDER_L1;
 
-        if (!ordering && kind == CHDB_COL_COLUMNAR) {
-            lo = CHDB_STRATEGY_EQ;
-            hi = CHDB_STRATEGY_GE;
-        } else if (!ordering) {
-            hi = kind == CHDB_COL_TEXT ? CHDB_STRATEGY_WILDCARD
-                                       : CHDB_STRATEGY_HAS_TOKEN;
-        }
-        if (strategy < lo || strategy > hi) {
+        if (!strategy_allowed(kind, ordering, strategy)) {
             ereport(
                 INFO,
                 errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -160,15 +180,17 @@ chdb_search_validate(Oid opclassoid) {
             result = false;
         }
         if (!ordering && kind != CHDB_COL_COLUMNAR &&
-            oprform->amoprighttype != TEXTOID) {
+            (strategy == CHDB_STRATEGY_QUERY ? !is_query_operator(oprform->amopopr)
+                                             : oprform->amoprighttype != TEXTOID)) {
             ereport(
                 INFO,
                 errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
                 errmsg(
                     "chdb opfamily %s contains text search operator %s whose right "
-                    "type is not text",
+                    "type is not %s",
                     opfamilyname,
-                    format_operator(oprform->amopopr)
+                    format_operator(oprform->amopopr),
+                    strategy == CHDB_STRATEGY_QUERY ? "chdb.query" : "text"
                 )
             );
             result = false;

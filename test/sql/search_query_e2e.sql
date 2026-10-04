@@ -79,6 +79,29 @@ SELECT v.q, b.* FROM (VALUES
     ($$plain @@% 'Run%'$$)
 ) v(q), LATERAL pg_temp.both_ways(v.q) b;
 
+
+----------------------------------------------------------------------------
+-- chdb.query trees: and, or, not and boost over every kind of leaf
+----------------------------------------------------------------------------
+SELECT v.q, b.* FROM (VALUES
+    ($$body @@@ chdb.match('boots trail')$$),
+    ($$body @@@ chdb.match_all('running shoes')$$),
+    ($$body @@@ (chdb.term('shoes') && !chdb.term('running'))$$),
+    ($$body @@@ (chdb.term('boots') || chdb.phrase('for runners') || chdb.regex('^a '))$$),
+    ($$body @@@ !(chdb.match('shoes') || chdb.match('boots'))$$),
+    ($$body @@@ chdb.boost(chdb.wildcard('%shoes') && chdb.regex('\d'), 2)$$),
+    ($$body @@@ chdb.all_of(chdb.term('a'), chdb.term('shoes'), !chdb.term('d'))$$),
+    ($$body @@@ chdb.any_of(chdb.phrase('walking boots'), chdb.term('école'))$$),
+    ($$body @@@ chdb.match('shoes') AND tags @@@ (chdb.term('SPORT') || chdb.term('outdoor'))$$),
+    ($$tags @@@ (chdb.match('sport') && !chdb.match_all('trail'))$$),
+    ($$tags @@@ !chdb.term('sport')$$)
+) v(q), LATERAL pg_temp.both_ways(v.q) b;
+-- A leaf naming another column is answered through the index alone.
+SET enable_seqscan = off;
+SELECT id FROM docs WHERE body @@@ (chdb.term('shoes') && chdb.in_column(chdb.term('trail'), 'tags')) ORDER BY id;
+SELECT id FROM docs WHERE tags @@@ (chdb.term('outdoor') || chdb.in_column(chdb.regex('^a run'), 'body')) ORDER BY id;
+RESET enable_seqscan;
+
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
 

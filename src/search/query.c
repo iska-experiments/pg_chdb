@@ -1,12 +1,14 @@
 /*
- * ScanKeys to ClickHouse SQL. Anything spliced into the statement is either
- * a function name picked from a fixed table, a column name quoted by ddl.c,
- * or a literal rendered by literal.c with ClickHouse's
- * own escaping rules (backslash and quote), so a search string cannot break
- * out.
+ * ScanKeys and query trees to ClickHouse SQL. Anything spliced into the
+ * statement is either a function name picked from a fixed table
+ * (textsearch.c), a column name quoted by columns.c, or a literal rendered
+ * by literal.c with ClickHouse's own escaping rules (backslash and quote),
+ * so a search string cannot break out.
  */
 
 #include "postgres.h"
+
+#include <string.h>
 
 #include "utils/builtins.h"
 
@@ -14,85 +16,113 @@
 #include "search.h"
 #include "vector.h"
 
-/*
- * ClickHouse's hasToken takes no array. The array tokenizer makes the needle
- * one token, so for arrays all, any and token agree and hasAllTokens serves;
- * a phrase or a pattern over elements has no meaning, and ClickHouse would
- * reject it.
- */
-static const char*
-token_function(StrategyNumber strategy, ChdbColumnKind kind) {
-    if (kind == CHDB_COL_TEXT_ARRAY && strategy == CHDB_STRATEGY_HAS_TOKEN) {
-        return "hasAllTokens";
+/* The column a leaf searches: the one it names, else the operator's. */
+static const ChdbColumn*
+leaf_column(const ChdbColumn* cols, int natts, int attno, const ChdbQuery* q) {
+    if (!q->column) {
+        if (attno < 1 || attno > natts) {
+            elog(ERROR, "chdb query leaf names no column");
+        }
+        return &cols[attno - 1];
     }
-    switch (strategy) {
-    case CHDB_STRATEGY_HAS_ALL_TOKENS:
-        return "hasAllTokens";
-    case CHDB_STRATEGY_HAS_ANY_TOKENS:
-        return "hasAnyTokens";
-    case CHDB_STRATEGY_HAS_TOKEN:
-        return "hasToken";
-    case CHDB_STRATEGY_HAS_PHRASE:
-        return "hasPhrase";
+
+    char* name = chdb_search_quote_ident(q->column);
+
+    for (int i = 0; i < natts; i++) {
+        if (strcmp(cols[i].name, name) == 0) {
+            if (cols[i].kind != CHDB_COL_TEXT && cols[i].kind != CHDB_COL_TEXT_ARRAY) {
+                ereport(
+                    ERROR,
+                    errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("chdb index column \"%s\" is not a text column", q->column)
+                );
+            }
+            return &cols[i];
+        }
     }
-    elog(ERROR, "unknown chdb text strategy %d", strategy);
+    ereport(
+        ERROR,
+        errcode(ERRCODE_UNDEFINED_COLUMN),
+        errmsg("chdb index has no column named \"%s\"", q->column)
+    );
 }
 
 /*
- * A text search of `col` by the strategy of its operator. The token
- * searches are the index's own functions, which preprocess the needle as
- * they do the column. A regular expression and a LIKE pattern read the
- * text, so they take the column through its preprocessor, with the pattern
- * folded alike: match() by RE2's (?i), LIKE through the same function. A
- * LIKE is parenthesized, as it may follow a NOT.
+ * Groups are parenthesized and a pattern leaf is too (above), so a NOT
+ * binds to its operand whatever it is, and a tree beside the other ANDed
+ * keys stays one term of the WHERE.
+ */
+static void
+render(
+    StringInfo buf,
+    const ChdbColumn* cols,
+    int natts,
+    int attno,
+    const ChdbQuery* q
+) {
+    switch (q->kind) {
+    case CHDB_Q_AND:
+    case CHDB_Q_OR:
+        appendStringInfoChar(buf, '(');
+        for (int i = 0; i < q->nchildren; i++) {
+            if (i) {
+                appendStringInfoString(buf, q->kind == CHDB_Q_AND ? " AND " : " OR ");
+            }
+            render(buf, cols, natts, attno, q->children[i]);
+        }
+        appendStringInfoChar(buf, ')');
+        return;
+    case CHDB_Q_NOT:
+        appendStringInfoString(buf, "NOT ");
+        render(buf, cols, natts, attno, q->children[0]);
+        return;
+    case CHDB_Q_BOOST:
+        render(buf, cols, natts, attno, q->children[0]);
+        return;
+    default:
+        chdb_search_append_text_search(
+            buf, leaf_column(cols, natts, attno, q), q->kind, q->needle, q->slop
+        );
+    }
+}
+
+static bool
+has_not(const ChdbQuery* q) {
+    if (q->kind == CHDB_Q_NOT) {
+        return true;
+    }
+    for (int i = 0; i < q->nchildren; i++) {
+        if (has_not(q->children[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * The operator is strict, so a NULL column never matches, while ClickHouse's
+ * token functions answer false for a NULL text and a NOT would turn that
+ * into a match: a tree with a NOT over a text column is guarded. An array
+ * column needs none, as a NULL array is stored empty and the Postgres side
+ * (queryeval.c) reads it as empty too.
  */
 void
-chdb_search_append_text_search(
+chdb_search_render_query(
     StringInfo buf,
-    const ChdbColumn* col,
-    StrategyNumber strategy,
-    const char* needle
+    const ChdbColumn* cols,
+    int natts,
+    int attno,
+    const ChdbQuery* q
 ) {
-    bool array = col->kind == CHDB_COL_TEXT_ARRAY;
-    StringInfoData lit;
+    bool guard = attno > 0 && cols[attno - 1].kind == CHDB_COL_TEXT && has_not(q);
 
-    if (array && strategy >= CHDB_STRATEGY_HAS_PHRASE) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-            errmsg(
-                "chdb indexes do not search text[] columns for %s",
-                strategy == CHDB_STRATEGY_HAS_PHRASE ? "phrases" : "patterns"
-            )
-        );
+    if (guard) {
+        appendStringInfo(buf, "(%s IS NOT NULL AND ", cols[attno - 1].name);
     }
-    initStringInfo(&lit);
-    if (strategy == CHDB_STRATEGY_REGEX && chdb_search_folds_case(col)) {
-        needle = psprintf("(?i)%s", needle);
+    render(buf, cols, natts, attno, q);
+    if (guard) {
+        appendStringInfoChar(buf, ')');
     }
-    chdb_search_append_string(&lit, needle);
-    switch (strategy) {
-    case CHDB_STRATEGY_REGEX:
-        appendStringInfo(
-            buf,
-            "match(%s, %s)",
-            chdb_search_preprocessed(col, col->name, false),
-            lit.data
-        );
-        return;
-    case CHDB_STRATEGY_WILDCARD:
-        appendStringInfo(
-            buf,
-            "(%s LIKE %s)",
-            chdb_search_preprocessed(col, col->name, false),
-            chdb_search_folds_case(col) ? chdb_search_preprocessed(col, lit.data, true)
-                                        : lit.data
-        );
-        return;
-    }
-    appendStringInfo(
-        buf, "%s(%s, %s)", token_function(strategy, col->kind), col->name, lit.data
-    );
 }
 
 static const char*
@@ -147,10 +177,18 @@ chdb_search_append_quals(
                 appendStringInfo(buf, "%s %s ", col->name, op);
                 chdb_search_append_literal(buf, key->sk_argument, argtype);
             }
+        } else if (key->sk_strategy == CHDB_STRATEGY_QUERY) {
+            chdb_search_render_query(
+                buf,
+                cols,
+                natts,
+                key->sk_attno,
+                chdb_search_query_from_datum(key->sk_argument)
+            );
         } else {
             /* The needle is text: the operators of the text strategies say so. */
             chdb_search_append_text_search(
-                buf, col, key->sk_strategy, TextDatumGetCString(key->sk_argument)
+                buf, col, key->sk_strategy, TextDatumGetCString(key->sk_argument), 0
             );
         }
     }

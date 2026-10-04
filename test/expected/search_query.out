@@ -53,6 +53,120 @@ SELECT NULL::text @@/ 'x', 'x' @@% NULL;
 (1 row)
 
 ----------------------------------------------------------------------------
+-- chdb.query: the builders and the readable form
+----------------------------------------------------------------------------
+SELECT chdb.match('running shoes'), chdb.match_all('running shoes'), chdb.term('shoes'),
+       chdb.phrase('running shoes'), chdb.phrase('running shoes', 2), chdb.regex('run+'),
+       chdb.wildcard('run%');
+         match          |         match_all          |     term      |         phrase          |           phrase           |     regex     |     wildcard     
+------------------------+----------------------------+---------------+-------------------------+----------------------------+---------------+------------------
+ match('running shoes') | match_all('running shoes') | term('shoes') | phrase('running shoes') | phrase('running shoes', 2) | regex('run+') | wildcard('run%')
+(1 row)
+
+-- && and || flatten a chain into one group; ! negates; boost carries a weight.
+SELECT chdb.term('a') && chdb.term('b') && chdb.term('c'),
+       chdb.term('a') || (chdb.term('b') || chdb.term('c')),
+       (chdb.term('a') && chdb.term('b')) || chdb.term('c'),
+       !chdb.term('a'), !(!chdb.term('a')),
+       chdb.boost(chdb.term('a'), 2.5), chdb.boost(chdb.match('a b') && chdb.term('c'), 0.5);
+               ?column?               |              ?column?               |                 ?column?                 |    ?column?    |      ?column?       |         boost         |                  boost                   
+--------------------------------------+-------------------------------------+------------------------------------------+----------------+---------------------+-----------------------+------------------------------------------
+ and(term('a'), term('b'), term('c')) | or(term('a'), term('b'), term('c')) | or(and(term('a'), term('b')), term('c')) | not(term('a')) | not(not(term('a'))) | boost(term('a'), 2.5) | boost(and(match('a b'), term('c')), 0.5)
+(1 row)
+
+SELECT chdb.all_of(chdb.term('a'), chdb.term('b') && chdb.term('c')),
+       chdb.any_of(chdb.term('a')), chdb.none_of(chdb.phrase('a b', 1)),
+       chdb.in_column(chdb.term('a') || chdb.in_column(chdb.term('b'), 'other'), 'title');
+                all_of                |  any_of   |        none_of        |                            in_column                             
+--------------------------------------+-----------+-----------------------+------------------------------------------------------------------
+ and(term('a'), term('b'), term('c')) | term('a') | not(phrase('a b', 1)) | or(in_column(term('a'), 'title'), in_column(term('b'), 'other'))
+(1 row)
+
+-- A needle keeps its quotes, backslashes and newlines through the form.
+SELECT chdb.term(E'it''s a \\ back\nslash');
+         term         
+----------------------
+ term('it''s a \ back+
+ slash')
+(1 row)
+
+SELECT chdb.term(E'it''s a \\ back\nslash')::text::chdb.query::text = chdb.term(E'it''s a \\ back\nslash')::text;
+ ?column? 
+----------
+ t
+(1 row)
+
+-- The form reads back, whitespace and all.
+SELECT 'and( match_all( ''running shoes'' ) ,not(phrase(''on sale'',1)), boost(term(''new''), 2))'::chdb.query;
+                                       query                                       
+-----------------------------------------------------------------------------------
+ and(match_all('running shoes'), not(phrase('on sale', 1)), boost(term('new'), 2))
+(1 row)
+
+SELECT 'in_column(or(term(''a''), wildcard(''b%'')), ''title'')'::chdb.query;
+                                 query                                 
+-----------------------------------------------------------------------
+ or(in_column(term('a'), 'title'), in_column(wildcard('b%'), 'title'))
+(1 row)
+
+-- Rejected forms and arguments.
+SELECT 'bogus(''x'')'::chdb.query;
+ERROR:  invalid input syntax for type chdb.query: "bogus('x')" at character 8
+SELECT 'term(''x'::chdb.query;
+ERROR:  invalid input syntax for type chdb.query: "term('x" at character 8
+SELECT 'term(''x'') extra'::chdb.query;
+ERROR:  invalid input syntax for type chdb.query: "term('x') extra" at character 8
+SELECT 'boost(term(''x''), two)'::chdb.query;
+ERROR:  invalid input syntax for type real: "two" at character 8
+SELECT 'not(term(''x''), term(''y''))'::chdb.query;
+ERROR:  invalid input syntax for type chdb.query: "not(term('x'), term('y'))" at character 8
+SELECT 'phrase(''x'', -1)'::chdb.query;
+ERROR:  a phrase's slop cannot be negative at character 8
+SELECT chdb.phrase('x', -1);
+ERROR:  a phrase's slop cannot be negative
+SELECT chdb.all_of(VARIADIC ARRAY[]::chdb.query[]);
+ERROR:  a chdb.query combination needs at least one query
+SELECT chdb.any_of(chdb.term('a'), NULL);
+ERROR:  a chdb.query combination cannot include a null query
+----------------------------------------------------------------------------
+-- The Postgres fallback evaluates the tree with the fallback of each leaf
+----------------------------------------------------------------------------
+SELECT 'Running shoes for runners' @@@ chdb.match('boots shoes'),
+       'Running shoes for runners' @@@ chdb.match_all('boots shoes'),
+       'Running shoes for runners' @@@ (chdb.term('shoes') && !chdb.term('boots')),
+       'Running shoes for runners' @@@ (chdb.term('boots') || chdb.phrase('for runners')),
+       'Running shoes for runners' @@@ chdb.boost(chdb.regex('^run') && chdb.wildcard('%runners'), 3),
+       'Running shoes for runners' @@@ !chdb.match('running'),
+       NULL::text @@@ chdb.term('x');
+ ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------+----------+----------+----------
+ t        | f        | t        | t        | t        | f        | 
+(1 row)
+
+SELECT ARRAY['Sport', 'shoes'] @@@ chdb.any_of(chdb.term('SHOES'), chdb.term('boots')),
+       ARRAY['Sport', 'shoes'] @@@ (chdb.match('sport') && !chdb.match_all('trail'));
+ ?column? | ?column? 
+----------+----------
+ t        | t
+(1 row)
+
+-- A NULL array reads as the empty array the index stores for it.
+SELECT NULL::text[] @@@ chdb.term('x'), NULL::text[] @@@ !chdb.term('x'), '{}'::text[] @@@ !chdb.term('x'),
+       NULL::text[] @@@ NULL;
+ ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------
+ f        | t        | t        | 
+(1 row)
+
+SELECT ARRAY['a'] @@@ chdb.phrase('a b');
+ERROR:  chdb indexes do not search text[] columns for phrases
+SELECT ARRAY['a'] @@@ chdb.regex('a');
+ERROR:  chdb indexes do not search text[] columns for patterns
+SELECT 'x' @@@ chdb.in_column(chdb.term('x'), 'title');
+ERROR:  a chdb.query naming a column is evaluated through a chdb index only
+SELECT 'x' @@@ chdb.term('two words');
+ERROR:  has_token needs a needle that is a single token
+----------------------------------------------------------------------------
 -- The operator class carries the new strategies
 ----------------------------------------------------------------------------
 SELECT amopstrategy, amopopr::regoperator
@@ -60,15 +174,16 @@ SELECT amopstrategy, amopopr::regoperator
  WHERE amopfamily = (SELECT oid FROM pg_opfamily WHERE opfname = 'text_ops'
                         AND opfmethod = (SELECT oid FROM pg_am WHERE amname = 'chdb'))
  ORDER BY amopstrategy;
- amopstrategy |    amopopr     
---------------+----------------
+ amopstrategy |     amopopr     
+--------------+-----------------
             1 | @@@(text,text)
             2 | @@?(text,text)
             3 | @@=(text,text)
             4 | @@~(text,text)
+            5 | @@@(text,query)
             6 | @@/(text,text)
             7 | @@%(text,text)
-(6 rows)
+(7 rows)
 
 SELECT opcname, amvalidate(oid)
   FROM pg_opclass
@@ -121,6 +236,44 @@ SELECT id FROM docs WHERE tags @@/ 'x';
 ERROR:  operator does not exist: text[] @@/ unknown at character 32
 SELECT id FROM docs WHERE tags @@% 'x';
 ERROR:  operator does not exist: text[] @@% unknown at character 32
+----------------------------------------------------------------------------
+-- A chdb.query is one term of the WHERE, with each leaf as its operator
+-- renders it; the planner folds the builders to a constant
+----------------------------------------------------------------------------
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ (chdb.match('running') && !chdb.term('boots'));
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: (body @@@ 'and(match(''running''), not(term(''boots'')))'::query)
+(2 rows)
+
+SET client_min_messages = debug1;
+\o /dev/null
+SELECT id FROM docs WHERE body @@@ chdb.match('running shoes');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAnyTokens("body", 'running shoes')
+SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('boots'));
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAllTokens("body", 'running shoes') AND NOT hasToken("body", 'boots')))
+SELECT id FROM docs WHERE body @@@ (chdb.term('a') || chdb.phrase('b c') || chdb.boost(chdb.regex('d+'), 2));
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasToken("body", 'a') OR hasPhrase("body", 'b c') OR match(lowerUTF8("body"), '(?i)d+'))
+-- A text column with a NOT in its tree is guarded against NULL, which the
+-- strict operator never matches while ClickHouse's NOT false would.
+SELECT id FROM docs WHERE body @@@ !(chdb.wildcard('a%') && chdb.term('b')) AND body @@= 'c';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ("body" IS NOT NULL AND NOT ((lowerUTF8("body") LIKE lowerUTF8('a%')) AND hasToken("body", 'b'))) AND hasToken("body", 'c')
+SELECT id FROM docs WHERE tags @@@ !chdb.term('sport');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE NOT hasAllTokens("tags", 'sport')
+SELECT id FROM docs WHERE tags @@@ chdb.any_of(chdb.term('sport'), chdb.match_all('trail'));
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("tags", 'sport') OR hasAllTokens("tags", 'trail'))
+-- A leaf naming another column of the index searches that column.
+SELECT id FROM docs WHERE body @@@ (chdb.term('a') && chdb.in_column(chdb.term('b'), 'html') && chdb.in_column(chdb.match('c'), 'tags'));
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasToken("body", 'a') AND hasToken("html", 'b') AND hasAnyTokens("tags", 'c'))
+\o
+RESET client_min_messages;
+SELECT id FROM docs WHERE body @@@ chdb.in_column(chdb.term('a'), 'nope');
+ERROR:  chdb index has no column named "nope"
+SELECT id FROM docs WHERE body @@@ chdb.in_column(chdb.term('a'), 'id');
+ERROR:  chdb index has no column named "id"
+SELECT id FROM docs WHERE tags @@@ chdb.phrase('a b');
+ERROR:  chdb indexes do not search text[] columns for phrases
 RESET enable_seqscan;
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
