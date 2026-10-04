@@ -116,7 +116,8 @@
 #define CHDB_STORE_DISK_NAME_FMT "pg_%" PRIu32 "_g%" PRIu64
 #define CHDB_STORE_DISK_RO_FMT                                                         \
     "disk = disk(name = '" CHDB_STORE_DISK_NAME_FMT                                    \
-    "', type = 'callback', storage_name = '" CHDB_STORE_STORAGE_FMT "', key_prefix = '%s')"
+    "', type = 'callback', storage_name = '" CHDB_STORE_STORAGE_FMT                    \
+    "', key_prefix = '%s')"
 
 /*
  * The worker's directory under the data directory: pg_chdb/pgsql_tmp holds a
@@ -142,9 +143,9 @@
 
 /* A decoded request. The query borrows from the frame it was decoded from. */
 typedef struct chdbSearchRequest {
-    uint32_t index;        /* the index OID */
-    uint64_t generation;   /* of the table the query works on, zero for none */
-    uint32_t tablespace;   /* the index relation's locator, zero for none */
+    uint32_t index;      /* the index OID */
+    uint64_t generation; /* of the table the query works on, zero for none */
+    uint32_t tablespace; /* the index relation's locator, zero for none */
     uint32_t relnumber;
     chdbHelperContext ctx; /* command and limits */
     chdbSetupStr query;

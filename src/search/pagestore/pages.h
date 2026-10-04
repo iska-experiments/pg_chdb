@@ -86,7 +86,8 @@ typedef struct ChdbPageSpecial {
     BlockNumber next; /* the chain's next page, or InvalidBlockNumber */
 } ChdbPageSpecial;
 
-/* The accessors are functions: the page macros evaluate their argument more than once. */
+/* The accessors are functions: the page macros evaluate their argument more than once.
+ */
 static inline ChdbPageSpecial*
 CHDB_SPECIAL(Page page) {
     return (ChdbPageSpecial*)PageGetSpecialPointer(page);
@@ -112,7 +113,7 @@ static inline BlockNumber*
 CHDB_LIST_BLOCKS(Page page) {
     return (BlockNumber*)(PageGetContents(page) + sizeof(ChdbListHeader));
 }
-#define CHDB_LIST_PER_PAGE \
+#define CHDB_LIST_PER_PAGE                                                             \
     ((CHDB_DATA_PER_PAGE - sizeof(ChdbListHeader)) / sizeof(BlockNumber))
 
 /* A directory entry: the key, then its data when the blob is inline. */
@@ -129,7 +130,7 @@ typedef struct ChdbDirEntry {
 /* Longer keys are refused: plain_rewritable's are under a hundred bytes. */
 #define CHDB_KEY_MAX 1024
 
-#define CHDB_DIR_ENTRY_SIZE(keylen, inline_bytes) \
+#define CHDB_DIR_ENTRY_SIZE(keylen, inline_bytes)                                      \
     (offsetof(ChdbDirEntry, key) + (keylen) + (inline_bytes))
 #define CHDB_DIR_ENTRY_DATA(e) ((e)->key + (e)->keylen)
 #define CHDB_DIR_ENTRY_INLINE(e) (!BlockNumberIsValid((e)->map))

@@ -53,7 +53,8 @@
  *   ATTACH TABLE IF NOT EXISTS idx_16401.t_7342 UUID '...' (the same; on a
  *     standby the disk is named, disk(name = 'pg_16401_g7342', ...), and
  *     the settings end in ", table_readonly = 1")
- *   CREATE TABLE idx_16401.t_7342_tx_912 UUID '...' (the same, key_prefix = 's7342_tx_912')
+ *   CREATE TABLE idx_16401.t_7342_tx_912 UUID '...' (the same, key_prefix =
+ *     's7342_tx_912')
  *   INSERT INTO idx_16401.t_7342 (ctid, xmin, "body", "tags", "author")
  *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'running shoes')
  *   DELETE FROM idx_16401.t_7342 WHERE ctid IN (4294967296, ...)
@@ -104,7 +105,9 @@ chdb_search_structure(const ChdbColumn* cols, int natts) {
 /* `idx_<oid>.t_<generation>_tx_<fxid>`, a transaction's staging table. */
 char*
 chdb_search_staging_of(Oid indexoid, uint64 generation, uint64 fxid) {
-    return psprintf(CHDB_STORE_TABLE_FMT "_tx_" UINT64_FORMAT, indexoid, generation, fxid);
+    return psprintf(
+        CHDB_STORE_TABLE_FMT "_tx_" UINT64_FORMAT, indexoid, generation, fxid
+    );
 }
 
 /*

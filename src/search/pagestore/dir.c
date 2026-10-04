@@ -21,8 +21,8 @@ walk_pages(ChdbPages* p, PageVisitor visit, void* ud) {
     BlockNumber blk = p->meta.dir_head;
 
     while (BlockNumberIsValid(blk)) {
-        Buffer buf       = chdb_pages_read_kind(p, blk, BUFFER_LOCK_SHARE, CHDB_PAGE_DIR);
-        Page page        = BufferGetPage(buf);
+        Buffer buf = chdb_pages_read_kind(p, blk, BUFFER_LOCK_SHARE, CHDB_PAGE_DIR);
+        Page page  = BufferGetPage(buf);
         BlockNumber next = CHDB_SPECIAL(page)->next;
         bool more        = visit(ud, blk, page);
 
@@ -84,7 +84,9 @@ find_visitor(void* ud, BlockNumber blk, Page page) {
 
 static bool
 find(ChdbPages* p, const char* key, bool copy, Find* f) {
-    *f = (Find){ .key = key, .keylen = strlen(key), .blk = InvalidBlockNumber, .copy = copy };
+    *f = (Find){
+        .key = key, .keylen = strlen(key), .blk = InvalidBlockNumber, .copy = copy
+    };
     walk_pages(p, find_visitor, f);
     return BlockNumberIsValid(f->blk);
 }
@@ -154,7 +156,9 @@ extend_chain(ChdbPages* p, BlockNumber last) {
 ChdbDirEntry*
 chdb_dir_put(ChdbPages* p, const ChdbDirEntry* e, Size len) {
     char* key = pnstrdup(e->key, e->keylen);
-    Room r    = { .need = MAXALIGN(len), .fit = InvalidBlockNumber, .last = InvalidBlockNumber };
+    Room r    = { .need = MAXALIGN(len),
+                  .fit  = InvalidBlockNumber,
+                  .last = InvalidBlockNumber };
     ChdbWrite w;
     Page page = NULL;
 
@@ -248,7 +252,9 @@ any_visitor(void* ud, BlockNumber blk, Page page) {
 bool
 chdb_dir_any(ChdbPages* p, const char* prefix) {
     bool found = false;
-    Listing l  = { .prefix = prefix, .len = strlen(prefix), .sink = any_sink, .ud = &found };
+    Listing l  = {
+        .prefix = prefix, .len = strlen(prefix), .sink = any_sink, .ud = &found
+    };
 
     walk_pages(p, any_visitor, &l);
     return found;

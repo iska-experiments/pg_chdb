@@ -61,7 +61,8 @@ chdb_search_standby_poll(void) {
     ereport(
         LOG,
         errmsg(
-            "chdb_search: worker for database %u promoted, the engine restarts read-write",
+            "chdb_search: worker for database %u promoted, the engine restarts "
+            "read-write",
             MyDatabaseId
         )
     );

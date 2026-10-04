@@ -25,7 +25,13 @@ map_page(ChdbPages* p, BlockNumber blk, BlockNumber* out, uint32* count) {
 }
 
 Size
-chdb_blob_read(ChdbPages* p, const ChdbDirEntry* e, uint64 offset, void* buf, Size len) {
+chdb_blob_read(
+    ChdbPages* p,
+    const ChdbDirEntry* e,
+    uint64 offset,
+    void* buf,
+    Size len
+) {
     if (offset >= e->size) {
         return 0;
     }
@@ -38,9 +44,9 @@ chdb_blob_read(ChdbPages* p, const ChdbDirEntry* e, uint64 offset, void* buf, Si
     uint64 first   = offset / CHDB_DATA_PER_PAGE;
     BlockNumber at = e->map;
     BlockNumber blocks[CHDB_LIST_PER_PAGE];
-    uint32 count   = 0;
-    uint32 idx     = (uint32)(first % CHDB_LIST_PER_PAGE);
-    Size done      = 0;
+    uint32 count = 0;
+    uint32 idx   = (uint32)(first % CHDB_LIST_PER_PAGE);
+    Size done    = 0;
 
     /* To the map page covering the first page wanted. */
     for (uint64 hop = first / CHDB_LIST_PER_PAGE; hop > 0; hop--) {
@@ -67,8 +73,11 @@ chdb_blob_read(ChdbPages* p, const ChdbDirEntry* e, uint64 offset, void* buf, Si
             ereport(
                 ERROR,
                 errcode(ERRCODE_DATA_CORRUPTED),
-                errmsg("chdb_search: blob \"%.*s\" is shorter than its directory entry",
-                       e->keylen, e->key)
+                errmsg(
+                    "chdb_search: blob \"%.*s\" is shorter than its directory entry",
+                    e->keylen,
+                    e->key
+                )
             );
         }
         memcpy((char*)buf + done, (char*)page + CHDB_PAGE_START + inpage, n);
@@ -111,8 +120,8 @@ chdb_blob_release(ChdbPages* p, const ChdbDirEntry* e) {
     chdb_write_abort(&x);
 
     /* The last entry: every data page and the map pages themselves go. */
-    uint32 cap        = 1024, n = 0;
-    BlockNumber* all  = palloc(cap * sizeof(BlockNumber));
+    uint32 cap = 1024, n = 0;
+    BlockNumber* all = palloc(cap * sizeof(BlockNumber));
     BlockNumber blocks[CHDB_LIST_PER_PAGE];
 
     for (BlockNumber at = e->map; BlockNumberIsValid(at);) {

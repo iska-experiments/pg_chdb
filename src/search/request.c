@@ -117,9 +117,9 @@ serve(chdbChannel* client, MemoryContext cxt) {
          */
         chdb_pagestore_forget(req.index);
     } else {
-        RelFileLocator loc = {
-            .spcOid = req.tablespace, .dbOid = MyDatabaseId, .relNumber = req.relnumber
-        };
+        RelFileLocator loc = { .spcOid    = req.tablespace,
+                               .dbOid     = MyDatabaseId,
+                               .relNumber = req.relnumber };
 
         /* Where the index's blobs go, then a table the engine lacks yet. */
         chdb_pagestore_note(req.index, loc);

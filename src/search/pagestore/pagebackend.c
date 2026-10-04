@@ -178,13 +178,15 @@ pg_copy(const char* storage, const char* from, const char* to) {
         ereport(
             ERROR,
             errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-            errmsg("chdb_search: blob \"%s\" cannot be copied to another relation", from)
+            errmsg(
+                "chdb_search: blob \"%s\" cannot be copied to another relation", from
+            )
         );
     }
 
-    bool inl           = CHDB_DIR_ENTRY_INLINE(src);
-    Size len           = CHDB_DIR_ENTRY_SIZE(keylen, inl ? src->size : 0);
-    ChdbDirEntry* dst  = palloc(len);
+    bool inl          = CHDB_DIR_ENTRY_INLINE(src);
+    Size len          = CHDB_DIR_ENTRY_SIZE(keylen, inl ? src->size : 0);
+    ChdbDirEntry* dst = palloc(len);
 
     dst->size   = src->size;
     dst->mtime  = (int64)time(NULL);
@@ -204,18 +206,18 @@ pg_copy(const char* storage, const char* from, const char* to) {
 }
 
 const chdbBlobStore chdb_blob_pagestore = {
-    .init           = chdb_routes_init,
-    .storages       = chdb_routes_storages,
-    .exists         = pg_exists,
-    .metadata       = pg_metadata,
-    .read           = pg_read,
-    .write_begin    = pg_write_begin,
-    .write_append   = pg_write_append,
-    .write_commit   = pg_write_commit,
-    .write_abort    = pg_write_abort,
-    .remove         = pg_remove,
-    .list           = pg_list,
-    .copy           = pg_copy,
+    .init         = chdb_routes_init,
+    .storages     = chdb_routes_storages,
+    .exists       = pg_exists,
+    .metadata     = pg_metadata,
+    .read         = pg_read,
+    .write_begin  = pg_write_begin,
+    .write_append = pg_write_append,
+    .write_commit = pg_write_commit,
+    .write_abort  = pg_write_abort,
+    .remove       = pg_remove,
+    .list         = pg_list,
+    .copy         = pg_copy,
 };
 
 /* ---- a backend reading its own index ---- */

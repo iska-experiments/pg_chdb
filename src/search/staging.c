@@ -164,6 +164,8 @@ chdb_search_flush_pending(Pending* p) {
                        p->staging
                    )
     );
-    chdb_search_run(p->indexoid, p->generation, psprintf("DROP TABLE %s SYNC", p->staging));
+    chdb_search_run(
+        p->indexoid, p->generation, psprintf("DROP TABLE %s SYNC", p->staging)
+    );
     p->staging = NULL;
 }

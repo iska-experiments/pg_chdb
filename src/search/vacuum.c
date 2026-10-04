@@ -2,11 +2,11 @@
  * VACUUM. The store holds every ctid ever inserted, so ambulkdelete asks the
  * callback about each one, and the rows of transactions that never
  * committed (xmin.c), whose TIDs the heap may have given out again, and
- * removes the dead ones with a DELETE run as a lightweight update: ClickHouse patches the parts holding the rows, found
- * by the block number and offset columns the table keeps (ddl.c), and never
- * rewrites a part with a mutation, which the Phase 1 plain_rewritable disk
- * rejects ("Mutations are not supported for immutable disk") and which the
- * default mode falls back to. amvacuumcleanup runs OPTIMIZE ... FINAL when
+ * removes the dead ones with a DELETE run as a lightweight update: ClickHouse patches
+ * the parts holding the rows, found by the block number and offset columns the table
+ * keeps (ddl.c), and never rewrites a part with a mutation, which the Phase 1
+ * plain_rewritable disk rejects ("Mutations are not supported for immutable disk") and
+ * which the default mode falls back to. amvacuumcleanup runs OPTIMIZE ... FINAL when
  * enough rows died to be worth rewriting parts: the patches only mask rows
  * until a merge. It also sweeps the tables of other generations, which a
  * rebuild leaves behind (see ddl.c), and the staging tables of transactions

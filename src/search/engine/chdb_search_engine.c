@@ -69,8 +69,8 @@ main(int argc, char** argv) {
     if (argc != 4 && !readonly) {
         fprintf(
             stderr,
-            "usage: chdb_search_engine <fd> <page fd> <store path> [" CHDB_SEARCH_ENGINE_READONLY
-            "]\n"
+            "usage: chdb_search_engine <fd> <page fd> <store path> "
+            "[" CHDB_SEARCH_ENGINE_READONLY "]\n"
         );
         return 2;
     }

@@ -149,7 +149,9 @@ check_writable(uint32 op) {
         ereport(
             ERROR,
             errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-            errmsg("chdb_search: the store is read-only while the server is in recovery")
+            errmsg(
+                "chdb_search: the store is read-only while the server is in recovery"
+            )
         );
     }
 }

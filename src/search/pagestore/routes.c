@@ -173,7 +173,8 @@ chdb_routes_refresh(const char* storage, const char* key, RelFileLocator* loc) {
     if (rel) {
         ChdbPages p;
 
-        if (chdb_search_is_index(k.index) && chdb_pages_open(&p, rel->rd_locator, rel) &&
+        if (chdb_search_is_index(k.index) &&
+            chdb_pages_open(&p, rel->rd_locator, rel) &&
             p.meta.generation == k.generation) {
             Route* r = hash_search(routes, &k, HASH_ENTER, NULL);
 

@@ -39,7 +39,9 @@ check_key(const char* key) {
         ereport(
             ERROR,
             errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-            errmsg("chdb_search: invalid blob key \"%.80s%s\"", key, len > 80 ? "..." : "")
+            errmsg(
+                "chdb_search: invalid blob key \"%.80s%s\"", key, len > 80 ? "..." : ""
+            )
         );
     }
 }
@@ -56,7 +58,8 @@ opened(ChdbBlobWrite* w, ChdbPages* p) {
     if (!w->discard && !chdb_pages_open(p, w->loc, NULL)) {
         elog(
             DEBUG1,
-            "chdb_search: discarding the write of \"%s\" into relation %u, which is gone",
+            "chdb_search: discarding the write of \"%s\" into relation %u, which is "
+            "gone",
             w->key,
             w->loc.relNumber
         );
@@ -98,11 +101,11 @@ write_page(ChdbBlobWrite* w, ChdbPages* p, const char* data, Size len) {
     chdb_write_finish(&x);
 
     if (w->nblocks == w->bcap) {
-        w->bcap   = w->bcap ? w->bcap * 2 : 64;
-        w->blocks = w->blocks ? repalloc(w->blocks, w->bcap * sizeof(BlockNumber))
-                              : MemoryContextAlloc(
-                                    TopMemoryContext, w->bcap * sizeof(BlockNumber)
-                                );
+        w->bcap = w->bcap ? w->bcap * 2 : 64;
+        w->blocks =
+            w->blocks
+                ? repalloc(w->blocks, w->bcap * sizeof(BlockNumber))
+                : MemoryContextAlloc(TopMemoryContext, w->bcap * sizeof(BlockNumber));
     }
     w->blocks[w->nblocks++] = blk;
 }

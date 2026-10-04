@@ -77,16 +77,18 @@ static bool
 has_blobs(Oid index, const char* prefix) {
     int n = 0;
 
-    chdb_pagestore_list(psprintf(CHDB_STORE_STORAGE_FMT, index), prefix, count_sink, &n);
+    chdb_pagestore_list(
+        psprintf(CHDB_STORE_STORAGE_FMT, index), prefix, count_sink, &n
+    );
     return n > 0;
 }
 
 /* The transactions with staging tables in the generation's blobs, by key prefix. */
 static void
 staging_sink(void* ud, const char* key, uint64 size, int64 mtime) {
-    List** fxids    = ud;
-    const char* tx  = strstr(key, "_tx_");
-    uint64 fxid     = tx ? strtoull(tx + 4, NULL, 10) : 0;
+    List** fxids   = ud;
+    const char* tx = strstr(key, "_tx_");
+    uint64 fxid    = tx ? strtoull(tx + 4, NULL, 10) : 0;
 
     if (fxid) {
         ListCell* lc;
@@ -213,7 +215,9 @@ reattach(Oid index, Attached* a, XLogRecPtr version) {
         engine_run(
             index,
             "refresh",
-            psprintf("SYSTEM RESTART DISK " CHDB_STORE_DISK_NAME_FMT, index, a->generation)
+            psprintf(
+                "SYSTEM RESTART DISK " CHDB_STORE_DISK_NAME_FMT, index, a->generation
+            )
         );
         engine_run(index, "detach", psprintf("DETACH TABLE IF EXISTS %s SYNC", table));
     }
