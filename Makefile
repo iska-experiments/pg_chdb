@@ -174,6 +174,10 @@ $(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
 ifeq ($(shell test $(VERSION_NUM) -ge 170000 && echo yes),yes)
 $(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)))
 $(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h))
+# The chdb_vector extension: pgvector operator classes for the access
+# method. A plain PGXS module, it needs neither libchdb nor pgvector's
+# headers to build, only pgvector installed to CREATE EXTENSION.
+$(eval $(call ext_module,chdb_vector,src/version.h,))
 else
 TESTS := $(filter-out test/sql/search_%,$(TESTS))
 PROVE_TESTS := $(filter-out t/search_%,$(wildcard t/*.pl))
