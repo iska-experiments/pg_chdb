@@ -34,6 +34,7 @@ chdb_channel_init(chdbChannel* ch, int data, int err) {
     memset(ch, 0, sizeof(*ch));
     ch->data      = data;
     ch->err       = err;
+    ch->aside_fd  = -1;
     ch->recv_what = "error receiving from chDB";
     ch->send_what = "error sending to chDB";
     ch->wait_what = "timed out waiting for chDB";
@@ -81,6 +82,28 @@ chdb_channel_prepare_fd(int fd) {
     set_flag(fd, F_GETFL, F_SETFL, O_NONBLOCK);
 }
 
+/* Waits for `fd` or the aside descriptor, serving the latter when it is ready. */
+static void
+wait_either(chdbChannel* ch, int fd, uint32 event, long timeout) {
+    WaitEvent events[2];
+    WaitEventSet* set = CreateWaitEventSet(NULL, 4);
+    bool aside        = false;
+
+    AddWaitEventToSet(set, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
+    AddWaitEventToSet(set, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET, NULL, NULL);
+    AddWaitEventToSet(set, event, fd, NULL, NULL);
+    AddWaitEventToSet(set, WL_SOCKET_READABLE, ch->aside_fd, NULL, &aside);
+
+    int n = WaitEventSetWait(set, timeout, events, lengthof(events), PG_WAIT_EXTENSION);
+
+    FreeWaitEventSet(set);
+    for (int i = 0; i < n; i++) {
+        if (events[i].user_data == &aside) {
+            ch->aside(ch);
+        }
+    }
+}
+
 /*
  * Sleeps until `fd` is ready, letting a cancel or a shutdown through. While
  * interrupts are held none gets through, so a channel with a hold timeout
@@ -108,13 +131,17 @@ wait_fd(chdbChannel* ch, int fd, uint32 event, instr_time* since) {
         }
         timeout = Min(timeout, left);
     }
-    WaitLatchOrSocket(
-        MyLatch,
-        event | WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
-        fd,
-        timeout,
-        PG_WAIT_EXTENSION
-    );
+    if (ch->aside_fd >= 0) {
+        wait_either(ch, fd, event, timeout);
+    } else {
+        WaitLatchOrSocket(
+            MyLatch,
+            event | WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+            fd,
+            timeout,
+            PG_WAIT_EXTENSION
+        );
+    }
     ResetLatch(MyLatch);
 }
 

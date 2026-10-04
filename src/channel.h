@@ -45,6 +45,16 @@ struct chdbChannel {
     /* Milliseconds a call may wait while interrupts are held; 0 for no bound. */
     int hold_timeout_ms;
 
+    /*
+     * A second descriptor to watch while a call waits, -1 for none, and what
+     * to do when it is readable, which may raise. The chdb_search worker's
+     * engine makes requests of its own on another socket while the worker
+     * waits on it for a reply, and would wait forever for the answer unless
+     * the worker served them from inside its wait.
+     */
+    int aside_fd;
+    void (*aside)(chdbChannel* ch);
+
     /* Raises. `errnum` is zero for a peer that simply went away. */
     void (*fail)(chdbChannel* ch, const char* what, int errnum);
     /* Plain channels, at end of data: raises if the peer ended badly. Optional. */
