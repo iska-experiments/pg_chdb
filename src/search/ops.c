@@ -9,8 +9,7 @@
  * character that is not a letter or digit and keeps bytes >= 0x80 inside
  * words. An index built with another tokenizer or preprocessor answers
  * differently, so for those the operators are meaningful through the index
- * only. Empty needles are vacuous: has_all_tokens and has_phrase of no tokens
- * are true, has_any_tokens false.
+ * only. A needle without tokens matches nothing, as in ClickHouse.
  */
 
 #include "postgres.h"
@@ -91,6 +90,9 @@ all_tokens(text* hay, text* needles) {
     Tok *h, *n;
     int nh = tokenize(hay, &h), nn = tokenize(needles, &n);
 
+    if (nn == 0) {
+        return false; /* as ClickHouse: no needle tokens match nothing */
+    }
     for (int i = 0; i < nn; i++) {
         if (!contains(h, nh, n[i])) {
             return false;

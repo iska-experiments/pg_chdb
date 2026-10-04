@@ -45,6 +45,9 @@ typedef struct ChdbColumn {
 extern void
 chdb_search_log_sql(const char* what, const char* sql);
 
+extern bool
+chdb_search_validate(Oid opclassoid);
+
 /* ---- options.c ---- */
 extern void
 chdb_search_init_options(void);
@@ -59,6 +62,9 @@ chdb_search_skip_index_args(
     const char* col,
     ChdbColumnKind kind
 );
+
+extern bool
+chdb_search_wants_phrase_search(Relation index);
 
 /* ---- ddl.c ---- */
 extern ChdbColumn*
@@ -95,7 +101,7 @@ chdb_meta_read(Relation index, ChdbMetaPageData* out);
 extern void
 chdb_meta_note_flush(Relation index);
 
-/* ---- insert.c (buffers, build) ---- */
+/* ---- rowwriter.c, buffer.c, build.c ---- */
 typedef struct ChdbRowWriter ChdbRowWriter;
 
 extern ChdbRowWriter*
