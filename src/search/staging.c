@@ -55,6 +55,13 @@ chdb_search_stage_rows(Pending* p) {
 }
 
 void
+chdb_search_drop_staging(Pending* p) {
+    chdb_search_run(p->indexoid, psprintf("DROP TABLE IF EXISTS %s", p->staging));
+    chdb_search_forget_statement(p->indexoid, p->staging);
+    p->staging = NULL;
+}
+
+void
 chdb_search_flush_pending(Pending* p) {
     if (p->staging) {
         send_rows(p, p->staging);

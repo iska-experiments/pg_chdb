@@ -18,6 +18,12 @@
  * instead, which pre-commit copies into the table and drops (abort drops it
  * too); staging.c does the sending. Inside a savepoint nothing is flushed
  * early, because rows already sent could not be taken back.
+ *
+ * Rebuilds. A REINDEX or TRUNCATE in the same transaction indexes the
+ * transaction's own tuples in its build scan and names a new table, so the
+ * rows buffered so far must not be sent again and later rows need a buffer
+ * for the new table. The old buffer is discarded, or, inside a savepoint
+ * that may yet roll the rebuild back, set aside until that is settled.
  */
 
 #include "postgres.h"
@@ -54,7 +60,8 @@ find_pending(Relation index) {
     foreach (lc, pending) {
         Pending* p = lfirst(lc);
 
-        if (p->indexoid == RelationGetRelid(index)) {
+        if (p->indexoid == RelationGetRelid(index) &&
+            p->superseded == InvalidSubTransactionId) {
             return p;
         }
     }
@@ -83,6 +90,44 @@ pop_mark(Pending* p) {
     pgch_checkpoint_free(&m->ckpt);
     p->marks = list_delete_last(p->marks);
     pfree(m);
+}
+
+static void
+free_pending(Pending* p) {
+    while (p->marks) {
+        pop_mark(p);
+    }
+    chdb_rowwriter_free(p->rw);
+    pfree(p);
+}
+
+/*
+ * Called by a rebuild of the index. Its build scan covers the transaction's
+ * own tuples, so the rows buffered so far would reach the store twice, and
+ * a staged copy belongs to the generation being replaced. At the top level
+ * nothing can bring the rebuild back, so the buffer goes; inside a savepoint
+ * it is set aside until the savepoint is released or rolled back.
+ */
+void
+chdb_search_discard_pending(Oid indexoid) {
+    ListCell* lc;
+
+    foreach (lc, pending) {
+        Pending* p = lfirst(lc);
+
+        if (p->indexoid != indexoid || p->superseded != InvalidSubTransactionId) {
+            continue;
+        }
+        if (GetCurrentTransactionNestLevel() > 1) {
+            p->superseded = GetCurrentSubTransactionId();
+        } else {
+            if (p->staging) {
+                chdb_search_drop_staging(p);
+            }
+            free_pending(p);
+            pending = foreach_delete_current(pending, lc);
+        }
+    }
 }
 
 bool
@@ -153,6 +198,13 @@ xact_callback(XactEvent event, void* arg) {
         foreach (lc, pending) {
             Pending* p = lfirst(lc);
 
+            if (p->superseded != InvalidSubTransactionId) {
+                /* A rebuild took these rows; its staged copy goes with them. */
+                if (p->staging) {
+                    chdb_search_drop_staging(p);
+                }
+                continue;
+            }
             if (chdb_rowwriter_rows(p->rw) == 0 && !p->staging) {
                 continue;
             }
@@ -177,6 +229,38 @@ xact_callback(XactEvent event, void* arg) {
     }
 }
 
+/* Rewinds or merges the level's rows, as the savepoint is rolled back or released. */
+static void
+settle_marks(Pending* p, SubXactEvent event, SubTransactionId parentSubid) {
+    Mark* top = top_mark(p);
+
+    if (event == SUBXACT_EVENT_ABORT_SUB) {
+        chdb_rowwriter_rollback(p->rw, &top->ckpt);
+        pop_mark(p);
+    } else if (parentSubid == TopSubTransactionId) {
+        pop_mark(p); /* top level aborts as a whole, no mark needed */
+    } else if (
+        list_length(p->marks) > 1 &&
+        ((Mark*)list_nth(p->marks, list_length(p->marks) - 2))->subid == parentSubid
+    ) {
+        pop_mark(p); /* the parent's earlier checkpoint already covers these rows */
+    } else {
+        top->subid = parentSubid;
+    }
+}
+
+static bool
+revived_for(List* revived, Oid indexoid) {
+    ListCell* lc;
+
+    foreach (lc, revived) {
+        if (((Pending*)lfirst(lc))->indexoid == indexoid) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void
 subxact_callback(
     SubXactEvent event,
@@ -184,6 +268,7 @@ subxact_callback(
     SubTransactionId parentSubid,
     void* arg
 ) {
+    List* revived = NIL;
     ListCell* lc;
 
     if (event != SUBXACT_EVENT_COMMIT_SUB && event != SUBXACT_EVENT_ABORT_SUB) {
@@ -194,23 +279,32 @@ subxact_callback(
         Pending* p = lfirst(lc);
         Mark* top  = top_mark(p);
 
-        if (!top || top->subid != mySubid) {
-            continue;
+        if (top && top->subid == mySubid) {
+            settle_marks(p, event, parentSubid);
         }
-        if (event == SUBXACT_EVENT_ABORT_SUB) {
-            chdb_rowwriter_rollback(p->rw, &top->ckpt);
-            pop_mark(p);
-        } else if (parentSubid == TopSubTransactionId) {
-            pop_mark(p); /* top level aborts as a whole, no mark needed */
-        } else if (
-            list_length(p->marks) > 1 &&
-            ((Mark*)list_nth(p->marks, list_length(p->marks) - 2))->subid == parentSubid
-        ) {
-            pop_mark(p); /* the parent's earlier checkpoint already covers these rows */
-        } else {
-            top->subid = parentSubid;
+        if (p->superseded == mySubid) {
+            /* The rebuild that set the rows aside is undone with the savepoint,
+             * or passes to the parent with it. */
+            if (event == SUBXACT_EVENT_ABORT_SUB) {
+                p->superseded = InvalidSubTransactionId;
+                revived       = lappend(revived, p);
+            } else {
+                p->superseded = parentSubid;
+            }
         }
     }
+
+    /* Rows buffered for the undone rebuild's table were all inserted since it. */
+    foreach (lc, pending) {
+        Pending* p = lfirst(lc);
+
+        if (p->superseded == InvalidSubTransactionId && !list_member_ptr(revived, p) &&
+            revived_for(revived, p->indexoid)) {
+            free_pending(p);
+            pending = foreach_delete_current(pending, lc);
+        }
+    }
+    list_free(revived);
 }
 
 void
