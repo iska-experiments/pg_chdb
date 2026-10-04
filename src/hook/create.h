@@ -34,4 +34,19 @@ chdb_create_from_url(CreateStmt* create, chdbCreateFromURL* from);
 extern List*
 chdb_url_columns(chdbCopyContext* ctx);
 
+/*
+ * Add columns inferred from URL to `create`
+ * Store URL options in `from` and chDB options in `ctx` for subsequent copy
+ */
+extern void
+chdb_create_columns_from_url(
+    CreateStmt* create,
+    chdbCreateFromURL* from,
+    chdbCopyContext* ctx
+);
+
+/* Copy rows from `url` into newly created `relation` */
+extern void
+chdb_copy_url_into(RangeVar* relation, char* url, chdbCopyContext* ctx);
+
 #endif /* CHDB_CREATE_H */
