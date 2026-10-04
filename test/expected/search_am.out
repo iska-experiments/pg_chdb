@@ -98,7 +98,7 @@ DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), title Nullable(String), tags Array(Nullable(String)), author Nullable(String), price Nullable(Decimal(10,2)), seen Nullable(DateTime64(6, 'UTC')), flag Nullable(Bool), INDEX body_idx body TYPE text(tokenizer = ngrams(2), preprocessor = lowerUTF8(body), support_phrase_search = 1), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title)), INDEX tags_idx tags TYPE text(tokenizer = array)) ENGINE = MergeTree ORDER BY ctid SETTINGS allow_experimental_text_index_phrase_search = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), title Nullable(String), tags Array(Nullable(String)), author Nullable(String), price Nullable(Decimal(10,2)), seen Nullable(DateTime64(6, 'UTC')), flag Nullable(Bool), INDEX body_idx body TYPE text(tokenizer = ngrams(2), preprocessor = lowerUTF8(body), support_phrase_search = 1), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title)), INDEX tags_idx tags TYPE text(tokenizer = array, preprocessor = lowerUTF8(tags))) ENGINE = MergeTree ORDER BY ctid SETTINGS allow_experimental_text_index_phrase_search = 1
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
 DEBUG:  chdb_search stub: insert
