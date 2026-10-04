@@ -98,6 +98,33 @@ COMMIT;
 RESET client_min_messages;
 
 ----------------------------------------------------------------------------
+-- Two-phase commit: a store drop cannot be carried past PREPARE
+----------------------------------------------------------------------------
+-- (max_prepared_transactions is 0 here, which is checked only after this.)
+SET client_min_messages = debug1;
+BEGIN;
+DROP INDEX docs_title;
+PREPARE TRANSACTION 'p';
+\echo -- a new index is refused too, and its store dropped with the transaction
+BEGIN;
+CREATE INDEX docs_prep ON docs USING chdb (title text_ops);
+PREPARE TRANSACTION 'q';
+\echo -- buffered rows are refused by the buffer
+BEGIN;
+INSERT INTO docs (id, body) VALUES (16, 'x');
+PREPARE TRANSACTION 'r';
+\echo -- a rebuild may be prepared: the abort would only have dropped a table VACUUM sweeps
+BEGIN;
+REINDEX INDEX docs_idx;
+PREPARE TRANSACTION 's';
+SELECT count(*) FROM pg_prepared_xacts;
+\echo -- nothing deferred is left behind in the backend
+BEGIN;
+SELECT 1/0;
+ROLLBACK;
+RESET client_min_messages;
+
+----------------------------------------------------------------------------
 -- DROP INDEX drops the whole store at commit, a rolled-back one does not
 ----------------------------------------------------------------------------
 SET client_min_messages = debug1;
