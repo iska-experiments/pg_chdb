@@ -128,7 +128,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
         char* sql = psprintf(
             "INSERT INTO %s %s",
             chdb_search_table_name(index),
-            chdb_search_column_list(index)
+            chdb_rowwriter_column_list(bs.rw)
         );
 
         chdb_search_insert(

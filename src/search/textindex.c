@@ -17,17 +17,14 @@
 /*
  * The arguments of `TYPE text(...)` for the column, from its operator class
  * options. Only the allowlisted names (or the superuser's raw expression)
- * reach the statement, and `col` is already a quoted identifier.
+ * reach the statement, and the column's name is already quoted.
  */
 char*
-chdb_search_skip_index_args(
-    Relation index,
-    int attno,
-    const char* col,
-    ChdbColumnKind kind
-) {
-    bytea** all        = RelationGetIndexAttOptions(index, false);
-    ChdbTextOptions* o = all ? (ChdbTextOptions*)all[attno - 1] : NULL;
+chdb_search_skip_index_args(Relation index, int attno, const ChdbColumn* column) {
+    bytea** all         = RelationGetIndexAttOptions(index, false);
+    ChdbTextOptions* o  = all ? (ChdbTextOptions*)all[attno - 1] : NULL;
+    const char* col     = column->name;
+    ChdbColumnKind kind = column->kind;
     StringInfoData buf;
 
     /* The kind came from the proc that declared these, so they are ours. */
