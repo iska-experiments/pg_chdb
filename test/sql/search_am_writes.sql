@@ -14,7 +14,7 @@ CREATE TABLE docs (
     body text,
     title text,
     tags text[],
-    author text,
+    author text COLLATE "C",
     price numeric(10, 2),
     seen timestamptz,
     flag bool

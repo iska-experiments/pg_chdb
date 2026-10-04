@@ -500,6 +500,52 @@ SELECT * FROM chdb_query('SELECT 42') AS (answer int);
 (1 row)
 
 ----------------------------------------------------------------------------
+-- Columnar text filters: ClickHouse compares bytewise, as COLLATE "C" does
+----------------------------------------------------------------------------
+CREATE TABLE coll (id int, author text COLLATE "C");
+INSERT INTO coll VALUES (1, 'ann'), (2, 'Bob');
+CREATE INDEX coll_idx ON coll USING chdb (author columnar_ops);
+EXPLAIN (COSTS OFF) SELECT id FROM coll WHERE author >= 'a' ORDER BY id;
+                QUERY PLAN                 
+-------------------------------------------
+ Sort
+   Sort Key: id
+   ->  Index Scan using coll_idx on coll
+         Index Cond: (author >= 'a'::text)
+(4 rows)
+
+SELECT id FROM coll WHERE author >= 'a' ORDER BY id;
+ id 
+----
+  1
+(1 row)
+
+SELECT id FROM coll WHERE author < 'b' ORDER BY id;
+ id 
+----
+  1
+  2
+(2 rows)
+
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT id FROM coll WHERE author >= 'a' ORDER BY id;
+ id 
+----
+  1
+(1 row)
+
+SELECT id FROM coll WHERE author < 'b' ORDER BY id;
+ id 
+----
+  1
+  2
+(2 rows)
+
+RESET enable_indexscan;
+SET enable_seqscan = off;
+DROP TABLE coll;
+----------------------------------------------------------------------------
 -- DROP INDEX drops the store at commit
 ----------------------------------------------------------------------------
 DROP INDEX prod_idx;
