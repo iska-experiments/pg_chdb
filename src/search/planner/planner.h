@@ -13,7 +13,7 @@
  * What goes to ClickHouse is a list of ChdbPushed, each the planner's view of
  * one ScanKey: the index column, the strategy number of the operator in the
  * column's operator family and the argument expression, which the executor
- * evaluates when the scan starts and renders through query.c, exactly as an
+ * evaluates when the scan starts and renders through select.c, exactly as an
  * index scan's keys are rendered. Predicates become the WHERE clause,
  * orders the `AS _distance` columns and the ORDER BY; a LIMIT the query can
  * take goes with them. The rows come back as ctids, which the scan fetches

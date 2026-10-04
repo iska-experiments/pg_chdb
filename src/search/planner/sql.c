@@ -1,6 +1,6 @@
 /*
  * The scan's statement: the pushed arguments evaluated into the scan keys an
- * index scan would receive and rendered through query.c, the builder the
+ * index scan would receive and rendered through select.c, the builder the
  * index scan uses, so the two send the same statement; with outputs, the
  * score expressions the store computes, rendered by the access method's
  * score.c from the text searches among the keys and the counts it asks the

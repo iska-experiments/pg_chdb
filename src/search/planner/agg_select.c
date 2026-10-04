@@ -1,10 +1,11 @@
 /*
  * The statement an aggregate scan sends and the shape of its answer. Each
  * output is one ClickHouse expression, two for avg, over the index's
- * columns as columns.c names them; the FROM and WHERE clauses are the
- * pushed quals rendered by query.c, as every chdb statement's are, and the
- * GROUP BY the grouping columns. The answer's columns decode to the Postgres
- * types the outputs have, and a row of them becomes the scan tuple.
+ * columns as columns.c names them; the FROM clause is select.c's and the
+ * WHERE clause the pushed quals rendered by query.c, as every chdb
+ * statement's are, and the GROUP BY the grouping columns. The answer's
+ * columns decode to the Postgres types the outputs have, and a row of them
+ * becomes the scan tuple.
  *
  * So the transaction's staged rows are aggregated with the table's, as a
  * scan would find them. The visibility map seldom lets it come to that, as

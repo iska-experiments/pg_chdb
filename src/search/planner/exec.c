@@ -1,6 +1,6 @@
 /*
  * Running the custom scan. The first call evaluates the pushed arguments
- * into scan keys and renders them through query.c, the builder the index
+ * into scan keys and renders them through select.c, the builder the index
  * scan uses, so the two send the same statement; the store streams back
  * ctids, which the scan fetches from the heap through the table access
  * method under the executor's snapshot, as an index scan does: a row the

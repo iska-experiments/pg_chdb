@@ -186,26 +186,26 @@ of transactions that are over (`vacuum.c`).
 
 A scan is one ClickHouse
 `SELECT ctid ... FROM idx_<oid>.t_<generation> WHERE ...` built from the
-scan keys (`query.c`, `literal.c`), streamed back as Native blocks and
-decoded row by row (`scan.c`). When the transaction has rows buffered or
-staged for the index, the builder ships the buffered ones to the staging
-table first and reads both tables as a `UNION ALL` of the same `SELECT`,
-each leg with its own `WHERE`, `ORDER BY` and `LIMIT` so that the skip and
-vector indexes serve both, ordered and limited again outside; the staging
-leg filters out the transaction ids of savepoints rolled back since their
-rows were staged. The builder's FROM clause, `chdb_search_append_from`,
-serves every statement over the index's rows: the custom scan's, the score's
-counts and the aggregate scan's, the last two reading the union as a
-subquery with the `WHERE` in each leg. So a transaction sees its own rows at
-once, and the rows it has not searched for travel as one block at commit, as
-before. `xs_recheck` is false: ClickHouse applied the quals, and the heap
-fetch decides visibility. A `ctid` past the heap's end, which a store the
-fail-safe has not refused can still hold, is skipped. The index returns no
-columns, yet the planner may pick an index-only scan when a query needs
-none, as `count(*)` does, so such a scan gets an all-null index tuple. There
-is no `amgetbitmap`: a lossy bitmap would recheck the quals with the
-Postgres implementations, which know the default tokenizer only, and drop
-every match of another tokenizer.
+scan keys (`select.c`, `query.c`, `literal.c`), streamed back as Native
+blocks and decoded row by row (`scan.c`). When the transaction has rows
+buffered or staged for the index, the builder ships the buffered ones to the
+staging table first and reads both tables as a `UNION ALL` of the same
+`SELECT`, each leg with its own `WHERE`, `ORDER BY` and `LIMIT` so that the
+skip and vector indexes serve both, ordered and limited again outside; the
+staging leg filters out the transaction ids of savepoints rolled back since
+their rows were staged. The builder's FROM clause,
+`chdb_search_append_from`, serves every statement over the index's rows: the
+custom scan's, the score's counts and the aggregate scan's, the last two
+reading the union as a subquery with the `WHERE` in each leg. So a
+transaction sees its own rows at once, and the rows it has not searched for
+travel as one block at commit, as before. `xs_recheck` is false: ClickHouse
+applied the quals, and the heap fetch decides visibility. A `ctid` past the
+heap's end, which a store the fail-safe has not refused can still hold, is
+skipped. The index returns no columns, yet the planner may pick an
+index-only scan when a query needs none, as `count(*)` does, so such a scan
+gets an all-null index tuple. There is no `amgetbitmap`: a lossy bitmap
+would recheck the quals with the Postgres implementations, which know the
+default tokenizer only, and drop every match of another tokenizer.
 
 The custom scan (`planner/`) is the other way a search runs: a
 `set_rel_pathlist` hook (`planner/hook.c`) matches the relation's
@@ -213,7 +213,7 @@ restriction clauses and the query's pathkeys to the index's operator
 families (`planner/match.c`), prices the path below the index scan's
 (`planner/cost.c`), and packs what it matched into the plan
 (`planner/plan.c`); at execution (`planner/sql.c`, `planner/exec.c`) the
-arguments become scan keys and the statement comes from `query.c`, as the
+arguments become scan keys and the statement comes from `select.c`, as the
 index scan's does, and each ctid is fetched through the table access method
 under the query's snapshot. `planner/explain.c` shows the pushed clauses,
 the LIMIT and the statement.

@@ -194,7 +194,7 @@ documented.
   unless `chdb_vector.filter_strategy = prefilter`, as ClickHouse
   post-filters the LIMIT nearest candidates). Each pushed expression is a
   `ChdbPushed` (index column, strategy, argument), evaluated at execution
-  into the same ScanKeys the index scan renders through `query.c`, so both
+  into the same ScanKeys the index scan renders through `select.c`, so both
   send one statement. The rows are fetched from the heap by ctid through
   `table_index_fetch_tuple`; a pushed LIMIT the heap thinned is asked for
   again, doubled. The score is a `ChdbOutput` of the spec, selected after
