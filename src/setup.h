@@ -1,6 +1,7 @@
 #ifndef CHDB_SETUP_H
 #define CHDB_SETUP_H
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,6 +23,21 @@ typedef struct chdbHelperContext {
     uint16_t max_threads; /* max_threads setting, 0 for none */
     uint16_t max_parsers; /* max_parsing_threads setting, 0 for none */
 } chdbHelperContext;
+
+/*
+ * The SET every chDB session runs before its query, fixing the Native format
+ * native.c decodes and applying the context's limits. The arguments are
+ * max_threads, max_parsers and CHDB_SESSION_MEMORY_BYTES(max_memory).
+ */
+#define CHDB_SESSION_SETTINGS_FMT                                                      \
+    "SET allow_experimental_nullable_tuple_type,"                                      \
+    "output_format_json_quote_denormals,"                                              \
+    "output_format_native_write_json_as_string,"                                       \
+    "output_format_native_encode_types_in_binary_format=0,"                            \
+    "date_time_output_format='iso',"                                                   \
+    "max_threads=%" PRIu16 ",max_parsing_threads=%" PRIu16                             \
+    ",max_memory_usage=%" PRIu64
+#define CHDB_SESSION_MEMORY_BYTES(mb) ((uint64_t)(mb) * 1024 * 1024)
 
 /*
  * The payload the backend writes to CHDB_SETUP_FD and then closes. The helper

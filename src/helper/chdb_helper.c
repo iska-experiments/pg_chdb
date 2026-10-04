@@ -255,26 +255,15 @@ run_insert(chdb_connection conn, chdbSetupStr query, const params* par) {
 }
 
 static int
-setup_session(
-    chdb_connection conn,
-    uint16_t max_mem,
-    uint16_t max_threads,
-    uint16_t max_parsers
-) {
+setup_session(chdb_connection conn, const chdbHelperContext* ctx) {
     char settings[1024];
     snprintf(
         settings,
-        1024,
-        "SET allow_experimental_nullable_tuple_type,"
-        "output_format_json_quote_denormals,"
-        "output_format_native_write_json_as_string,"
-        "output_format_native_encode_types_in_binary_format=0,"
-        "date_time_output_format='iso',"
-        "max_threads=%" PRIu16 ",max_parsing_threads=%" PRIu16
-        ",max_memory_usage=%" PRIu64,
-        max_threads,
-        max_parsers,
-        (uint64_t)max_mem * 1024 * 1024
+        sizeof settings,
+        CHDB_SESSION_SETTINGS_FMT,
+        ctx->max_threads,
+        ctx->max_parsers,
+        CHDB_SESSION_MEMORY_BYTES(ctx->max_memory)
     );
     chdb_result* res = chdb_query(conn, settings, native_format);
     const char* err  = chdb_result_error(res);
@@ -333,7 +322,7 @@ main(void) {
      * Unfortunately, setting via argv doesn't work, so we have to set them a
      * an initial query. https://github.com/chdb-io/chdb-core/issues/191
      */
-    int status = setup_session(*conn, ctx.max_memory, ctx.max_threads, ctx.max_parsers);
+    int status = setup_session(*conn, &ctx);
 
     if (!status) {
         switch (ctx.cmd) {
