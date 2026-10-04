@@ -6,8 +6,8 @@ scan that sends it to ClickHouse as one statement, the relevance score it
 computes, the aggregates ClickHouse answers, what a transaction sees, and
 when a server can serve an index at all. The operators and the `chdb.query`
 builders are on the [query language] page, the settings in the
-[reference](chdb_search.md#settings), and the store and the worker in the
-[internals].
+[reference](chdb_search.md#settings), the store on the [storage] page and
+the worker in the [internals].
 
 ## The Custom Scan
 
@@ -260,7 +260,8 @@ build that never finished lacks, and
 [`chdb_search.unavailable_index`](chdb_search.md#chdb_searchunavailable_index)
 decides what to do with one that has none: by default the statement fails
 with `chdb index "name" has no store`; in `skip` mode the planner takes
-another path and answers from the heap.
+another path and answers from the heap. The [storage] page has the
+details.
 
 Every build writes a new **generation**: a random id in the index's
 metapage that names the store table, `idx_<oid>.t_<generation>`. A
@@ -278,3 +279,4 @@ their TIDs to other rows since.
   [chdb_vector]: ./chdb_vector.md "chdb_vector Docs"
   [query language]: ./chdb_search-query.md "chdb_search Query Language"
   [internals]: ./chdb_search-internals.md "chdb_search Internals"
+  [storage]: ./chdb_search-storage.md "chdb_search Storage"

@@ -42,9 +42,9 @@ itself runs in a child of the worker, so a crash in it costs one request. See
 
 How a search runs, the custom scan, the relevance score, aggregate pushdown,
 what a transaction sees and when a server can serve an index, is on the
-[queries] page; the store, the worker's protocol, backups and replication
-and the debug functions are in the [internals].
-
+[queries] page; how the store lives in the index's pages, standbys, backups
+and replication on the [storage] page; the worker's protocol and the debug
+functions in the [internals].
 
 ## Installation
 
@@ -192,15 +192,14 @@ runs, `DROP DATABASE ... WITH (FORCE)` stops it and proceeds.
 
 The worker for a database appears in `pg_stat_activity` with `backend_type`
 `chdb_search worker`, connected to that database. It listens on a unix
-socket, on Linux the abstract name `@pg_chdb/<hash>/<database oid>` with
-the hash of the data directory's path, which `ss -xl` lists and which only
-processes of the server's own user may connect to, elsewhere the file
-`$PGDATA/pg_chdb/pgsql_tmp/<database oid>.sock`. It keeps the engine's
-working directory, a cache rebuilt from the catalog and the index pages
-whenever it starts, in `$PGDATA/pg_chdb/pgsql_tmp/<database oid>/`, where
-base backups and `pg_rewind` leave it out. It starts when a backend first needs it
-and, if it dies, restarts five seconds later or when a backend next asks. At
-most 64 databases can have a worker at once.
+socket, on Linux the abstract name `@pg_chdb/<hash>/<database oid>` that
+`ss -xl` lists, open to the server's own user alone, elsewhere
+`$PGDATA/pg_chdb/pgsql_tmp/<database oid>.sock`, and keeps the engine's
+working directory, a cache rebuilt from the catalog and the index pages,
+in `$PGDATA/pg_chdb/pgsql_tmp/<database oid>/`, which base backups and
+`pg_rewind` leave out. It starts when a backend first needs it and, if it
+dies, restarts five seconds later or when a backend next asks. At most 64
+databases can have a worker at once.
 
 The worker never loads libchdb. It forks `chdb_search_engine` on the first
 request, and that process opens the store and runs every statement. If the
@@ -216,7 +215,7 @@ The worker serves one request at a time, so a request can wait behind
 another backend's index build or `OPTIMIZE`; a wait inside a commit or abort
 callback, where it cannot be cancelled, is bounded by
 [`chdb_search.worker_timeout`](#chdb_searchworker_timeout). The [internals]
-describe the protocol, the store's layout and the sweeps.
+describe the protocol and the sweeps, the [storage] page the store's pages.
 
 ## Settings
 
@@ -343,6 +342,7 @@ Copyright (c) 2026, ClickHouse
   [queries]: ./chdb_search-queries.md "chdb_search Queries"
   [query language]: ./chdb_search-query.md "chdb_search Query Language"
   [internals]: ./chdb_search-internals.md "chdb_search Internals"
+  [storage]: ./chdb_search-storage.md "chdb_search Storage"
   [`chdb.max_memory`]: ./chdb.md#chdbmax_memory "chdb Docs: chdb.max_memory"
   [`chdb.max_threads`]: ./chdb.md#chdbmax_threads "chdb Docs: chdb.max_threads"
   [`chdb.max_parsing_threads`]: ./chdb.md#chdbmax_parsing_threads
