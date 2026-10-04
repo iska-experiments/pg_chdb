@@ -79,6 +79,13 @@
 #define CHDB_STORE_DB_FMT "idx_%" PRIu32
 #define CHDB_STORE_TABLE_FMT CHDB_STORE_DB_FMT ".t_%" PRIu64
 #define CHDB_STORE_META_FMT CHDB_STORE_DB_FMT ".meta"
+
+/*
+ * The callback object storage holding an index's blobs, which the engine
+ * registers before a table is made on it (pagestore/protocol.h) and the
+ * access method names in a table's SETTINGS, both from the index OID.
+ */
+#define CHDB_STORE_STORAGE_FMT "pg_%" PRIu32
 #define CHDB_STORE_META_DDL                                                            \
     "CREATE TABLE IF NOT EXISTS " CHDB_STORE_META_FMT                                  \
     " (generation UInt64, lsn UInt64) ENGINE = ReplacingMergeTree(lsn) "               \

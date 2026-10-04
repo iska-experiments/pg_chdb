@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../pagestore/protocol.h"
+#include "pagestore.h"
 #include "session.h"
 
 chdb_connection* session_conn;
@@ -93,15 +95,21 @@ session_forget(void) {
     nprepared = 0;
 }
 
-/* Makes the index's database and meta table, once. */
+/* Registers the index's blob storage and makes its database and meta table, once. */
 static char*
 prepare_database(uint32_t index) {
     static const char* const ddl[] = {
         "CREATE DATABASE IF NOT EXISTS " CHDB_STORE_DB_FMT, CHDB_STORE_META_DDL
     };
+    char storage[CHDB_PAGE_STORAGE_MAX];
 
     if (is_prepared(index)) {
         return NULL;
+    }
+    /* Before any table is made on it; the tables persisted were registered at start. */
+    snprintf(storage, sizeof(storage), CHDB_STORE_STORAGE_FMT, index);
+    if (!pagestore_register(storage)) {
+        return strdup("could not register the index's blob storage");
     }
     for (size_t i = 0; i < sizeof(ddl) / sizeof(ddl[0]); i++) {
         char* sql = NULL;
