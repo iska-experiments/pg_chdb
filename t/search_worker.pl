@@ -73,7 +73,9 @@ for my $signal (qw(KILL SEGV)) {
             or diag join "\n", grep { /PID $old|terminated|crash/ }
                 split /\n/, slurp_file($node->logfile, $offset);
 
-        my ($rc, $out, $err) = psql_retry($node, postgres => $count);
+        ok $node->poll_query_until('postgres', undef, ''),
+            'Should accept connections after recovery';
+        my ($rc, $out, $err) = $node->psql(postgres => $count);
         is $rc, 0, 'Should serve the next call after recovery' or diag $err;
         is $out, 1000, 'Should find the same store with its rows';
         ok $node->log_contains(qr/database system was not properly shut down/, $offset)

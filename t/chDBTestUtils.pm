@@ -7,7 +7,7 @@ use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
 
-our @EXPORT = qw(server_log check_log check_query search_node worker_pid psql_retry);
+our @EXPORT = qw(server_log check_log check_query search_node worker_pid);
 
 =begin server_log
 
@@ -94,40 +94,17 @@ sub search_node {
 
 =head2 worker_pid
 
-The pid of the chdb_search worker for a database, waiting a while for one to
-appear. Returns an empty string if none does.
+The pid of the chdb_search worker for a database, waiting the test timeout
+for one to appear. Returns an empty string if none does.
 
 =cut
 
 sub worker_pid {
     my ($node, $db) = @_;
-    my $pid = '';
-    for (1 .. 200) {
-        $pid = $node->safe_psql($db => q{SELECT pid FROM pg_stat_activity
-            WHERE backend_type = 'chdb_search worker'
-              AND datname = current_database()});
-        last if $pid ne '';
-        select undef, undef, undef, 0.05;
-    }
-    return $pid;
-}
-
-=head2 psql_retry
-
-Run a query until it succeeds, as connections are refused while the instance
-recovers from a crash. Returns psql's return code, stdout, and stderr.
-
-=cut
-
-sub psql_retry {
-    my ($node, $db, $sql) = @_;
-    my ($rc, $out, $err);
-    for (1 .. 200) {
-        ($rc, $out, $err) = $node->psql($db => $sql);
-        last if $rc == 0;
-        select undef, undef, undef, 0.1;
-    }
-    return ($rc, $out, $err);
+    my $worker = q{FROM pg_stat_activity
+        WHERE backend_type = 'chdb_search worker' AND datname = current_database()};
+    $node->poll_query_until($db, "SELECT EXISTS (SELECT $worker)") or return '';
+    return $node->safe_psql($db => "SELECT pid $worker");
 }
 
 1;
