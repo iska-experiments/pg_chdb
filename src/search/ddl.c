@@ -204,6 +204,32 @@ chdb_search_run(Oid indexoid, const char* sql) {
 }
 
 /*
+ * Reports the error being handled as a WARNING, for cleanup past the point
+ * where failing would help: after the commit, or inside VACUUM's sweep.
+ */
+void
+chdb_search_warn_failure(Oid indexoid) {
+    ErrorData* e = CopyErrorData();
+
+    FlushErrorState();
+    ereport(
+        WARNING,
+        errmsg("chdb_search: could not clean up index %u: %s", indexoid, e->message)
+    );
+    FreeErrorData(e);
+}
+
+/* chdb_search_run, warning instead of raising when the statement fails. */
+void
+chdb_search_try_run(Oid indexoid, const char* sql) {
+    PG_TRY();
+    { chdb_search_run(indexoid, sql); }
+    PG_CATCH();
+    { chdb_search_warn_failure(indexoid); }
+    PG_END_TRY();
+}
+
+/*
  * Creates the table of the index's current generation. A rebuild comes
  * through here too and leaves the previous generation's table alone, for
  * the transaction may still roll back to it.

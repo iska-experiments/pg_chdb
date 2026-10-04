@@ -1,12 +1,19 @@
 /*
  * Sending a transaction's buffered rows to the worker: as Native blocks into
  * the index's table at commit, or, past chdb_search.flush_threshold, into a
- * staging table <table>_tx_<xid> along the way, which commit copies into the
- * table and drops. The buffer itself is buffer.c's.
+ * staging table <table>_tx_<fxid> along the way, which commit copies into
+ * the table and drops. The buffer itself is buffer.c's.
+ *
+ * The staging table is named by the full transaction id. Its only cleanup
+ * from this backend is the drop registered for abort, which a crash or OOM
+ * kill skips; the VACUUM sweep in vacuum.c then removes it once the
+ * transaction is over, and a 32-bit xid come round after wraparound would
+ * have found it in the way.
  */
 
 #include "postgres.h"
 
+#include "access/transam.h"
 #include "access/xact.h"
 #include "utils/memutils.h"
 
@@ -47,13 +54,20 @@ chdb_search_stage_rows(Pending* p) {
     if (!p->staging) {
         MemoryContext old = MemoryContextSwitchTo(TopTransactionContext);
 
-        p->staging = psprintf("%s_tx_%u", p->table, GetTopTransactionId());
+        p->staging = psprintf(
+            "%s_tx_" UINT64_FORMAT,
+            p->table,
+            U64FromFullTransactionId(GetTopFullTransactionId())
+        );
         MemoryContextSwitchTo(old);
+
+        char* drop = psprintf("DROP TABLE IF EXISTS %s", p->staging);
+
+        /* Registered first, so a CREATE that fails halfway is undone too. */
+        chdb_search_drop_statement_on_abort(p->indexoid, drop);
+        chdb_search_run(p->indexoid, drop);
         chdb_search_run(
             p->indexoid, psprintf("CREATE TABLE %s AS %s", p->staging, p->table)
-        );
-        chdb_search_drop_statement_on_abort(
-            p->indexoid, psprintf("DROP TABLE IF EXISTS %s", p->staging)
         );
     }
     send_rows(p, p->staging);

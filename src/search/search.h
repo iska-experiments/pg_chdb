@@ -120,6 +120,10 @@ extern void
 chdb_search_create_store(Relation index);
 extern void
 chdb_search_run(Oid indexoid, const char* sql);
+extern void
+chdb_search_try_run(Oid indexoid, const char* sql);
+extern void
+chdb_search_warn_failure(Oid indexoid);
 
 /* ---- meta.c ---- */
 #define CHDB_META_MAGIC 0x43484453 /* "CHDS" */

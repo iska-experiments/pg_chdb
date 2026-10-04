@@ -159,6 +159,15 @@ SET client_min_messages = warning;
 SELECT pg_temp.tables(:idx);
 SELECT count(*) FROM pg_temp.store(:'tbl2');
 
+-- So is a staging table whose transaction is over, as a crashed backend
+-- leaves it (xid 3 is the first ever assigned).
+SELECT chdb_search_exec(format('CREATE TABLE %s_tx_3 AS %s', :'tbl2', :'tbl2'));
+SELECT pg_temp.tables(:idx);
+SET client_min_messages = debug1;
+VACUUM prod;
+SET client_min_messages = warning;
+SELECT pg_temp.tables(:idx);
+
 -- A rebuild in the same transaction indexes the rows inserted before it once,
 -- unless it is rolled back to a savepoint, when the buffered rows are sent
 -- to the table the index kept.

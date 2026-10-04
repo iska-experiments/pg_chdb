@@ -117,8 +117,8 @@ RESET enable_seqscan;
 \echo -- nothing to sweep yet: every rebuild above was undone
 -- nothing to sweep yet: every rebuild above was undone
 VACUUM docs;
-DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%' AND name NOT LIKE '%\\_tx\\_%'
-DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%' AND name NOT LIKE '%\\_tx\\_%'
+DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
+DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 \echo -- a committed rebuild leaves the old generation to the next VACUUM
 -- a committed rebuild leaves the old generation to the next VACUUM
 REINDEX INDEX docs_idx;

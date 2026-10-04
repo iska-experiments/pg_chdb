@@ -99,27 +99,14 @@ drop_store(Oid indexoid) {
 /* Past the commit point nothing can be rolled back, so failures only warn. */
 static void
 run(Deferred* d) {
+    if (d->sql) {
+        chdb_search_try_run(d->indexoid, d->sql);
+        return;
+    }
     PG_TRY();
-    {
-        if (d->sql) {
-            chdb_search_run(d->indexoid, d->sql);
-        } else {
-            drop_store(d->indexoid);
-        }
-    }
+    { drop_store(d->indexoid); }
     PG_CATCH();
-    {
-        ErrorData* e = CopyErrorData();
-
-        FlushErrorState();
-        ereport(
-            WARNING,
-            errmsg(
-                "chdb_search: could not clean up index %u: %s", d->indexoid, e->message
-            )
-        );
-        FreeErrorData(e);
-    }
+    { chdb_search_warn_failure(d->indexoid); }
     PG_END_TRY();
 }
 
