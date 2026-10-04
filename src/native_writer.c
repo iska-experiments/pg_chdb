@@ -1,7 +1,8 @@
 /*
- * The Native block writer over a structure clause, shared by COPY (native_send.c),
- * the chdb index access method's row writer and the stub worker client, so
- * that a block's columns are named and typed one way wherever one is built.
+ * The Native block writer over a structure clause, shared by COPY (native_send.c)
+ * and the modules that link this code, so that a block's columns are named and
+ * typed one way wherever one is built, and the ClickHouse type a Postgres type
+ * crosses as, with the hook other extensions map their own types through.
  */
 
 #include "postgres.h"
@@ -53,4 +54,13 @@ chdb_writer_for(MemoryContext cxt, const char* structure, size_t* ncols) {
     }
 
     return pgch_writer_new(cxt, cols, n);
+}
+
+char*
+chdb_ch_type_for(Oid typid, int32 typmod, bool notnull) {
+    chdb_ch_type_hook hook =
+        (chdb_ch_type_hook)*find_rendezvous_variable(CHDB_CH_TYPE_HOOK);
+    char* type = hook ? hook(typid, typmod, notnull) : NULL;
+
+    return type ? type : pgch_ch_type_for(typid, typmod, notnull, NULL);
 }

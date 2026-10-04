@@ -15,6 +15,7 @@
 
 #include "../helper.h"
 #include "../native.h"
+#include "../native_writer.h"
 #include "copy.h"
 #include "tablefunc.h"
 
@@ -39,7 +40,7 @@ structure_for_attnums(TupleDesc desc, List* attnums) {
             &buf,
             "%s %s",
             pgch_quote_ch_ident(NameStr(attr->attname)),
-            pgch_ch_type_for(attr->atttypid, attr->atttypmod, attr->attnotnull, NULL)
+            chdb_ch_type_for(attr->atttypid, attr->atttypmod, attr->attnotnull)
         );
     }
 
