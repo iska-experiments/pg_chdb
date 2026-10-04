@@ -100,7 +100,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), title Nullable(String), tags Array(Nullable(String)), author Nullable(String), price Nullable(Decimal(10,2)), seen Nullable(DateTime64(6, 'UTC')), flag Nullable(Bool), INDEX body_idx body TYPE text(tokenizer = ngrams(2), preprocessor = lowerUTF8(body), support_phrase_search = 1), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title)), INDEX tags_idx tags TYPE text(tokenizer = array)) ENGINE = MergeTree ORDER BY ctid SETTINGS allow_experimental_text_index_phrase_search = 1
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -135,7 +135,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8(title))) ENGINE = MergeTree ORDER BY ctid
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -149,7 +149,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByRegexp('\\s+\'x'))) ENGINE = MergeTree ORDER BY ctid
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -161,7 +161,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = icu('en'), preprocessor = lowerUTF8(title))) ENGINE = MergeTree ORDER BY ctid
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -173,7 +173,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = extractTextFromHTML(body))) ENGINE = MergeTree ORDER BY ctid
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -220,7 +220,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(replaceAll(body, '-', ' ')))) ENGINE = MergeTree ORDER BY ctid
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -354,11 +354,11 @@ INSERT INTO docs VALUES (3, 'committed row', 'T', '{a}', 'cy', 1, now(), true);
 \echo -- nothing is sent before COMMIT
 -- nothing is sent before COMMIT
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -378,22 +378,22 @@ SAVEPOINT s2;
 INSERT INTO docs VALUES (7, 'released', 'T', '{a}', 'gus', 1, now(), true);
 RELEASE s2;
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
 \echo -- update and delete
 -- update and delete
 UPDATE docs SET body = 'changed' WHERE id = 1;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -401,11 +401,11 @@ DELETE FROM docs WHERE id = 2;
 \echo -- rows with NULLs
 -- rows with NULLs
 INSERT INTO docs (id) VALUES (8);
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -436,7 +436,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8(title))) ENGINE = MergeTree ORDER BY ctid
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: send block
 DEBUG:  chdb_search stub: finish
@@ -461,7 +461,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
 DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title))) ENGINE = MergeTree ORDER BY ctid
 DEBUG:  chdb_search stub: exec
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
 DEBUG:  chdb_search stub: insert
 DEBUG:  chdb_search stub: finish
 ROLLBACK;

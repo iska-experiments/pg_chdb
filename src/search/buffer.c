@@ -101,8 +101,8 @@ send_rows(Pending* p, const char* table) {
     }
 
     size_t len;
-    void* block = chdb_rowwriter_take(p->rw, &len);
-    char* sql   = psprintf("INSERT INTO %s %s FORMAT Native", table, p->collist);
+    void* block          = chdb_rowwriter_take(p->rw, &len);
+    char* sql            = psprintf("INSERT INTO %s %s", table, p->collist);
     chdbSearchConn* conn = chdb_search_connect();
 
     PG_TRY();
