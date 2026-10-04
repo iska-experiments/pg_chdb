@@ -232,8 +232,9 @@ carries as its child, so the answer is always the snapshot's.
 ## Storage Phases
 
 *   **Phase 0** (this tree): a local directory under `$PGDATA/pg_chdb`. It
-    is not WAL-logged and is not copied by physical replication; the
-    fail-safe above refuses a store the server cannot prove current.
+    is not WAL-logged, so a base backup's copy of it stands still while
+    the heap it was taken with moves on; the fail-safe above refuses a store
+    the server cannot prove current.
 *   **Phase 1**: a chDB disk whose blobs live in index relation pages
     written with generic WAL by the worker, upstreamed to chDB as a callback
     object storage. Crash recovery and replication then come from Postgres.
@@ -249,8 +250,12 @@ describes its store's generation record in `chdb_search_stub.meta`.
 `search_stub_*.sql` run with the stub only; `search_e2e.sql` and
 `search_worker.sql` with the worker only. `t/search_*.pl` each pin one
 failure mode: a crash with staged rows, a stale or missing store, a
-flush racing a check, a worker that never answers, two-phase commit,
-`pg_upgrade`, missed drops, multi-round `VACUUM`, concurrent drops, and the
-worker and engine under signals.
+flush racing a check, a worker that never answers, two-phase commit (a
+build or drop refused, buffered and staged rows flushed), `pg_upgrade`,
+missed drops, multi-round `VACUUM`, concurrent drops, and the worker and
+engine under signals; `search_standby.pl`, `search_pitr.pl`,
+`search_logical.pl` and `search_walg.pl` prove the storage phase's
+guarantees under a streaming standby, point-in-time recovery, a logical
+subscription and WAL-G, the last skipping without a `wal-g` on the `PATH`.
 
   [design]: ../dev/design/chdb_search.md "chdb_search design notes"

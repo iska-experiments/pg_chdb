@@ -96,7 +96,7 @@ replication. The two storage phases differ, and the guarantees are explicit.
 |---|---|---|
 | Base backup + PITR | Heap restored to the target; store is a copy from backup time, so the index is **stale and must be rebuilt** | Consistent at the target LSN, no rebuild |
 | WAL-G delta backups | Store files have no page LSNs, so every delta copies the whole store | Standard pages, delta works |
-| Streaming standby | No store on the standby; the index is **unusable** until promotion and rebuild | Standby worker opens the store read-only from pages and serves searches |
+| Streaming standby | The base backup's copy of the store, which no WAL advances; the index is **unusable** until promotion and rebuild | Standby worker opens the store read-only from pages and serves searches |
 | `pg_rewind` | Store copied wholesale, then treated as stale | Rewound with the other relation files |
 | Logical replication | Works: the subscriber maintains its own index through `aminsert` | Same |
 | Replay requirements | None | None: generic WAL (`RM_GENERIC`) is replayed by core, no custom rmgr, no `shared_preload_libraries` |
@@ -131,9 +131,19 @@ Two-phase commit: the buffer flushes at `XACT_EVENT_PRE_PREPARE` as it does
 at pre-commit. `ROLLBACK PREPARED` then leaves rows in the store whose heap
 tuples are dead; the visibility recheck hides them and VACUUM removes them.
 
-Tests (`t/replication.pl`, `t/backup.pl`): base backup with WAL archiving
+WAL-G's `backup-push` tars every file under the data directory, and tar has
+no entry for a socket, so in Phase 0 it fails while a worker listens on
+`pg_chdb/<dboid>.sock`, where `pg_basebackup` skips the socket with a
+warning; the worker has to be stopped for the backup. Moving the socket out
+of the data directory, to the postmaster's first `unix_socket_directories`
+entry or to Linux's abstract namespace, is open.
+
+Tests (`t/search_pitr.pl`, `t/search_standby.pl`, `t/search_logical.pl`,
+`t/search_walg.pl`, `t/search_twophase.pl`): base backup with WAL archiving
 restored to a PITR target; a streaming standby queried through the index
-(Phase 0 asserts the fail-safe error, Phase 1 asserts rows); a logical
-subscription whose subscriber builds its own index; and WAL-G itself with
-`WALG_FILE_PREFIX` pointing at a local directory (`backup-push`,
-`wal-push`, `backup-fetch`), skipped when the binary is absent.
+(Phase 0 asserts the fail-safe error, Phase 1 asserts rows), then promoted
+and reindexed; a logical subscription whose subscriber builds its own
+index; WAL-G itself with `WALG_FILE_PREFIX` pointing at a local directory
+(`backup-push`, `wal-push`, `backup-fetch`, `wal-fetch`), skipped when the
+binary is absent, pinning the socket failure; and two-phase commit through
+the store.

@@ -400,6 +400,35 @@ old, so a rollback leaves a valid index, and `VACUUM` sweeps the loser. A
 request for a generation the store no longer has fails with `chdb index
 "name" does not match its store`; `REINDEX INDEX` rebuilds it.
 
+## Backups and Replication
+
+The store is a directory, so Postgres backs it up and replicates it as
+files, not as pages, and the [fail-safe](#availability) decides what a copy
+is worth. The tests in `t/` prove each case:
+
+*   **Base backups and point-in-time recovery.** `pg_basebackup` copies the
+    store with the rest of the data directory, warning that it skips the
+    worker's socket. A restore brings the heap to its recovery target and
+    the store back as the backup took it, so an index flushed between the
+    two is refused until `REINDEX` rebuilds it from the restored heap.
+*   **Streaming replication.** A standby has the copy its base backup took
+    and starts no worker: a search through a chdb index fails with `Its
+    store is not current on a server in recovery`, or in `skip` mode is
+    planned without the index. Promotion makes the server ask the store,
+    which is as far behind as a restore's; `REINDEX` rebuilds it, and the
+    promoted server indexes new rows as any primary.
+*   **Logical replication.** A subscriber's table keeps its own chdb index
+    through ordinary inserts, so the table sync and the apply worker flush
+    to the subscriber's store at their commits, and replicated rows are
+    searchable there once applied. The publisher's store is not involved.
+*   **WAL-G.** `backup-push`, `wal-push`, `backup-fetch` and `wal-fetch`
+    back up and restore the store as above, with one catch: WAL-G tars every
+    file under the data directory, and tar has no entry for a socket, so
+    `backup-push` fails with `sockets not supported` while a worker listens
+    on `pg_chdb/<database oid>.sock`. Stop the database's worker first
+    (`pg_terminate_backend()` on its `pg_stat_activity` row), which removes
+    the socket; it restarts on the next request.
+
 ## Dropping
 
 `DROP INDEX`, and the `DROP TABLE`, `DROP SCHEMA ... CASCADE` or `DROP
@@ -544,10 +573,12 @@ database named `idx_0`.
 *   One process per store: a database's worker is the only reader and
     writer, so reads do not scale with backends, and at most 64 databases
     can have a worker at once.
-*   No replication in this phase: the store is a directory under
-    `$PGDATA/pg_chdb`, not WAL-logged pages, so a standby has no index data,
-    and a restore from backup or `pg_rewind` makes indexes unavailable until
-    rebuilt. The next phase keeps the store in index pages.
+*   The store is not replicated in this phase: it is a directory under
+    `$PGDATA/pg_chdb`, not WAL-logged pages, so a standby cannot serve a
+    chdb index, and a restore, a promotion or a `pg_rewind` leaves indexes
+    to rebuild with `REINDEX`; WAL-G backs it up only while the worker is
+    stopped. See [Backups and Replication](#backups-and-replication). The
+    next phase keeps the store in index pages.
 *   A transaction does not see its own inserts through the index, and
     `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
 *   The Postgres implementations of the operators tokenize as the default
