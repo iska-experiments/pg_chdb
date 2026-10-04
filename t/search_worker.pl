@@ -7,7 +7,7 @@
 # never notices. A signal death of the worker itself is a crash of the
 # instance, as of any backend: the postmaster runs crash recovery, the engine
 # dies with its parent, and the next call finds a new worker over the same
-# store.
+# store. DROP DATABASE sees the worker as a session of its database.
 
 use v5.34;
 use strict;
@@ -105,8 +105,8 @@ for my $signal (qw(KILL SEGV)) {
     };
 }
 
-# DROP DATABASE has to disconnect every session of the database, and a
-# background worker is one. See what it does with a running worker.
+# DROP DATABASE disconnects nothing unless told to, and the worker is a
+# session of its database; FORCE stops it like any other.
 $node->safe_psql(postgres => 'CREATE DATABASE doomed');
 $node->safe_psql(doomed => q{
     CREATE EXTENSION chdb_search;
@@ -114,10 +114,13 @@ $node->safe_psql(doomed => q{
     CREATE INDEX ON t USING chdb (body);
 });
 ok worker_pid($node, 'doomed'), 'Should have a worker for the second database';
-
-{
-    local $TODO = 'DROP DATABASE does not stop the database\'s chdb_search worker';
-    is stderr_of('DROP DATABASE doomed'), '', 'Should drop a database with a running worker';
-}
+like stderr_of('DROP DATABASE doomed'),
+    qr/database "doomed" is being accessed by other users/,
+    'DROP DATABASE should count the worker as a session';
+my $offset = -s $node->logfile;
+is stderr_of('DROP DATABASE doomed WITH (FORCE)'), '',
+    'DROP DATABASE WITH (FORCE) should drop a database with a running worker';
+ok $node->wait_for_log(qr/worker for database \d+ shutting down/, $offset),
+    'The worker should have shut down cleanly';
 
 done_testing;
