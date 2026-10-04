@@ -76,8 +76,11 @@ chdb_meta_generation(Relation index) {
 
 /*
  * Records that the store now holds everything logged so far. Runs after the
- * flush, before commit: a crash in between leaves stale store rows, which the
- * heap fetch hides, and a restored relation shows an older LSN than the store.
+ * flush, before commit: a crash in between leaves store rows for heap tuples
+ * that were never committed, and a restored relation shows an older LSN than
+ * the store. The heap fetch does not hide those rows: one past the heap's end
+ * errors, and one whose TID a later insert reused returns that other row, so
+ * a store ahead of its metapage must be detected and rebuilt, not read.
  */
 void
 chdb_meta_note_flush(Relation index) {
