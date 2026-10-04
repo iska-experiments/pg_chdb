@@ -70,7 +70,7 @@ typedef enum ChdbColumnKind {
 
 /* One indexed column as it appears in the ClickHouse table. */
 typedef struct ChdbColumn {
-    char* name; /* ClickHouse identifier, quoted when needed */
+    char* name; /* ClickHouse identifier, always quoted */
     char* type; /* ClickHouse type */
     ChdbColumnKind kind;
     Oid typid; /* Postgres type of the index attribute */

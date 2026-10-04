@@ -158,7 +158,7 @@ EXPLAIN (COSTS OFF) SELECT id FROM prod WHERE body @@@ 'shoes' AND price < 100 O
 
 SET client_min_messages = debug1;
 SELECT id FROM prod WHERE body @@@ 'shoes' AND price < 100 ORDER BY id;
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens(body, 'shoes') AND price < toDecimal256('100', 0)
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes') AND "price" < toDecimal256('100', 0)
  id 
 ----
   1
@@ -521,6 +521,25 @@ SELECT id FROM coll WHERE author < 'b' ORDER BY id;
 RESET enable_indexscan;
 SET enable_seqscan = off;
 DROP TABLE coll;
+----------------------------------------------------------------------------
+-- Column names are quoted: a keyword or a float literal's spelling works
+----------------------------------------------------------------------------
+CREATE TABLE kw ("index" text, inf float8, nan float8);
+INSERT INTO kw VALUES ('a row', 1, 2);
+CREATE INDEX kw_idx ON kw USING chdb ("index", inf, nan);
+SELECT * FROM kw WHERE inf = 1;
+ index | inf | nan 
+-------+-----+-----
+ a row |   1 |   2
+(1 row)
+
+SELECT * FROM kw WHERE nan > 0 AND "index" @@@ 'row';
+ index | inf | nan 
+-------+-----+-----
+ a row |   1 |   2
+(1 row)
+
+DROP TABLE kw;
 ----------------------------------------------------------------------------
 -- Floats compare at their own width, NaN and the infinities as in Postgres
 ----------------------------------------------------------------------------

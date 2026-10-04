@@ -20,10 +20,11 @@
  * fetching the heap tuple.
  *
  * Column naming. Every indexed attribute becomes a column named after the
- * index attribute (the heap column for plain columns), quoted with
- * pgch_quote_ch_ident so any Postgres name works. `ctid` and `xmin` are
- * reserved, and duplicate names (two expression columns, say) are rejected
- * because the table would be unusable.
+ * index attribute (the heap column for plain columns), always quoted, so a
+ * column named index or constraint is not a keyword and one named inf or
+ * nan is not a float literal. `ctid` and `xmin` are reserved, and duplicate
+ * names (two expression columns, say) are rejected because the table would
+ * be unusable.
  *
  * Types. Every column uses pgch_ch_type_for, so text is Nullable(String) and
  * text[] is Array(Nullable(String)); ClickHouse's text index accepts both and
@@ -33,14 +34,15 @@
  * (tokenizer = 'ngrams', ngram_size = 3), tags text_array_ops, author columnar_ops):
  *
  *   CREATE DATABASE IF NOT EXISTS idx_16401
- *   CREATE TABLE idx_16401.t_7342 (ctid UInt64, xmin UInt32, body Nullable(String),
- *     tags Array(Nullable(String)), author Nullable(String),
- *     INDEX body_idx body TYPE text(tokenizer = ngrams(3),
- *       preprocessor = lowerUTF8(body)),
- *     INDEX tags_idx tags TYPE text(tokenizer = array, preprocessor = lowerUTF8(tags)))
+ *   CREATE TABLE idx_16401.t_7342 (ctid UInt64, xmin UInt32, "body" Nullable(String),
+ *     "tags" Array(Nullable(String)), "author" Nullable(String),
+ *     INDEX "body_idx" "body" TYPE text(tokenizer = ngrams(3),
+ *       preprocessor = lowerUTF8("body")),
+ *     INDEX "tags_idx" "tags" TYPE text(tokenizer = array,
+ *       preprocessor = lowerUTF8("tags")))
  *     ENGINE = MergeTree ORDER BY ctid
- *   INSERT INTO idx_16401.t_7342 (ctid, xmin, body, tags, author)
- *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens(body, 'running shoes')
+ *   INSERT INTO idx_16401.t_7342 (ctid, xmin, "body", "tags", "author")
+ *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'running shoes')
  *   DELETE FROM idx_16401.t_7342 WHERE ctid IN (4294967296, ...)
  *   OPTIMIZE TABLE idx_16401.t_7342 FINAL
  *
@@ -60,6 +62,28 @@
 #include "pg-clickhouse.h"
 
 #include "search.h"
+
+/*
+ * `"<name>"`, whatever the name: pgch_quote_ch_ident leaves a plain word
+ * bare, and ClickHouse then reads index, constraint or projection as the
+ * keyword and inf or nan as a Float64 literal, so `WHERE inf = 1` found
+ * nothing and `inf > 0` every row, with no error and no recheck.
+ */
+static char*
+quote_ident(const char* name) {
+    StringInfoData buf;
+
+    initStringInfo(&buf);
+    appendStringInfoChar(&buf, '"');
+    for (const char* p = name; *p; p++) {
+        if (*p == '"' || *p == '\\') {
+            appendStringInfoChar(&buf, *p == '"' ? '"' : '\\');
+        }
+        appendStringInfoChar(&buf, *p);
+    }
+    appendStringInfoChar(&buf, '"');
+    return buf.data;
+}
 
 /* `idx_<oid>.t_<generation>`: the table the index's metapage names. */
 char*
@@ -145,7 +169,7 @@ chdb_search_columns(Relation index) {
             }
         }
 
-        cols[i].name = pgch_quote_ch_ident(name);
+        cols[i].name = quote_ident(name);
         cols[i].kind = kind_of(index, i);
         if (cols[i].kind == CHDB_COL_COLUMNAR) {
             check_text_collation(index, i, a->atttypid);
@@ -188,9 +212,9 @@ chdb_search_create_sql(Relation index) {
         }
 
         /* The index name is a column name plus a suffix, quoted as a whole. */
-        char* bare =
-            psprintf("%s_idx", NameStr(TupleDescAttr(index->rd_att, i)->attname));
-        char* idxname = pgch_quote_ch_ident(bare);
+        char* idxname = quote_ident(
+            psprintf("%s_idx", NameStr(TupleDescAttr(index->rd_att, i)->attname))
+        );
 
         appendStringInfo(
             &buf,

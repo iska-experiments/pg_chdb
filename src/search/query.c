@@ -1,7 +1,7 @@
 /*
  * ScanKeys to ClickHouse SQL. Anything spliced into the statement is either
- * a function name picked from a fixed table, a column name quoted by
- * pgch_quote_ch_ident, or a literal rendered by literal.c with ClickHouse's
+ * a function name picked from a fixed table, a column name quoted by ddl.c,
+ * or a literal rendered by literal.c with ClickHouse's
  * own escaping rules (backslash and quote), so a search string cannot break
  * out.
  */
