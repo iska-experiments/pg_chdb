@@ -14,4 +14,12 @@ extern char* chdb_search_libchdb_path;
 /* Seconds a client waits for a worker to come up. */
 extern int chdb_search_worker_timeout;
 
+/*
+ * Makes sure a worker is running or starting for database `dboid`. Cheap when
+ * one is. Registers a worker if none is, which the caller then waits for by
+ * trying the socket. Raises if the worker cannot be registered.
+ */
+extern void
+chdb_search_worker_ensure(Oid dboid);
+
 #endif /* CHDB_SEARCH_WORKER_H */
