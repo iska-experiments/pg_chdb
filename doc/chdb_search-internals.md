@@ -196,11 +196,26 @@ The custom scan (`planner/`) is the other way a search runs: a
 restriction clauses and the query's pathkeys to the index's operator
 families (`planner/match.c`), prices the path below the index scan's
 (`planner/cost.c`), and packs what it matched into the plan
-(`planner/plan.c`); at execution (`planner/exec.c`) the arguments become
-scan keys and the statement comes from `query.c`, as the index scan's does,
-and each ctid is fetched through the table access method under the query's
-snapshot. `planner/explain.c` shows the pushed clauses, the LIMIT and the
-statement.
+(`planner/plan.c`); at execution (`planner/sql.c`, `planner/exec.c`) the
+arguments become scan keys and the statement comes from `query.c`, as the
+index scan's does, and each ctid is fetched through the table access method
+under the query's snapshot. `planner/explain.c` shows the pushed clauses,
+the LIMIT and the statement.
+
+`chdb.score()` is a placeholder function (`score.c`) that the planner binds
+to the scan (`planner/score.c`): the calls become the scan's outputs, named
+in a `custom_scan_tlist` behind the heap columns the query needs, so that
+the executor's `setrefs.c` points the target list and the quals at a
+virtual scan tuple the scan fills from the heap row and the stream. The
+store computes the score as a sum over the needles' tokens of
+`log((N - df + 0.5) / (df + 0.5) + 1) * hasAllTokens(col, [token])`, with
+the needles tokenized through `tokens()` by the column's own tokenizer
+(`textindex.c`) and the counts asked of the text index once per statement;
+the match in the SELECT list names the tokenizer and applies the
+preprocessor itself, as ClickHouse applies the index's only on the index
+path. A scoring query gets no other path, since every other one would
+evaluate the placeholder, and none in a statement that may recheck rows
+under EvalPlanQual, which hands the scan a heap tuple.
 
 ## Storage Phases
 

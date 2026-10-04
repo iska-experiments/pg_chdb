@@ -197,9 +197,11 @@ documented.
   into the same ScanKeys the index scan renders through `query.c`, so both
   send one statement. The rows are fetched from the heap by ctid through
   `table_index_fetch_tuple`; a pushed LIMIT the heap thinned is asked for
-  again, doubled. Returning stored columns without a heap fetch, and the
-  score, are the later stages: they add a kind of `ChdbPushed` for the
-  SELECT list, a `custom_scan_tlist` and a virtual scan tuple.
+  again, doubled. The score is a `ChdbOutput` of the spec, selected after
+  the distances, named in a `custom_scan_tlist` behind the heap columns the
+  query needs and put in a virtual scan tuple (`planner/score.c`,
+  `planner/sql.c`). Returning stored columns without a heap fetch is a
+  later stage along the same lines.
 * Aggregate pushdown (`create_upper_paths_hook`): `count(*)`, `count(col)`,
   `min/max/sum/avg` and `GROUP BY` over stored columns when every qual is
   pushable. MVCC: the pushed query excludes ctids VACUUM has not yet removed
@@ -212,26 +214,37 @@ documented.
 `k` is any column of the indexed table and only binds the call to that
 relation. Outside a chdb CustomScan it raises "chdb.score() needs a chdb
 index scan". Inside one, the planner hook replaces it with a column the scan
-computes in ClickHouse:
+computes in ClickHouse, under the query's own WHERE:
 
 ```sql
-WITH q AS (SELECT tokens({needle:String}) AS toks)              -- same tokenizer as the index
 SELECT ctid,
-       arraySum(arrayMap(t -> idf(t) * hasToken(body, t), toks)) AS score
-  FROM idx_N.t, q
- WHERE hasAnyTokens(body, {needle:String})
- ORDER BY score DESC
- LIMIT {k:UInt64}
+       toFloat32(log((N - df1 + 0.5) / (df1 + 0.5) + 1)
+                   * ifNull(hasAllTokens(lowerUTF8(body), [t1], 'splitByNonAlpha'), 0)
+               + ...) AS _score
+  FROM idx_N.t_N
+ WHERE hasAnyTokens(body, 'needle')
+ ORDER BY _score DESC, ctid
+ LIMIT k
 ```
 
 `idf(t) = log((N - df(t) + 0.5) / (df(t) + 0.5) + 1)`, the BM25 idf term.
-`N` is `count()` of the table and `df(t)` is `count() WHERE hasToken(body, t)`;
-both are answered from the text index alone (`ReadFromTextIndexCount`), one
-tiny query per distinct token, cached per statement. The score is therefore a
-weighted count of matched query terms: a row matching two rare terms
-outranks one matching two common ones, and ties are broken by `ctid` for
-determinism. With several text columns in the index the per-column scores
-are summed; `chdb.score(k, 'body')` restricts to one column.
+`N` is `count()` of the table and `df(t)` is `count() WHERE
+hasAllTokens(body, [t])`; both are answered from the text index alone
+(`ReadFromTextIndexCount`), one tiny query per distinct token, cached per
+statement. The needle's tokens come from `tokens(preprocessor(needle),
+'tokenizer')` with the column's own options (`textindex.c`), so they are
+the index's; the match in the SELECT list names the tokenizer and applies
+the preprocessor itself, as ClickHouse applies the index's on the index
+path only, and takes the tokens as an array, which it does not tokenize
+again. The score is therefore a weighted count of matched query terms: a
+row matching two rare terms outranks one matching two common ones, and
+ties are broken by `ctid` for determinism. With several text columns in
+the index the per-column scores are summed; `chdb.score(k, 'body')`
+restricts to one column. A scoring query gets the CustomScan as its only
+path, since every other one would evaluate the placeholder; a statement
+that may recheck rows under EvalPlanQual (row locks, UPDATE, DELETE) gets
+no score, as the recheck hands the scan a heap tuple and the scan tuple
+with a score is virtual.
 
 What this does not do: term frequency, document length normalisation,
 phrase proximity. ClickHouse's posting lists hold row ids only, so true BM25

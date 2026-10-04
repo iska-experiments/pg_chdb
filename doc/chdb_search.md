@@ -26,12 +26,14 @@ predicates over tokens, so a query for rows that contain all, any, one or a
 phrase of some tokens reads the index, not the heap, and filters the plain
 columns stored beside the text there too.
 
-The index is a filter, not a ranker: a row matches exactly when the tokens
-the index derives from it contain the tokens of the query, and there is no
-relevance score. Order results by columns, or by vector distance with the
-[chdb_vector] extension. A query over an indexed table is planned as a
-[custom scan](#the-custom-scan) that sends the predicates, the order and the
-`LIMIT` to ClickHouse as one statement, or as a scan of the index. chDB
+The index is a filter first: a row matches exactly when the tokens the
+index derives from it contain the tokens of the query. Order results by
+columns, by vector distance with the [chdb_vector] extension, or by
+[`chdb.score()`](#relevance-score), a weighted count of the query's tokens
+each row has. A query over an indexed table is planned as a
+[custom scan](#the-custom-scan) that sends the predicates, the order, the
+score and the `LIMIT` to ClickHouse as one statement, or as a scan of the
+index. chDB
 allows one process per store, so a background worker per database owns the
 store and backends talk to it over a Unix socket; libchdb itself runs in a
 child of the worker, so a crash in it costs one request. See [The Worker
@@ -131,12 +133,14 @@ and a ClickHouse translation the index uses.
 | `col @@= 'a'`   | `chdb.has_token(col, 'a')`        | `hasToken`     |
 | `col @@~ 'a b'` | `chdb.has_phrase(col, 'a b')`     | `hasPhrase`    |
 | none            | `chdb.tokens(text)`               | `tokens`       |
+| none            | `chdb.score(k [, 'col'])`         | see below      |
 
 The first three also take a `text[]` left argument, where the needle is one
 element and all, any and one mean the same. `@@~` needs
 `support_phrase_search` on the column and does not apply to arrays.
 `chdb.tokens()` shows what the default tokenizer, run in the worker, makes
-of a string.
+of a string. `chdb.score()` is the [relevance score](#relevance-score) of a
+row, which only the custom scan computes.
 
 ```sql
 SELECT id FROM docs WHERE body @@@ 'postgres clickhouse'; -- both, any order
@@ -207,6 +211,73 @@ SELECT id FROM docs WHERE body @@@ 'running shoes' AND price < 100 AND id > 7;
     [Consistency](#consistency)). Row locks and `FOR UPDATE` recheck the
     pushed clauses with their Postgres implementations, as an index scan
     rechecks its conditions.
+
+## Relevance Score
+
+```sql
+SELECT id, title, chdb.score(id)
+  FROM docs
+ WHERE body @@? 'postgres clickhouse'
+ ORDER BY chdb.score(id) DESC
+ LIMIT 10;
+```
+
+`chdb.score(k)` ranks the rows a text search finds. ClickHouse's text index
+keeps no term frequencies, so the score is not BM25 but its idf half, an
+IDF-weighted overlap: the sum, over the tokens of the query's needles that
+the row has, of
+
+    idf(t) = ln((N - df(t) + 0.5) / (df(t) + 0.5) + 1)
+
+where `N` is the rows of the index's store and `df(t)` the rows whose
+column has the token, both answered by the text index alone. A row that has
+two of the query's tokens outranks a row with one, and a rare token weighs
+more than a common one; term frequency, document length and proximity play
+no part. `k` is any column of the indexed table, which only binds the call
+to that table. With several indexed text columns searched, each column's
+score is summed; `chdb.score(k, 'col')` keeps one column's.
+
+The score is a column the [custom scan](#the-custom-scan) has the store
+compute, so it is available where the query runs as one: a `SELECT` from
+one table with a chdb index, with a text search on an indexed column in its
+`WHERE` clause, and without `FOR UPDATE` or `FOR SHARE`. The planner then
+takes the custom scan whatever the other paths cost, and the call can
+appear anywhere in the query, the target list, the `ORDER BY`, a `WHERE`
+on the score, an aggregate or a window function, a join above the scan.
+`ORDER BY chdb.score(k) DESC` alone is an order the store serves, ties
+broken by physical position so that a `LIMIT` returns the same rows each
+time, and takes the `LIMIT` along. Anywhere else, in an `UPDATE`, under a
+row lock, over a table without a text search, or with
+[`chdb_search.enable_custom_scan`](#chdb_searchenable_custom_scan) off,
+the function raises `chdb.score() needs a chdb index scan`.
+
+```sql
+EXPLAIN (COSTS OFF)
+SELECT id FROM docs WHERE body @@? 'running light'
+ ORDER BY chdb.score(id) DESC LIMIT 3;
+                                 QUERY PLAN
+----------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@? 'running light'::text)
+         Pushed Score: score(id)
+         Pushed Limit: 3
+         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) *
+           ifNull(hasAllTokens(lowerUTF8("body"), ['running'],
+           'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) *
+           ifNull(hasAllTokens(lowerUTF8("body"), ['light'],
+           'splitByNonAlpha'), 0)) AS _score FROM idx_16401.t_7342
+           WHERE hasAnyTokens("body", 'running light')
+           ORDER BY _score DESC, ctid LIMIT 3
+```
+
+The needles are tokenized by the store with the column's own tokenizer and
+preprocessor, so the tokens are the index's whatever the tokenizer; the
+counts are asked once per statement, one small query per distinct token,
+and `EXPLAIN` asks for them too, as the statement shows the weights. The
+counts are of the store's rows, which include the versions `VACUUM` has not
+yet removed; a `raw_preprocessor` applies to the column and not to the
+needle, which is tokenized as written.
 
 ## Consistency
 
@@ -406,6 +477,11 @@ database named `idx_0`.
     it when the search predicate names constants or the query's parameters,
     while one that depends on the other side of the join, as `LATERAL` does,
     is served by the index scan.
+*   `chdb.score()` is an idf-weighted overlap, not BM25: ClickHouse's text
+    index holds no term frequencies. It is computed by the custom scan
+    only, in a `SELECT` with a text search and without row locks, and a
+    join evaluates it when the scan is directly below the join that
+    returns it.
 
 ## Authors
 
