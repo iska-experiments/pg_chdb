@@ -120,7 +120,7 @@ uninstall: uninstall-hook
 define ext_module
 $(1)_VERSION := $$(call ctl_version,$(1))
 $(1)_SO := src/$(patsubst chdb_%,%,$(1))/$(1)$$(DLSUFFIX)
-$$($(1)_SO): $$(wildcard $$(dir $$($(1)_SO))*.c $$(dir $$($(1)_SO))*.h) $(2)
+$$($(1)_SO): $$(wildcard $$(dir $$($(1)_SO))*.c $$(dir $$($(1)_SO))*.h $$(dir $$($(1)_SO))*/*.c $$(dir $$($(1)_SO))*/*.h) $(2)
 	@$$(MAKE) -C $$(dir $$@) all $(3)
 sql/$(1)--$$($(1)_VERSION).sql: sql/$(1).sql
 	cp $$< $$@
@@ -134,7 +134,7 @@ uninstall-$(patsubst chdb_%,%,$(1)):
 all: $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
 install: install-$(patsubst chdb_%,%,$(1))
 uninstall: uninstall-$(patsubst chdb_%,%,$(1))
-EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc
+EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc $$(dir $$($(1)_SO))*/*.o $$(dir $$($(1)_SO))*/*.bc
 endef
 
 # Fail with something more useful than a missing include.

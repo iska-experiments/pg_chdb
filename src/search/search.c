@@ -14,6 +14,7 @@
 
 #include "../gucs.h"
 #include "../module.h"
+#include "planner/planner.h"
 #include "search.h"
 #include "worker.h"
 
@@ -35,6 +36,7 @@ _PG_init(void) {
 
     chdb_search_client_init();
     chdb_search_am_init();
+    chdb_search_planner_init();
 
     /*
      * Loaded on demand by a DROP (or an ALTER that drops), this init runs from
