@@ -3,6 +3,7 @@ package chDBTestUtils;
 use strict;
 use warnings;
 use Exporter 'import';
+use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
 
@@ -64,9 +65,13 @@ sub check_query {
 
 =head2 search_node
 
-A node for the chdb_search tests, with the extension created in the postgres
-database. Lines for postgresql.conf follow the name. The worker needs libchdb
-on the server's library path.
+A node for the chdb_search tests: the extension, whose schema chdb is on the
+search path, and a table docs with a chdb index docs_idx on its body, logging
+at DEBUG1 so that the statements the index sends to its worker show. Lines
+for postgresql.conf follow the name.
+The worker needs libchdb on the server's library path; with the stub client
+(make CHDB_SEARCH_STUB=1, which the tests see in the environment) there is no
+worker, and tests of what the store holds skip.
 
 =cut
 
@@ -74,9 +79,16 @@ sub search_node {
     my ($name, @conf) = @_;
     my $node = PostgreSQL::Test::Cluster->new($name);
     $node->init;
-    $node->append_conf('postgresql.conf', join "\n", @conf, '') if @conf;
+    $node->append_conf('postgresql.conf',
+        join "\n", 'log_min_messages = debug1', "search_path = 'public, chdb'",
+        @conf, '');
     $node->start;
-    $node->safe_psql(postgres => 'CREATE EXTENSION chdb_search');
+    $node->safe_psql(postgres => q{
+        CREATE EXTENSION chdb_search;
+        CREATE TABLE docs (id int PRIMARY KEY, body text);
+        INSERT INTO docs VALUES (1, 'Running shoes for runners'), (2, 'Walking boots');
+        CREATE INDEX docs_idx ON docs USING chdb (body);
+    });
     return $node;
 }
 

@@ -1,6 +1,7 @@
 /*
- * ambuild and ambuildempty: streams the heap into the new ClickHouse table in
- * 8 MiB Native blocks, bypassing the per-transaction buffer.
+ * ambuild: streams the heap into the new ClickHouse table in 8 MiB Native
+ * blocks, bypassing the per-transaction buffer. Only permanent tables are
+ * indexed, so ambuildempty is never reached.
  */
 
 #include "postgres.h"
@@ -61,10 +62,42 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
     BuildState bs = {};
     double reltuples;
 
+    /*
+     * Crash recovery resets an unlogged heap but not its store, whose ctids
+     * the next inserts reuse, so searches would return other rows for good.
+     * Temporary tables are rebuilt inside CommitTransaction and cleaned up
+     * by backends that may not have this library.
+     */
+    if (heap->rd_rel->relpersistence != RELPERSISTENCE_PERMANENT) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+            errmsg("chdb indexes on unlogged or temporary tables are not supported")
+        );
+    }
     if (RelationGetNumberOfBlocks(index) != 0) {
         elog(
             ERROR, "index \"%s\" already contains data", RelationGetRelationName(index)
         );
+    }
+
+    /*
+     * pg_upgrade restores the schema before any data is moved, so a build
+     * here would make an empty store behind a valid index, or drop one an
+     * operator copied over by hand. Leave the store alone and ask for a
+     * REINDEX, which the new cluster's worker then serves.
+     */
+    if (IsBinaryUpgrade) {
+        chdb_meta_init(index, MAIN_FORKNUM);
+        ereport(
+            WARNING,
+            errmsg(
+                "chdb index \"%s\" is restored by pg_upgrade without its store",
+                RelationGetRelationName(index)
+            ),
+            errhint("Run REINDEX INDEX after the upgrade.")
+        );
+        return palloc0(sizeof(IndexBuildResult));
     }
 
     chdb_meta_init(index, MAIN_FORKNUM);
@@ -125,7 +158,8 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
     return result;
 }
 
+/* Only unlogged indexes get an init fork, and ambuild has rejected those. */
 void
 chdb_search_ambuildempty(Relation index) {
-    chdb_meta_init(index, INIT_FORKNUM);
+    elog(ERROR, "unlogged chdb indexes are rejected");
 }
