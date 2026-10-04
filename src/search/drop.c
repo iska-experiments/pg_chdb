@@ -113,21 +113,57 @@ run(Deferred* d) {
     PG_END_TRY();
 }
 
+/*
+ * PREPARE resets TopTransactionContext, where `deferred` lives, and COMMIT
+ * PREPARED runs no callback, so a store drop cannot be carried across it.
+ * A rebuild's abort-time statement is merely forgotten: the generation it
+ * would have dropped is swept by VACUUM.
+ */
+static void
+pre_prepare(void) {
+    ListCell* lc;
+
+    foreach (lc, deferred) {
+        if (!((Deferred*)lfirst(lc))->sql) {
+            ereport(
+                ERROR,
+                errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                errmsg(
+                    "cannot PREPARE a transaction that created or dropped a chdb index"
+                )
+            );
+        }
+    }
+}
+
 static void
 xact_callback(XactEvent event, void* arg) {
     ListCell* lc;
 
-    if (event != XACT_EVENT_COMMIT && event != XACT_EVENT_ABORT) {
-        return;
-    }
-    foreach (lc, deferred) {
-        Deferred* d = lfirst(lc);
+    switch (event) {
+    case XACT_EVENT_PRE_PREPARE:
+        pre_prepare();
+        break;
+    case XACT_EVENT_COMMIT:
+    case XACT_EVENT_ABORT:
+        foreach (lc, deferred) {
+            Deferred* d = lfirst(lc);
 
-        if (d->at_commit == (event == XACT_EVENT_COMMIT)) {
-            run(d);
+            if (d->at_commit == (event == XACT_EVENT_COMMIT)) {
+                run(d);
+            }
         }
+        deferred = NIL;
+        break;
+    case XACT_EVENT_PREPARE:
+    case XACT_EVENT_PARALLEL_COMMIT:
+    case XACT_EVENT_PARALLEL_ABORT:
+        /* The list's memory goes with the transaction state. */
+        deferred = NIL;
+        break;
+    default:
+        break;
     }
-    deferred = NIL;
 }
 
 static void
