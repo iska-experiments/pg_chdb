@@ -1,6 +1,6 @@
 /*
  * SQL-callable pieces: the Postgres implementations of the search predicates,
- * chdb.tokens, the selectivity estimators and the version.
+ * chdb.tokens and the selectivity estimators.
  *
  * The predicates exist so that a sequential scan, or the heap recheck of a
  * plan that does not use the index, gives the answer the index would. They
@@ -26,7 +26,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
-#include "../version.h"
+#include "../native.h"
 #include "pg-clickhouse-decode.h"
 #include "query.h"
 #include "search.h"
@@ -204,12 +204,6 @@ chdb_search_join_sel(PG_FUNCTION_ARGS) {
     PG_RETURN_FLOAT8(0.01);
 }
 
-PG_FUNCTION_INFO_V1(chdb_search_version);
-Datum
-chdb_search_version(PG_FUNCTION_ARGS) {
-    PG_RETURN_TEXT_P(cstring_to_text(PGCHCB_VERSION));
-}
-
 /* chdb.tokens(text): what the worker's tokens() makes of a string. */
 PG_FUNCTION_INFO_V1(chdb_search_tokens);
 Datum
@@ -237,7 +231,7 @@ chdb_search_tokens(PG_FUNCTION_ARGS) {
 
         chdb_search_log_sql("select", sql.data);
         chdb_search_select(conn, InvalidOid, sql.data);
-        src = chdb_search_block_source(conn, cxt);
+        src = chdb_native_source(chdb_search_helper(conn));
         pgch_reader_init(&reader, &src);
         if (reader.error) {
             ereport(

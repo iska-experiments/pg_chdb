@@ -32,6 +32,12 @@
 
 PG_FUNCTION_INFO_V1(chdb_search_handler);
 
+/*
+ * The planner asks what a scan costs before it knows the query is cheap in
+ * ClickHouse. A search qual is a round trip plus a result proportional to the
+ * matches, which are streamed without touching index pages, so the generic
+ * page cost is scaled down; an unqualified scan stays at the generic cost.
+ */
 static void
 chdb_search_costestimate(
     PlannerInfo* root,
