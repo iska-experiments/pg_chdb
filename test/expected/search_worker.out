@@ -1,6 +1,7 @@
 -- The chdb_search worker: store, streamed insert, select, drop, recovery.
 -- The server needs libchdb on its library path, for chdb_search_engine.
 CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
 SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
  ?column? 
 ----------

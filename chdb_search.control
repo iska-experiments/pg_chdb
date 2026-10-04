@@ -3,5 +3,6 @@ comment = 'ClickHouse-backed full-text and columnar search indexes, served by a 
 default_version = '0.1'
 module_pathname = '$libdir/chdb_search'
 relocatable = false
+schema = chdb
 superuser = true
 trusted = false

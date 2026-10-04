@@ -50,8 +50,15 @@ REVOKE EXECUTE ON FUNCTION chdb_search_store_table(regclass) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_engine_pid() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_debug_kill_engine(integer) FROM PUBLIC;
 
--- Index access method and support functions. The handler and the options
--- functions live in the extension's schema, the search predicates in `chdb`.
+-- Index access method and support functions. The extension's schema is
+-- chdb (the control file sets it), so everything below lives there: add it
+-- to search_path, or write OPERATOR(chdb.@@@) and chdb.text_ops. Operators
+-- and operator classes are looked up only in schemas one may use, so every
+-- role gets USAGE. CREATE EXTENSION made the schema unless it existed
+-- already (the chdb extension's, say); then this grant widens a schema the
+-- extension does not own, and DROP EXTENSION, which leaves such a schema
+-- alone, leaves the grant too.
+GRANT USAGE ON SCHEMA chdb TO PUBLIC;
 CREATE FUNCTION chdb_search_handler(internal)
 RETURNS index_am_handler
 AS 'MODULE_PATHNAME'
@@ -93,8 +100,6 @@ LANGUAGE C STABLE STRICT PARALLEL SAFE;
 -- (plus any non-ASCII byte), compared in lower case. An index built with
 -- another tokenizer or preprocessor can answer differently, so the operators
 -- are only meaningful through such an index.
-CREATE SCHEMA chdb;
-
 CREATE FUNCTION chdb.has_all_tokens(text, text)
 RETURNS boolean
 AS 'MODULE_PATHNAME', 'chdb_search_has_all_tokens'
