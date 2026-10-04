@@ -131,6 +131,8 @@ extern void
 chdb_rowwriter_checkpoint(ChdbRowWriter* w, pgch_checkpoint* ckpt);
 extern void
 chdb_rowwriter_rollback(ChdbRowWriter* w, const pgch_checkpoint* ckpt);
+extern void
+chdb_rowwriter_revalidate(ChdbRowWriter* w, pgch_checkpoint* ckpt);
 extern size_t
 chdb_rowwriter_bytes(ChdbRowWriter* w);
 extern size_t

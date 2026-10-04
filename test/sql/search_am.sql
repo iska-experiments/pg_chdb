@@ -170,43 +170,7 @@ RESET enable_indexscan;
 RESET enable_bitmapscan;
 RESET enable_seqscan;
 
-----------------------------------------------------------------------------
--- Writes: buffered, flushed at COMMIT, dropped at ROLLBACK
-----------------------------------------------------------------------------
-SET client_min_messages = debug1;
-BEGIN;
-INSERT INTO docs VALUES (3, 'committed row', 'T', '{a}', 'cy', 1, now(), true);
-\echo -- nothing is sent before COMMIT
-COMMIT;
-\echo -- rolled back
-BEGIN;
-INSERT INTO docs VALUES (4, 'rolled back row', 'T', '{a}', 'dee', 1, now(), true);
-ROLLBACK;
-\echo -- savepoints
-BEGIN;
-INSERT INTO docs VALUES (5, 'kept', 'T', '{a}', 'eve', 1, now(), true);
-SAVEPOINT s1;
-INSERT INTO docs VALUES (6, 'dropped by rollback to', 'T', '{a}', 'fay', 1, now(), true);
-ROLLBACK TO s1;
-SAVEPOINT s2;
-INSERT INTO docs VALUES (7, 'released', 'T', '{a}', 'gus', 1, now(), true);
-RELEASE s2;
-COMMIT;
-\echo -- update and delete
-UPDATE docs SET body = 'changed' WHERE id = 1;
-DELETE FROM docs WHERE id = 2;
-\echo -- rows with NULLs
-INSERT INTO docs (id) VALUES (8);
-\echo -- a failing statement
-INSERT INTO docs VALUES (1, 'duplicate key');
-RESET client_min_messages;
-
-----------------------------------------------------------------------------
--- VACUUM (what it deletes depends on the store's rows; see search_e2e)
-----------------------------------------------------------------------------
-VACUUM docs;
-
--- Rebuilds and drops of the index and its store are in search_am_rebuild.
+-- Writes are in search_am_writes, rebuilds and drops in search_am_rebuild.
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
 

@@ -24,6 +24,7 @@ typedef struct Pending {
     List* marks;   /* of Mark*, innermost last; private to marks.c */
     /* The subtransaction whose rebuild set these rows aside, else Invalid. */
     SubTransactionId superseded;
+    bool poisoned; /* a savepoint rewind failed: rw is gone, COMMIT must error */
 } Pending;
 
 /* ---- marks.c ---- */
