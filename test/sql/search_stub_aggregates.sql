@@ -69,33 +69,30 @@ RESET chdb_search_stub.ctids;
 SELECT count(*) FROM docs WHERE body @@@ 'x';
 
 ----------------------------------------------------------------------------
--- The fail-safe check runs before the statement: a store that does not
--- match the metapage is refused, or in skip mode left alone, at planning,
--- where no path is offered, or at execution by a plan made before, where
--- the exact plan answers
+-- The fail-safe check runs before the statement: an index whose pages hold
+-- no store is refused, or in skip mode left alone, at planning, where no
+-- path is offered, or at execution by a plan made before, where the exact
+-- plan answers
 ----------------------------------------------------------------------------
--- The scans above proved the store for this state of the index; altering
--- the index drops the verdict, so that the store is asked again.
-ALTER INDEX docs_idx SET (vacuum_optimize_ratio = 0.5);
-SET chdb_search_stub.meta = 'none';
+SET chdb_search_stub.store = off;
 SELECT count(*) FROM docs WHERE body @@@ 'x';
 SET chdb_search.unavailable_index = skip;
 SET enable_seqscan = on;
 EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'x';
 SET enable_seqscan = off;
 RESET chdb_search.unavailable_index;
-RESET chdb_search_stub.meta;
--- In error mode the planner does not ask the store, so the plan holds the
--- aggregate scan whatever the store says; the scan asks when it runs.
+RESET chdb_search_stub.store;
+-- In error mode the planner does not ask about the store, so the plan holds
+-- the aggregate scan whatever the pages hold; the scan asks when it runs.
 PREPARE c AS SELECT count(*) FROM docs WHERE body @@@ 'x';
 SET plan_cache_mode = force_generic_plan;
 EXPLAIN (COSTS OFF) EXECUTE c;
-SET chdb_search_stub.meta = 'none';
+SET chdb_search_stub.store = off;
 SET chdb_search.unavailable_index = skip;
 SELECT * FROM pg_temp.explain($$EXECUTE c$$, true);
 EXECUTE c;
 RESET chdb_search.unavailable_index;
-RESET chdb_search_stub.meta;
+RESET chdb_search_stub.store;
 RESET plan_cache_mode;
 DEALLOCATE c;
 

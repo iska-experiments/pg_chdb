@@ -26,6 +26,7 @@
 
 #include "client.h"
 #include "frame.h"
+#include "pagestore/pagestore.h"
 #include "serve.h"
 #include "worker.h"
 
@@ -320,4 +321,13 @@ chdb_search_engine_kill(chdbSearchConn* conn, int signo) {
     send_request(conn, CHDB_CMD_ENGINE_KILL, 0, 0, psprintf("%d", signo));
 
     return atoi(read_status(conn));
+}
+
+bool
+chdb_search_store_present(Relation index, uint64 generation) {
+    char* prefix = psprintf(CHDB_STORE_KEY_PREFIX_FMT "/", generation);
+    bool present = chdb_pagestore_has_blobs(index, prefix);
+
+    pfree(prefix);
+    return present;
 }

@@ -53,5 +53,29 @@ VACUUM docs;
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 RESET client_min_messages;
 RESET chdb_search.vacuum_optimize_ratio;
+-- An index without a store (see search_stub_scan) is not deleted from:
+-- VACUUM raises, or in skip mode leaves the index alone, and the catalog's
+-- figures for it as they were rather than counting a store it did not read.
+SELECT reltuples AS before FROM pg_class WHERE relname = 'docs_idx' \gset
+SET chdb_search_stub.ctids = '3,4';
+DELETE FROM docs WHERE id = 3;
+CALL pg_temp.wait_removable();
+SET chdb_search_stub.store = off;
+VACUUM docs;
+ERROR:  chdb index "docs_idx" has no store
+SET chdb_search.unavailable_index = skip;
+SET client_min_messages = debug1;
+VACUUM docs;
+DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
+RESET client_min_messages;
+SELECT relpages, reltuples = :before AS kept FROM pg_class WHERE relname = 'docs_idx';
+ relpages | kept 
+----------+------
+        1 | t
+(1 row)
+
+RESET chdb_search.unavailable_index;
+RESET chdb_search_stub.store;
+RESET chdb_search_stub.ctids;
 DROP TABLE docs;
 DROP EXTENSION chdb_search;

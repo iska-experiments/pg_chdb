@@ -403,12 +403,14 @@ database named `idx_0`.
 
 `test/sql/search_am*.sql` and `search_own_writes.sql` assert the
 statements the access method generates, logged at `DEBUG1` with
-`chdb_search.mask_oids`; they pass with
-the worker and with the stub client, `make CHDB_SEARCH_STUB=1`, a
-per-backend fake (`client_stub.c`) that accepts every statement and answers
-selects from `chdb_search_stub.ctids` and fails on `chdb_search_stub.fail`.
+`chdb_search.mask_oids`; they pass with the worker and with the stub
+client, `make CHDB_SEARCH_STUB=1`, a per-backend fake (`client_stub.c`)
+that accepts every statement, answers selects from
+`chdb_search_stub.ctids`, fails on `chdb_search_stub.fail` and finds an
+index without a store when `chdb_search_stub.store` is off.
 `search_stub_*.sql` run with the stub only; `search_e2e.sql`,
-`search_worker.sql` and `search_blobs.sql` with the worker only.
+`search_worker.sql`, `search_blobs.sql` and the other end-to-end tests
+the Makefile lists with the worker only.
 `t/search_*.pl` each pin one failure mode: a backend and a postmaster
 crashed with rows in flight, writers racing readers, a worker that never
 answers, two-phase commit (a build or drop refused, buffered and staged

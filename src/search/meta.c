@@ -24,7 +24,6 @@
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 
-#include "pagestore/pagestore.h"
 #include "search.h"
 
 /* ---- the fail-safe check ---- */
@@ -33,15 +32,12 @@
  * The store is missing when the pages hold no blob of the generation the
  * metapage names: MergeTree writes a file into a table's directory as it
  * creates it, so a built index always has one, and only a REINDEX puts a
- * store there again. The walk stops at the first blob found.
+ * store there again. The client answers (client.h), as the stub keeps no
+ * pages to look in.
  */
 bool
 chdb_search_store_unavailable(Relation index) {
-    char* prefix = psprintf(CHDB_STORE_KEY_PREFIX_FMT "/", chdb_meta_generation(index));
-    bool missing = !chdb_pagestore_has_blobs(index, prefix);
-
-    pfree(prefix);
-    return missing;
+    return !chdb_search_store_present(index, chdb_meta_generation(index));
 }
 
 void

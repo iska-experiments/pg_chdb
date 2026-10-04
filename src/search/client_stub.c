@@ -25,6 +25,10 @@
  *                                 score asks it (score.c), which is the one
  *                                 count() not answered from the ctids; zero
  *                                 for a token not listed
+ *   chdb_search_stub.store        whether an index has a store when the
+ *                                 fail-safe check (meta.c) asks: on, the
+ *                                 default; off answers for every index as
+ *                                 a build that never finished leaves it
  *
  * The answers themselves are encoded in stub_answers.c. The AM logs every
  * statement it generates at DEBUG1; nothing is logged here.
@@ -47,6 +51,7 @@ char* chdb_search_stub_ctids       = NULL;
 char* chdb_search_stub_tokens      = NULL;
 char* chdb_search_stub_frequencies = NULL;
 static bool stub_fail              = false;
+static bool stub_store             = true;
 
 struct chdbSearchConn {
     chdbChannel ch;
@@ -107,6 +112,19 @@ chdb_search_client_init(void) {
         "Comma-separated; a token not listed counts zero.",
         &chdb_search_stub_frequencies,
         "",
+        PGC_USERSET,
+        0,
+        NULL,
+        NULL,
+        NULL
+    );
+    DefineCustomBoolVariable(
+        "chdb_search_stub.store",
+        "Whether an index has a store, as the stub worker client answers.",
+        "Off makes every index's pages hold none, as a build that never finished "
+        "leaves them.",
+        &stub_store,
+        true,
         PGC_USERSET,
         0,
         NULL,
@@ -245,4 +263,13 @@ chdb_search_engine_kill(chdbSearchConn* conn, int signo) {
 chdbChannel*
 chdb_search_channel(chdbSearchConn* conn) {
     return &conn->ch;
+}
+
+/*
+ * The stub keeps no store, so an index has one unless the GUC says it has
+ * none, which is how the stub tests reach the fail-safe paths.
+ */
+bool
+chdb_search_store_present(Relation index, uint64 generation) {
+    return stub_store;
 }

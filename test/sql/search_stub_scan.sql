@@ -53,13 +53,11 @@ RESET chdb_search_stub.fail;
 SELECT id FROM docs WHERE body @@@ 'x';
 
 ----------------------------------------------------------------------------
--- The fail-safe check: a store that does not match the metapage is refused
+-- The fail-safe check: an index whose pages hold no store is refused
 ----------------------------------------------------------------------------
--- Before its first row a scan asks the store what it holds for the index's
--- generation and compares the last flush with the metapage's. The verdict
--- holds for that state of the metapage, so the scans above asked once and
--- these do not ask again: a flush of this session's own records the state
--- it leaves on both sides, which proves the store as well as asking would.
+-- Before its first row a scan asks whether the index's pages hold a store,
+-- which reads them and asks the worker nothing, so these scans and the
+-- flush between them log only their own statements.
 SET chdb_search_stub.ctids = '1';
 SET client_min_messages = debug1;
 SELECT id FROM docs WHERE body @@@ 'x';
@@ -72,6 +70,25 @@ INSERT INTO docs SELECT 100 + i, 'filler', NULL FROM generate_series(1, 2000) i;
 ANALYZE docs;
 SET enable_seqscan = on;
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'x';
+-- An index without a store, as a build that never finished leaves it, is
+-- refused before a scan answers and before a commit flushes to it.
+SET chdb_search_stub.store = off;
+SELECT id FROM docs WHERE body @@@ 'x';
+INSERT INTO docs VALUES (5, 'Another flush', '(5,5)');
+-- In skip mode the planner takes another path, a scan forced on the index
+-- yields no rows rather than rows it cannot vouch for, and a commit keeps
+-- its rows from the index.
+SET chdb_search.unavailable_index = skip;
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'x';
+SELECT id FROM docs WHERE body @@@ 'Running' ORDER BY id;
+SET enable_seqscan = off;
+SELECT id FROM docs WHERE body @@@ 'x';
+SET client_min_messages = debug1;
+INSERT INTO docs VALUES (5, 'Kept from the store', '(5,5)');
+RESET client_min_messages;
+RESET chdb_search.unavailable_index;
+RESET chdb_search_stub.store;
+SELECT id FROM docs WHERE body @@@ 'x';
 DELETE FROM docs WHERE id > 3;
 
 ----------------------------------------------------------------------------

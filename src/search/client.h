@@ -27,6 +27,8 @@
 
 #include "postgres.h"
 
+#include "utils/rel.h"
+
 #include "../channel.h"
 /* Commands: CHDB_CMD_SELECT and _INSERT of src/setup.h, plus _EXEC and _DROP. */
 #include "protocol.h"
@@ -116,5 +118,15 @@ chdb_search_engine_kill(chdbSearchConn* conn, int signo);
  */
 extern chdbChannel*
 chdb_search_channel(chdbSearchConn* conn);
+
+/*
+ * Whether the index has a store for `generation`, the one its metapage
+ * names: the worker client reads the index's pages for a blob under the
+ * generation's prefix (meta.c asks before a scan, a flush and VACUUM's
+ * deletes); the stub, which keeps no store, has one unless
+ * chdb_search_stub.store is off.
+ */
+extern bool
+chdb_search_store_present(Relation index, uint64 generation);
 
 #endif /* CHDB_SEARCH_CLIENT_H */

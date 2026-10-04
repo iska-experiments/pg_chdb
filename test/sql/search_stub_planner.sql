@@ -69,14 +69,10 @@ SELECT id FROM docs WHERE body @@@ 'x';
 RESET chdb_search_stub.fail;
 
 ----------------------------------------------------------------------------
--- The fail-safe check runs before the statement: a store that does not
--- match the metapage is refused, or skipped at planning
+-- The fail-safe check runs before the statement: an index whose pages hold
+-- no store is refused, or skipped at planning
 ----------------------------------------------------------------------------
--- The scans above proved the store for this state of the index, and the
--- verdict is kept with the index's relcache entry: altering the index drops
--- it, so that the store is asked again.
-ALTER INDEX docs_idx SET (vacuum_optimize_ratio = 0.5);
-SET chdb_search_stub.meta = 'none';
+SET chdb_search_stub.store = off;
 SELECT id FROM docs WHERE body @@@ 'x';
 -- In skip mode neither the index nor the custom scan is offered.
 SET chdb_search.unavailable_index = skip;
@@ -85,7 +81,7 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'x';
 SELECT id FROM docs WHERE body @@@ 'x';
 SET enable_seqscan = off;
 RESET chdb_search.unavailable_index;
-RESET chdb_search_stub.meta;
+RESET chdb_search_stub.store;
 SELECT id FROM docs WHERE body @@@ 'x';
 
 DROP TABLE docs;
