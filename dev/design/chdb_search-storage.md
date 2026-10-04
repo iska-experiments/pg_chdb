@@ -8,22 +8,16 @@ half when an interface changes.
 
 ## Storage and recovery
 
-Phase 0 (local directory): the index relation has one metapage (WAL-logged)
-holding a magic, version, a random 64-bit store generation, and the store's
-LSN high-water mark written at every flush. Beside its generation tables
-the store keeps a `meta` table, (generation, lsn), which the engine creates
-with the database (`CHDB_STORE_META_DDL`) and the access method writes at
-every flush; a backend checks its `max(lsn)` against the metapage before
-trusting the store; mismatch (crash between flush and commit, restore from backup,
-`pg_rewind`) marks the index invalid (`indisvalid = false`) and schedules a
-rebuild. `DROP INDEX` and `REINDEX` register the store directory for
-removal in an `XACT_EVENT_COMMIT` callback; before it listens, the worker
-sweeps the `idx_*` databases whose OID is not a chdb index (`sweep.c`), and
-the `pg_chdb/<dboid>` directories of databases no longer in `pg_database`,
-which is how a drop made without the library loaded is cleaned up.
+Phase 0 (local directory, gone): the index relation had one metapage
+holding a magic, version, a random 64-bit store generation and the store's
+LSN high-water mark written at every flush, and the store kept a `meta`
+table of the same so that a backend could refuse a store from another
+point in time than its index: a restore, a `pg_rewind`, a crash between a
+flush and its commit.
 
-Phase 1 (callback disk, chdb-core branch `callback-object-storage`):
-chdb-core gained a `callback` object storage type and the registration
+Phase 1 (callback disk, chdb-core branch `callback-object-storage`, this
+tree): chdb-core gained a `callback` object storage type and the
+registration
 
 ```c
 typedef struct chdb_object_storage_callbacks {
@@ -44,25 +38,74 @@ typedef struct chdb_object_storage_callbacks {
 chdb_state chdb_register_object_storage(const char *name, const chdb_object_storage_callbacks *cb);
 ```
 
-with `SETTINGS disk = disk(type = 'callback', storage_name = 'pg_<indexoid>')`
-on the store tables (`CHDB_STORE_DISK_FMT`), metadata `plain_rewritable`.
-The engine's callbacks cross the page socketpair to the worker
-(`pagestore/protocol.h`), which answers them from a backend behind
-`chdbBlobStore` (`pagestore/store.h`), in two stages:
+with `SETTINGS disk = disk(type = 'callback', storage_name = 'pg_<indexoid>',
+key_prefix = 'g<generation>')` on the store tables (`CHDB_STORE_DISK_FMT`),
+metadata `plain_rewritable`. The engine's callbacks cross the page
+socketpair to the worker (`pagestore/protocol.h`), which answers them from
+the pages of the index relation behind `chdbBlobStore` (`pagestore/store.h`,
+`pagebackend.c`). Stage 1, a directory of files behind the same table,
+proved the protocol and is gone.
 
-* **Stage 1** (this tree): the directory backend, `dirstore.c`, keeps each
-  blob as a file under `pg_chdb/<dboid>/blobs/<storage>/<key>`, a pending
-  write in `blobs/.tmp/` until its commit fsyncs and renames it in, so a blob
-  is whole or absent after a crash. It proves the protocol and the engine's
-  side, and is no more replicated than the Phase 0 directory was: the
-  fail-safe check below still guards it.
-* **Stage 2**: the page backend implements the same table on index-relation
-  pages: a block directory in pages 1..n maps keys to page chains; blob
-  pages are written with `GenericXLogStart/RegisterBuffer/Finish` under
-  `BUFFER_LOCK_EXCLUSIVE`, the directory entry with the commit. Then
-  recovery and physical replication come from Postgres WAL, the generation
-  check becomes a sanity check, and the local directory holds only chDB's
-  own `tmp/` and `metadata/`, which are rebuilt from pages on start.
+**The page format** (`pagestore/pages.h`). Block 0 is the metapage: the
+generation and `flushed_lsn` the access method keeps, the heads of two
+chains, and a dirty flag. The directory is a chain of pages of
+`ChdbDirEntry` items, unsorted and read whole for a key (a few pages in
+shared buffers against a socket round trip per callback): each maps a key
+to its size, its commit time and either the blob's bytes, when they fit
+beside the key (`CHDB_INLINE_MAX`, 2 kB, which takes most of a part's
+small files), or the first page of a map chain listing the blob's data
+pages in order, so that a read at an offset reaches its page in as many
+hops as there are map pages before it (2038 pages, 16 MB, per map page).
+Data pages hold `CHDB_DATA_PER_PAGE` (8160) bytes. The free stack is a
+chain of pages listing free pages by number: a page that runs out of
+numbers is itself the next one handed out, and the first page of a run
+being freed becomes the new top when the top is full, so freeing
+allocates nothing and a 1 GB blob is freed in 64 records. Every write is
+one generic WAL record over at most four buffers under exclusive buffer
+locks (`ChdbWrite`); a blob of several pages is published by its directory
+entry, written last, after its data and map pages. A copy, which
+plain_rewritable makes of every blob before it unlinks a part, shares the
+source's chain by a count on its head.
+
+**Locators, not the relcache.** A `CREATE INDEX` or `REINDEX` streams its
+rows while the relation it writes is visible to its own backend alone, so
+the worker cannot open it by OID. Every request frame names the relation
+as the backend sees it (tablespace OID and relfilenumber); the worker reads
+the generation off its metapage and routes the keys under that generation's
+prefix to it (`pagestore/routes.c`), reading buffers with
+`ReadBufferWithoutRelcache` and logging them through a stand-in relation
+that answers only `RelationNeedsWAL`. A generation never noted, or whose
+relation Postgres has unlinked, is an empty storage: nothing is found in
+it, and removing from or copying within it succeeds, which is what the
+engine's drop of such a table needs (ClickHouse retries a failing drop
+without end, and `DROP ... SYNC` waits on it). Blobs are served outside any
+transaction, under a resource owner of the store's own (`pagestore/owner.c`).
+
+**Recovery of leaks.** A crash between a write's pages and its entry leaves
+pages no entry names, and one between a copy's count and its entry a count
+too high. The metapage's dirty flag is set by the first allocation a worker
+makes in a relation and cleared when that worker stops with nothing
+pending; a worker that first sees a relation with the flag set walks the
+directory and the free stack, returns every page neither reaches to the
+stack, and puts the counts right (`pagestore/recover.c`), before serving a
+blob from it.
+
+**The engine's directory is a cache.** `$PGDATA/pg_chdb/pgsql_tmp/<dboid>/`
+holds chDB's metadata and scratch space; the worker empties it when it
+starts (a crash, a restore, a rewind or a promotion may have left it older
+or newer than the pages) and attaches each index's table from the catalog
+on the first request naming the index (`attach.c`): the table's UUID is
+fixed by the index OID and generation (`ddl.c`), so `ATTACH TABLE IF NOT
+EXISTS` finds the parts under the generation's key prefix. Staging tables
+have a prefix of their own, `s<generation>_tx_<fxid>`, and are attached
+from the prefixes the blobs carry, so a transaction mid-flight survives a
+worker restart and a crashed one's table is still there for VACUUM to
+sweep. A generation whose table has written no blob yet is not attached:
+its `CREATE TABLE` is still to come, as a `CREATE INDEX CONCURRENTLY`'s is
+between its catalog entry and its build. The directory is named for
+Postgres to leave out of base backups and `pg_rewind`, as it does every
+`pgsql_tmp`. The `meta` table and the LSN comparison are gone: the store
+and the index are one relation.
 
 ## Phase 1 host contract (from the chdb-core review)
 
@@ -77,18 +120,23 @@ satisfiable:
   serve its own callbacks. Therefore libchdb runs only in the engine child
   (`src/search/engine/`), whose callbacks forward page requests over the
   socketpair, and the supervisor bgworker, which is never inside libchdb,
-  serves them from its event loop. Page requests are interleaved with the
-  response stream, so the relay answers some frames instead of forwarding
-  them. chdb-core follow-up 25 (an idle hook on the calling thread) would
-  remove the need for the split for other hosts; we do not depend on it.
+  serves them from its event loop and from inside every wait on the request
+  channel. chdb-core follow-up 25 (an idle hook on the calling thread)
+  would remove the need for the split for other hosts; we do not depend on it.
 * **Durability.** `write_commit` is the only durability point the engine
-  exercises (the disk reports remote, so MergeTree never fsyncs). The
-  supervisor writes a blob's pages and its directory entry with
-  `GenericXLogFinish` before acknowledging the commit; WAL ordering then
-  gives durability in commit order. A failed `write_commit` releases the
-  handle and no abort follows, so the supervisor must drop the staged pages
-  itself on failure. `write_begin` can be called for a key that already
-  exists (rewrite), and zero-length blobs are legal.
+  exercises (the disk reports remote, so MergeTree never fsyncs), and the
+  contract allows durability in commit order. The supervisor writes a
+  blob's pages and its directory entry as generic WAL records and flushes
+  nothing: the commit record of the Postgres transaction behind the flush
+  follows them in the WAL, and `COMMIT` flushes up to it. A failed
+  `write_commit` releases the handle and no abort follows, so the supervisor
+  frees the pages itself on failure. `write_begin` can be called for a key
+  that already exists (rewrite), and zero-length blobs are legal.
+* **Removal must not fail.** plain_rewritable unlinks a blob by copying it
+  aside, removing it and removing the copy, and ClickHouse drops a table's
+  data in a background task it retries without end while `DROP ... SYNC`
+  waits. Every callback on that path returns success for a storage whose
+  relation is gone.
 * **Process exit.** An open libchdb connection at `exit()` tears the engine
   down from an atexit handler, which fires `write_abort`/`remove`
   callbacks. The engine closes its connection before exiting on SIGTERM;
@@ -96,51 +144,55 @@ satisfiable:
   memory is gone.
 * **Registration order.** Callbacks must be registered before the
   `chdb_connect` that reopens a path holding tables on the disk, because
-  metadata load instantiates the disk at attach.
+  metadata load instantiates the disk at attach. The engine asks the
+  worker for its storages first; after a worker restart there are none, as
+  the directory was emptied, and the tables are attached on demand.
 * **Mutations.** `plain_rewritable` has no hard links, so VACUUM's deletes
   use `lightweight_delete_mode = 'lightweight_update_force'` and the store
   table enables block number and offset columns.
 
 ## Backups and replication
 
-The index must behave like any other Postgres index under WAL-G backups,
-point-in-time recovery, streaming replication, `pg_rewind` and logical
-replication. The two storage phases differ, and the guarantees are explicit.
+The index behaves like any other Postgres index under base backups,
+point-in-time recovery, streaming replication and `pg_rewind`: the pages
+are its store, and generic WAL (`RM_GENERIC`) is replayed by core with no
+resource manager of our own and no `shared_preload_libraries`.
 
-| Property | Phase 0 (directory under PGDATA) | Phase 1 (parts in index pages) |
+| Property | Phase 0 (directory under PGDATA) | Phase 1 (parts in index pages, this tree) |
 |---|---|---|
-| Base backup + PITR | Heap restored to the target; store is a copy from backup time, so the index is **stale and must be rebuilt** | Consistent at the target LSN, no rebuild |
-| WAL-G delta backups | Store files have no page LSNs, so every delta copies the whole store | Standard pages, delta works |
-| Streaming standby | The base backup's copy of the store, which no WAL advances; the index is **unusable** until promotion and rebuild | Standby worker opens the store read-only from pages and serves searches |
+| Base backup + PITR | Heap restored to the target; store a copy from backup time, so the index is **stale and must be rebuilt** | Consistent at the target LSN, no rebuild |
+| WAL-G delta backups | Store files have no page LSNs, so every delta copies the whole store | Standard pages, delta works; the engine's cache directory is excluded as `pgsql_tmp` |
+| Streaming standby | No store on the standby; the index is **unusable** until promotion and rebuild | The pages are replicated; the index is refused in recovery (`error`) or skipped (`skip`) and served at once on promotion, no rebuild. Standby reads are the step left: a worker opening the pages read-only |
 | `pg_rewind` | Store copied wholesale, then treated as stale | Rewound with the other relation files |
 | Logical replication | Works: the subscriber maintains its own index through `aminsert` | Same |
-| Replay requirements | None | None: generic WAL (`RM_GENERIC`) is replayed by core, no custom rmgr, no `shared_preload_libraries` |
+| Replay requirements | None | None: generic WAL, replayed by core |
 
-Fail-safe rule for both phases: a scan never returns rows from a store it
-cannot prove current. At scan start the AM compares the metapage generation
-and last-flushed LSN with what the store reports (`SELECT max(lsn)` on a
-one-row `meta` table in the store, written with every flush). On mismatch,
-on a missing store, or on a standby in Phase 0, behaviour follows
-`chdb_search.unavailable_index = error | skip`: `error` raises
-"chdb index is not available on this server, REINDEX to rebuild", `skip`
-makes `amcostestimate` return `disable_cost` so the planner uses another
-path. The default is `error`, because a silent fallback to a sequential
-scan hides a broken index. REINDEX always rebuilds the store from the heap.
+Fail-safe rule: a scan never returns rows from a store it cannot prove
+current. In Phase 1 that proof is the relation itself; what the access
+method still checks before a scan, a flush and VACUUM's deletes is that
+the server is not in recovery, and `chdb_search.unavailable_index = error |
+skip` decides what a standby does: `error` raises "chdb index is not
+available on this server", `skip` makes `amcostestimate` return
+`disable_cost` so the planner uses another path. The default is `error`,
+because a silent fallback to a sequential scan hides an index that is not
+serving.
 
-Phase 1 standby reads: the standby's worker opens the index pages
-read-only. The ClickHouse table definition is regenerated from the Postgres
-index definition (the same `ddl.c` code that created it), the parts are
-discovered by listing the page directory as a `plain_rewritable` disk does,
-and the engine runs with `SYSTEM STOP MERGES` and a read-only disk so it
-never writes. Promotion switches the worker to read-write without a
-rebuild.
+Standby reads (not in this tree): the standby's worker opens the index
+pages read-only, attaches the tables from the catalog as the primary's
+does, and runs the engine with `SYSTEM STOP MERGES` and a read-only disk so
+it never writes. Promotion switches the worker to read-write without a
+rebuild; today promotion starts the worker.
 
-Write amplification: MergeTree merges rewrite parts, and in Phase 1 every
-rewritten byte is a generic WAL full-page image. Keep parts few and large
-(`min_bytes_for_wide_part`, merge settings on the store table), materialize
-skip indexes once after bulk loads rather than on every merge
-(`materialize_skip_indexes_on_merge = 0` plus `MATERIALIZE INDEX`), and
-document the expected WAL volume per inserted row in `doc/chdb_search.md`.
+## WAL volume
+
+MergeTree merges rewrite parts, and every rewritten byte is a generic WAL
+full-page image, so the store's WAL is its bytes written, plus the merges.
+`dev/benchmark/pagestore.sql` measures it from `pg_current_wal_lsn()`
+deltas: the heap alone, the build, one transaction of many rows, single-row
+commits (each a flush and a part) and `OPTIMIZE TABLE ... FINAL`, with the
+same script at the stage-1 commit for the share that is the store's.
+
+WAL_NUMBERS_PLACEHOLDER
 
 Two-phase commit: the buffer flushes at `XACT_EVENT_PRE_PREPARE` as it does
 at pre-commit. `ROLLBACK PREPARED` then leaves rows in the store whose heap
@@ -156,12 +208,15 @@ with the workers up; `SO_PEERCRED` stands in for the file mode, admitting
 peers of the server's uid only. Elsewhere the socket is still the file, and
 the worker has to be stopped for a WAL-G backup.
 
-Tests (`t/search_pitr.pl`, `t/search_standby.pl`, `t/search_logical.pl`,
-`t/search_walg.pl`, `t/search_twophase.pl`): base backup with WAL archiving
-restored to a PITR target; a streaming standby queried through the index
-(Phase 0 asserts the fail-safe error, Phase 1 asserts rows), then promoted
-and reindexed; a logical subscription whose subscriber builds its own index;
-WAL-G itself with `WALG_FILE_PREFIX` pointing at a local directory
-(`backup-push`, `wal-push`, `backup-fetch`, `wal-fetch`), skipped when the
-binary is absent, backing up with the worker running; and two-phase commit
-through the store.
+Tests: `t/search_standby.pl` (a streaming standby refuses the index and
+serves it on promotion with no REINDEX; the cache directory removed and
+rebuilt), `t/search_crash.pl` (a backend and the postmaster killed with
+rows in flight; recovery leaves the index consistent with the heap),
+`t/search_pagestore.pl` (an engine killed inside a blob; freed pages
+reused; DROP INDEX takes the pages), `t/search_pitr.pl` (base backup with
+WAL archiving restored to a PITR target), `t/search_logical.pl` (a
+logical subscription whose subscriber builds its own index),
+`t/search_walg.pl` (WAL-G itself with `WALG_FILE_PREFIX` pointing at a
+local directory, `backup-push`, `wal-push`, `backup-fetch` and
+`wal-fetch`, skipped when the binary is absent, backing up with the worker
+running) and `t/search_twophase.pl` (two-phase commit through the store).

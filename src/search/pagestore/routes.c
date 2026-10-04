@@ -7,11 +7,15 @@
 
 #include <ctype.h>
 
+#include "access/relation.h"
+#include "access/xact.h"
 #include "miscadmin.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
+#include "utils/resowner.h"
 
 #include "../protocol.h"
+#include "../sweep.h"
 #include "pages.h"
 #include "protocol.h"
 #include "recover.h"
@@ -104,17 +108,21 @@ parse_storage(const char* storage) {
     return (Oid)v;
 }
 
-/* g<generation>/... */
+/*
+ * g<generation>/..., or s<generation>_tx_<fxid>/... for a staging table's
+ * (CHDB_STORE_KEY_PREFIX_FMT, CHDB_STORE_STAGING_PREFIX_FMT in ../protocol.h);
+ * a listing's prefix may stop anywhere past the generation.
+ */
 static uint64
 parse_key(const char* key) {
     char* end;
     uint64 v;
 
-    if (key[0] != 'g' || !isdigit((unsigned char)key[1])) {
+    if ((key[0] != 'g' && key[0] != 's') || !isdigit((unsigned char)key[1])) {
         malformed("key", key);
     }
     v = strtoull(key + 1, &end, 10);
-    if (*end != '/') {
+    if (*end != (key[0] == 'g' ? '/' : '_')) {
         malformed("key", key);
     }
     return v;
@@ -131,6 +139,42 @@ chdb_routes_find(const char* storage, const char* key, RelFileLocator* loc) {
         r->dirtied = true;
     }
     return r != NULL;
+}
+
+bool
+chdb_routes_refresh(const char* storage, const char* key, RelFileLocator* loc) {
+    RouteKey k = { .index = parse_storage(storage), .generation = parse_key(key) };
+    bool found = false;
+
+    /* The attach lists blobs inside its transaction; nothing moved under it. */
+    if (IsTransactionState()) {
+        return false;
+    }
+
+    /* The transaction swaps the resource owner the request's pages run under. */
+    ResourceOwner owner = CurrentResourceOwner;
+
+    StartTransactionCommand();
+
+    Relation rel = try_relation_open(k.index, NoLock);
+
+    if (rel) {
+        ChdbPages p;
+
+        if (chdb_search_is_index(k.index) && chdb_pages_open(&p, rel->rd_locator, rel) &&
+            p.meta.generation == k.generation) {
+            Route* r = hash_search(routes, &k, HASH_ENTER, NULL);
+
+            r->loc     = rel->rd_locator;
+            r->dirtied = true;
+            *loc       = r->loc;
+            found      = true;
+        }
+        relation_close(rel, NoLock);
+    }
+    CommitTransactionCommand();
+    CurrentResourceOwner = owner;
+    return found;
 }
 
 void

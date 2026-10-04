@@ -3,21 +3,38 @@
 
 /*
  * The worker's side of the page request protocol (protocol.h): answering
- * the engine's storage callbacks from the blob store (store.h). The worker
- * calls chdb_pagestore_serve whenever the engine's page channel is readable:
- * from its event loop while idle, from inside any wait on the engine's
- * request channel while relaying (channel.h's aside), and while waiting for
- * the engine to stop.
+ * the engine's storage callbacks from the blobs in index relation pages
+ * (pagebackend.c behind store.h). The worker calls chdb_pagestore_serve
+ * whenever the engine's page channel is readable: from its event loop while
+ * idle, from inside any wait on the engine's request channel while
+ * relaying (channel.h's aside), and while waiting for the engine to stop.
+ * None of those run in a transaction, so the pins and locks the pages take
+ * are owned by a resource owner of the store's own, released on an error.
  */
 
 #include "postgres.h"
 
+#include "utils/rel.h"
+
 #include "../../channel.h"
 #include "store.h"
 
-/* Once per worker, before the engine starts: the backend's handles and its sweep. */
+/* Once per worker, before the engine starts. */
 extern void
 chdb_pagestore_init(void);
+
+/*
+ * A request named `index` and the relation at `loc` as its backend sees it:
+ * the blobs of the generation the relation's metapage holds go there. A
+ * relation seen for the first time with pages a crashed worker took is
+ * recovered first (recover.c).
+ */
+extern void
+chdb_pagestore_note(Oid index, RelFileLocator loc);
+
+/* Before the index's database is dropped: its blobs go with its relations. */
+extern void
+chdb_pagestore_forget(Oid index);
 
 /*
  * Reads one request from the page channel and answers it. A failure of the
@@ -31,7 +48,7 @@ chdb_pagestore_serve(chdbChannel* page);
 extern void
 chdb_pagestore_engine_gone(void);
 
-/* The blobs of a storage under `prefix`, from any process of the database. */
+/* The blobs of a storage under `prefix`, for the worker's own use. */
 extern void
 chdb_pagestore_list(
     const char* storage,
@@ -40,11 +57,12 @@ chdb_pagestore_list(
     void* ud
 );
 
-/*
- * The engine dropped the index's database: its storage goes, with whatever
- * a crashed engine left in it. Raises if it cannot.
- */
+/* The blobs in an index relation's pages, from a backend that has it open. */
 extern void
-chdb_pagestore_remove_storage(Oid indexoid);
+chdb_pagestore_list_relation(Relation index, chdbBlobListSink sink, void* ud);
+
+/* After the engine's last stop: marks every relation written as clean. */
+extern void
+chdb_pagestore_shutdown(void);
 
 #endif /* CHDB_SEARCH_PAGESTORE_H */

@@ -93,17 +93,16 @@ a ranker.
   waiting for a stopping engine to close its store. It answers from a backend
   behind `chdbBlobStore` (`pagestore/store.h`, a table of functions: exists,
   metadata, read, write begin/append/commit/abort, remove, list, copy, and
-  the storages held), so that the page format replaces the backend without
-  touching the protocol. The first backend keeps blobs as files under
-  `pg_chdb/<dboid>/blobs/<storage>/` (`dirstore.c`), pending writes outside
-  every storage until their commit renames them in. The engine registers
-  the storages the supervisor holds before it opens the store, since libchdb
-  attaches a persisted table to its storage by name, and each new index's
-  before a table is made on it. Each callback is a round trip, so a blob
-  cache belongs in the engine process.
+  the storages held), which keeps the blobs in the pages of the index
+  relation, written with generic WAL (`pagebackend.c`, layout in `pages.h`,
+  see `chdb_search-storage.md`). Every request names the index relation as
+  its backend sees it, since a build's relation is in no catalog the worker
+  can read, and the blobs of each generation are routed to the relation
+  whose metapage holds it. Each callback is a round trip, so a blob cache
+  belongs in the engine process.
 * Listens on the abstract unix socket `@pg_chdb/<hash>/<dboid>` on Linux,
   the hash of the data directory's path, device and inode, for peers of the
-  server's uid only, and on `$PGDATA/pg_chdb/<dboid>.sock` elsewhere. Wire
+  server's uid only, and on `$PGDATA/pg_chdb/pgsql_tmp/<dboid>.sock` elsewhere. Wire
   protocol reuses the setup payload of `src/setup.h` with new commands:
   * `CHDB_CMD_EXEC` run DDL/DML, reply status.
   * `CHDB_CMD_SELECT` stream Native blocks back (reuse `chdb_select_receive`).
@@ -113,11 +112,13 @@ a ranker.
   that `idx_<oid>.t_<generation>` exists before running the request and
   otherwise answers `CHDB_STATUS_NO_STORE`, which the client raises with a
   REINDEX hint.
-* Store path: `$PGDATA/pg_chdb/<dboid>/` holds chDB's own metadata and one
-  chDB database `idx_<indexrelid>` per index, whose tables' parts are the
-  blobs of the index's storage `pg_<indexrelid>`: under
-  `pg_chdb/<dboid>/blobs/` with the directory backend, in the index
-  relation's pages with the page backend to come.
+* Engine directory: `$PGDATA/pg_chdb/pgsql_tmp/<dboid>/` holds chDB's own
+  metadata and scratch space, a cache the worker empties when it starts
+  and refills from the catalog and the index pages: each index's table,
+  `idx_<indexrelid>.t_<generation>` with a UUID fixed by the two, is
+  attached on the first request naming the index (`attach.c`), and the
+  disk finds its parts in the pages under the generation's key prefix.
+  Named `pgsql_tmp` so that base backups and `pg_rewind` leave it out.
 
 ### Access method (`src/search/am.c`, `sql/chdb_search.sql`)
 

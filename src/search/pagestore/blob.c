@@ -14,6 +14,7 @@
 
 #include <time.h>
 
+#include "storage/relfilelocator.h"
 #include "utils/memutils.h"
 
 #include "blob.h"
@@ -22,6 +23,7 @@
 struct ChdbBlobWrite {
     RelFileLocator loc;
     char* key;
+    bool discard;        /* the relation is gone: the bytes go nowhere */
     uint64 size;         /* bytes appended so far */
     char* buf;           /* bytes not yet in a page */
     Size nbuf, cap;      /* used and allocated */
@@ -42,16 +44,26 @@ check_key(const char* key) {
     }
 }
 
-/* Opens the relation of a write, raising if it is gone. */
-static void
-open_or_raise(ChdbPages* p, RelFileLocator loc) {
-    if (!chdb_pages_open(p, loc, NULL)) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_UNDEFINED_OBJECT),
-            errmsg("chdb_search: the index of relation %u is gone", loc.relNumber)
+/*
+ * Opens the relation of a write. One that is gone, as a dropped index's
+ * is to the engine's drop of its table, or one that went while the blob
+ * was being written, as a REINDEX that commits takes the relation a merge
+ * of the old generation writes into, makes the write moot: from here on
+ * its bytes are dropped, and the pages it took went with the relation.
+ */
+static bool
+opened(ChdbBlobWrite* w, ChdbPages* p) {
+    if (!w->discard && !chdb_pages_open(p, w->loc, NULL)) {
+        elog(
+            DEBUG1,
+            "chdb_search: discarding the write of \"%s\" into relation %u, which is gone",
+            w->key,
+            w->loc.relNumber
         );
+        w->discard = true;
+        w->nblocks = 0;
     }
+    return !w->discard;
 }
 
 /* ---- writing ---- */
@@ -61,12 +73,13 @@ chdb_blob_begin(RelFileLocator loc, const char* key) {
     ChdbPages p;
 
     check_key(key);
-    open_or_raise(&p, loc);
 
     ChdbBlobWrite* w = MemoryContextAllocZero(TopMemoryContext, sizeof(*w));
 
-    w->loc = loc;
-    w->key = MemoryContextStrdup(TopMemoryContext, key);
+    w->loc     = loc;
+    w->key     = MemoryContextStrdup(TopMemoryContext, key);
+    w->discard = !RelFileNumberIsValid(loc.relNumber);
+    opened(w, &p);
     return w;
 }
 
@@ -113,6 +126,9 @@ void
 chdb_blob_append(ChdbBlobWrite* w, const void* buf, Size len) {
     ChdbPages p;
 
+    if (w->discard) {
+        return;
+    }
     if (w->nbuf + len > w->cap) {
         w->cap = Max(w->nbuf + len, Max(2 * w->cap, (Size)CHDB_INLINE_MAX + 1));
         w->buf = w->buf ? repalloc(w->buf, w->cap)
@@ -122,8 +138,7 @@ chdb_blob_append(ChdbBlobWrite* w, const void* buf, Size len) {
     w->nbuf += len;
     w->size += len;
     /* Small enough to be inline so far: keep it, the entry may take it whole. */
-    if (w->size > CHDB_INLINE_MAX && w->nbuf >= CHDB_DATA_PER_PAGE) {
-        open_or_raise(&p, w->loc);
+    if (w->size > CHDB_INLINE_MAX && w->nbuf >= CHDB_DATA_PER_PAGE && opened(w, &p)) {
         drain(w, &p, false);
     }
 }
@@ -175,7 +190,9 @@ commit(ChdbBlobWrite* w) {
     Size len    = CHDB_DIR_ENTRY_SIZE(keylen, inl ? w->size : 0);
     ChdbDirEntry* e;
 
-    open_or_raise(&p, w->loc);
+    if (!opened(w, &p)) {
+        return;
+    }
     if (!inl) {
         drain(w, &p, true);
     }
@@ -211,21 +228,21 @@ chdb_blob_commit(ChdbBlobWrite* w) {
     free_write(w);
 }
 
+/*
+ * Frees w whether or not the pages could be given back; a raise on the way
+ * is the caller's to clean up after, as a page may be left locked.
+ */
 void
 chdb_blob_abort(ChdbBlobWrite* w) {
     ChdbPages p;
 
     PG_TRY();
     {
-        if (w->nblocks && chdb_pages_open(&p, w->loc, NULL)) {
+        if (w->nblocks && opened(w, &p)) {
             chdb_pages_free(&p, w->blocks, w->nblocks);
         }
     }
-    PG_CATCH();
-    {
-        /* A relation gone from under the write has nothing to give back. */
-        FlushErrorState();
-    }
+    PG_FINALLY();
+    { free_write(w); }
     PG_END_TRY();
-    free_write(w);
 }

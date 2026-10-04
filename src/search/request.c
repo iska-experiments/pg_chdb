@@ -109,17 +109,25 @@ serve(chdbChannel* client, MemoryContext cxt) {
         return false;
     }
 
-    /* A table the engine does not have yet is attached before the request runs. */
-    if (req.ctx.cmd != CHDB_CMD_DROP) {
+    if (req.ctx.cmd == CHDB_CMD_DROP) {
+        /*
+         * The index's relations are gone, or going with the transaction: the
+         * engine's removal of every blob finds the storage empty, and costs
+         * no page.
+         */
+        chdb_pagestore_forget(req.index);
+    } else {
+        RelFileLocator loc = {
+            .spcOid = req.tablespace, .dbOid = MyDatabaseId, .relNumber = req.relnumber
+        };
+
+        /* Where the index's blobs go, then a table the engine lacks yet. */
+        chdb_pagestore_note(req.index, loc);
         chdb_search_attach(req.index, req.generation);
     }
 
     char* err = relay_request(client, &raw, req.ctx.cmd, &data_open);
 
-    /* The index's database is gone, so its storage can go, leftovers and all. */
-    if (!err && req.ctx.cmd == CHDB_CMD_DROP && relay_succeeded()) {
-        chdb_pagestore_remove_storage(req.index);
-    }
     if (err) {
         uint32_t zero = 0;
 

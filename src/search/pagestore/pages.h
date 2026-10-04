@@ -66,7 +66,10 @@ typedef struct ChdbMetaPageData {
     uint32 flags;          /* CHDB_META_* */
 } ChdbMetaPageData;
 
-#define CHDB_META(page) ((ChdbMetaPageData*)PageGetContents(page))
+static inline ChdbMetaPageData*
+CHDB_META(Page page) {
+    return (ChdbMetaPageData*)PageGetContents(page);
+}
 
 /* ---- the other pages ---- */
 
@@ -83,7 +86,12 @@ typedef struct ChdbPageSpecial {
     BlockNumber next; /* the chain's next page, or InvalidBlockNumber */
 } ChdbPageSpecial;
 
-#define CHDB_SPECIAL(page) ((ChdbPageSpecial*)PageGetSpecialPointer(page))
+/* The accessors are functions: the page macros evaluate their argument more than once. */
+static inline ChdbPageSpecial*
+CHDB_SPECIAL(Page page) {
+    return (ChdbPageSpecial*)PageGetSpecialPointer(page);
+}
+
 #define CHDB_PAGE_START MAXALIGN(SizeOfPageHeaderData)
 #define CHDB_PAGE_END (BLCKSZ - MAXALIGN(sizeof(ChdbPageSpecial)))
 /* Bytes of blob data, or of block numbers after their header, on one page. */
@@ -95,8 +103,15 @@ typedef struct ChdbListHeader {
     uint32 count; /* block numbers on this page */
 } ChdbListHeader;
 
-#define CHDB_LIST(page) ((ChdbListHeader*)PageGetContents(page))
-#define CHDB_LIST_BLOCKS(page) ((BlockNumber*)(PageGetContents(page) + sizeof(ChdbListHeader)))
+static inline ChdbListHeader*
+CHDB_LIST(Page page) {
+    return (ChdbListHeader*)PageGetContents(page);
+}
+
+static inline BlockNumber*
+CHDB_LIST_BLOCKS(Page page) {
+    return (BlockNumber*)(PageGetContents(page) + sizeof(ChdbListHeader));
+}
 #define CHDB_LIST_PER_PAGE \
     ((CHDB_DATA_PER_PAGE - sizeof(ChdbListHeader)) / sizeof(BlockNumber))
 
@@ -141,6 +156,9 @@ chdb_pages_open(ChdbPages* p, RelFileLocator loc, Relation rel);
 /* Reads and locks a page; `mode` is BUFFER_LOCK_SHARE or _EXCLUSIVE. */
 extern Buffer
 chdb_pages_read(ChdbPages* p, BlockNumber blk, int mode);
+/* The same, raising if the page is not of `kind`, as a chain's next must be. */
+extern Buffer
+chdb_pages_read_kind(ChdbPages* p, BlockNumber blk, int mode, ChdbPageKind kind);
 
 /*
  * One generic WAL record over up to MAX_GENERIC_XLOG_PAGES buffers, each

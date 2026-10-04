@@ -173,12 +173,14 @@ superseded builds and the staging tables of transactions that are over.
 ## Dropping
 
 `DROP INDEX`, and the `DROP TABLE`, `DROP SCHEMA ... CASCADE` or `DROP
-DATABASE` that takes an index with it, removes the index's store when the
-transaction commits, if the dropping session has the library loaded; put
-`chdb_search` in `session_preload_libraries` or `shared_preload_libraries`
-to make that every session. A store the drop missed is swept when the
-database's worker next starts, and a session that loaded the library on
-demand inside a `DROP` says so in the log.
+DATABASE` that takes an index with it, unlinks the index relation and the
+blobs in its pages with it, as Postgres does for any index. The engine's
+table is dropped when the transaction commits, if the dropping session has
+the library loaded; put `chdb_search` in `session_preload_libraries` or
+`shared_preload_libraries` to make that every session. A table the drop
+missed costs nothing but an entry in the engine's cache, which goes when
+the database's worker next starts, and a session that loaded the library
+on demand inside a `DROP` says so in the log.
 
 The worker is a session of its database: `DROP DATABASE` refuses while it
 runs, `DROP DATABASE ... WITH (FORCE)` stops it and proceeds.
@@ -190,8 +192,10 @@ The worker for a database appears in `pg_stat_activity` with `backend_type`
 socket, on Linux the abstract name `@pg_chdb/<hash>/<database oid>` with
 the hash of the data directory's path, which `ss -xl` lists and which only
 processes of the server's own user may connect to, elsewhere the file
-`$PGDATA/pg_chdb/<database oid>.sock`; it keeps its store in
-`$PGDATA/pg_chdb/<database oid>/`. It starts when a backend first needs it
+`$PGDATA/pg_chdb/pgsql_tmp/<database oid>.sock`. It keeps the engine's
+working directory, a cache rebuilt from the catalog and the index pages
+whenever it starts, in `$PGDATA/pg_chdb/pgsql_tmp/<database oid>/`, where
+base backups and `pg_rewind` leave it out. It starts when a backend first needs it
 and, if it dies, restarts five seconds later or when a backend next asks. At
 most 64 databases can have a worker at once.
 
@@ -293,13 +297,11 @@ requirement; they travel with every request and apply to the engine's query.
 *   One process per store: a database's worker is the only reader and
     writer, so reads do not scale with backends, and at most 64 databases
     can have a worker at once.
-*   The store is not replicated in this phase: it is a directory under
-    `$PGDATA/pg_chdb`, not WAL-logged pages, so a standby cannot serve a chdb
-    index, and a restore, a promotion or a `pg_rewind` leaves indexes to rebuild
-    with `REINDEX`; off Linux, WAL-G backs it up only while the worker is
-    stopped. See [Backups and
-    Replication](chdb_search-internals.md#backups-and-replication). The next
-    phase keeps the store in index pages.
+*   A standby does not serve the index until it is promoted: the pages are
+    there, but the worker that reads them for the engine does not run in
+    recovery yet.
+*   Every byte the engine writes is WAL: a part's files as it flushes them,
+    and again as merges rewrite them. WAL_NUMBERS_PLACEHOLDER
 *   `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
 *   The Postgres implementations of the operators tokenize as the default
     pipeline does; other tokenizers are usable through the index only, as

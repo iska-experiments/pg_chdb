@@ -99,6 +99,7 @@ chdb_search_worker_main(Datum arg) {
     /* Here, not in worker_exit: the engine's last page requests are served meanwhile.
      */
     engine_stop();
+    chdb_pagestore_shutdown();
     ereport(
         LOG, errmsg("chdb_search: worker for database %u shutting down", worker_dboid)
     );

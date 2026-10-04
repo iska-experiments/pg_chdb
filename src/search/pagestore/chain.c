@@ -14,7 +14,7 @@
 /* Copies the numbers of one map page out and returns its next page. */
 static BlockNumber
 map_page(ChdbPages* p, BlockNumber blk, BlockNumber* out, uint32* count) {
-    Buffer buf       = chdb_pages_read(p, blk, BUFFER_LOCK_SHARE);
+    Buffer buf       = chdb_pages_read_kind(p, blk, BUFFER_LOCK_SHARE, CHDB_PAGE_MAP);
     Page page        = BufferGetPage(buf);
     BlockNumber next = CHDB_SPECIAL(page)->next;
 
@@ -44,7 +44,7 @@ chdb_blob_read(ChdbPages* p, const ChdbDirEntry* e, uint64 offset, void* buf, Si
 
     /* To the map page covering the first page wanted. */
     for (uint64 hop = first / CHDB_LIST_PER_PAGE; hop > 0; hop--) {
-        Buffer mbuf = chdb_pages_read(p, at, BUFFER_LOCK_SHARE);
+        Buffer mbuf = chdb_pages_read_kind(p, at, BUFFER_LOCK_SHARE, CHDB_PAGE_MAP);
 
         at = CHDB_SPECIAL(BufferGetPage(mbuf))->next;
         UnlockReleaseBuffer(mbuf);
@@ -57,7 +57,8 @@ chdb_blob_read(ChdbPages* p, const ChdbDirEntry* e, uint64 offset, void* buf, Si
             continue;
         }
 
-        Buffer dbuf = chdb_pages_read(p, blocks[idx++], BUFFER_LOCK_SHARE);
+        Buffer dbuf =
+            chdb_pages_read_kind(p, blocks[idx++], BUFFER_LOCK_SHARE, CHDB_PAGE_DATA);
         Page page   = BufferGetPage(dbuf);
         Size inpage = (Size)((offset + done) % CHDB_DATA_PER_PAGE);
         Size n      = Min(CHDB_DATA_PER_PAGE - inpage, len - done);

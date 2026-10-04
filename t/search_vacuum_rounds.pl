@@ -35,7 +35,7 @@ $node->psql(postgres => q{
 my ($rounds) = $err =~ /index scans: (\d+)/;
 ok defined $rounds && $rounds >= 2,
     'VACUUM should take several index rounds (got ' . ($rounds // 'none') . ')';
-like $err, qr/index "docs_idx": pages: 1 in total/, 'Should report the index page';
+like $err, qr/index "docs_idx": pages: [1-9]\d* in total/, 'Should report the index pages';
 
 my $live = $node->safe_psql(postgres => 'SELECT count(*) FROM docs');
 is $node->safe_psql(postgres =>

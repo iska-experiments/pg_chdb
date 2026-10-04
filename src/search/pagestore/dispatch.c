@@ -5,6 +5,10 @@
  * CALLBACK_OBJECT_STORAGE_ERROR; a channel that breaks raises to the caller.
  * The store's write handles are kept here by number, since the engine may
  * only name what it can repeat, and dropped together when the engine goes.
+ *
+ * The requests are served outside any transaction, so every call into the
+ * store runs under the store's own resource owner (owner.h), which an error
+ * releases.
  */
 
 #include "postgres.h"
@@ -14,11 +18,12 @@
 #include "utils/memutils.h"
 
 #include "../protocol.h"
+#include "owner.h"
 #include "pagestore.h"
 #include "protocol.h"
 #include "store.h"
 
-static const chdbBlobStore* store = &chdb_blob_dirstore;
+static const chdbBlobStore* store = &chdb_blob_pagestore;
 
 /* The pending writes, by the number the engine was given. */
 typedef struct HandleEntry {
@@ -46,22 +51,8 @@ chdb_pagestore_init(void) {
     request_cxt = AllocSetContextCreate(
         TopMemoryContext, "chdb_search page request", ALLOCSET_DEFAULT_SIZES
     );
+    chdb_pagestore_owner_init();
     store->init();
-}
-
-void
-chdb_pagestore_list(
-    const char* storage,
-    const char* prefix,
-    chdbBlobListSink sink,
-    void* ud
-) {
-    store->list(storage, prefix, sink, ud);
-}
-
-void
-chdb_pagestore_remove_storage(Oid indexoid) {
-    store->remove_storage(psprintf(CHDB_STORE_STORAGE_FMT, indexoid));
 }
 
 /* ---- the body of a request ---- */
@@ -268,6 +259,10 @@ chdb_pagestore_serve(chdbChannel* page) {
     initStringInfo(&out);
     rep.id     = req.id;
     rep.status = CHDB_PAGE_OK;
+
+    ResourceOwner saved = chdb_pagestore_enter();
+    bool failed         = false;
+
     PG_TRY();
     { answer(req.op, &cur, &out); }
     PG_CATCH();
@@ -281,8 +276,10 @@ chdb_pagestore_serve(chdbChannel* page) {
         resetStringInfo(&out);
         appendStringInfoString(&out, e->message);
         rep.status = CHDB_PAGE_ERROR;
+        failed     = true;
     }
     PG_END_TRY();
+    chdb_pagestore_leave(saved, failed);
     if (out.len > CHDB_PAGE_BODY_MAX) {
         resetStringInfo(&out);
         appendStringInfoString(&out, "the reply would exceed the protocol's bound");
@@ -305,11 +302,26 @@ chdb_pagestore_engine_gone(void) {
     if (n == 0) {
         return;
     }
+
+    ResourceOwner saved = chdb_pagestore_enter();
+
+    bool failed = false;
+
     hash_seq_init(&seq, handles);
     while ((e = hash_seq_search(&seq)) != NULL) {
-        store->write_abort(e->handle);
+        PG_TRY();
+        { store->write_abort(e->handle); }
+        PG_CATCH();
+        {
+            /* The relation went with its index, most likely; the pages with it. */
+            EmitErrorReport();
+            FlushErrorState();
+            failed = true;
+        }
+        PG_END_TRY();
         hash_search(handles, &e->id, HASH_REMOVE, NULL);
     }
+    chdb_pagestore_leave(saved, failed);
     ereport(
         LOG,
         errmsg("chdb_search: dropped %ld pending blob writes of the chDB engine", n)

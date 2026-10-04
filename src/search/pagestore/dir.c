@@ -21,7 +21,7 @@ walk_pages(ChdbPages* p, PageVisitor visit, void* ud) {
     BlockNumber blk = p->meta.dir_head;
 
     while (BlockNumberIsValid(blk)) {
-        Buffer buf       = chdb_pages_read(p, blk, BUFFER_LOCK_SHARE);
+        Buffer buf       = chdb_pages_read_kind(p, blk, BUFFER_LOCK_SHARE, CHDB_PAGE_DIR);
         Page page        = BufferGetPage(buf);
         BlockNumber next = CHDB_SPECIAL(page)->next;
         bool more        = visit(ud, blk, page);
@@ -141,7 +141,9 @@ extend_chain(ChdbPages* p, BlockNumber last) {
     chdb_write_begin(&w, p);
     chdb_write_alloc(&w, CHDB_PAGE_DIR, &blk);
     if (BlockNumberIsValid(last)) {
-        CHDB_SPECIAL(chdb_write_page(&w, last, false))->next = blk;
+        Page prev = chdb_write_page(&w, last, false);
+
+        CHDB_SPECIAL(prev)->next = blk;
     } else {
         CHDB_META(chdb_write_meta(&w))->dir_head = blk;
     }
@@ -171,7 +173,8 @@ chdb_dir_put(ChdbPages* p, const ChdbDirEntry* e, Size len) {
     if (r.fit != r.old.blk) {
         page = chdb_write_page(&w, r.fit, false);
     }
-    if (PageAddItem(page, (Item)e, len, InvalidOffsetNumber, false, false) ==
+    /* A plain pointer: PostgreSQL 19 drops the Item type the older ones take. */
+    if (PageAddItem(page, (char*)e, len, InvalidOffsetNumber, false, false) ==
         InvalidOffsetNumber) {
         elog(ERROR, "chdb_search: could not add a blob to its directory page");
     }

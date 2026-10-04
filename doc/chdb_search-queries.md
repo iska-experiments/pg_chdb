@@ -247,24 +247,25 @@ SELECT author, count(*), avg(price) FROM docs WHERE body @@@ 'shoes'
 
 ## Availability
 
-The store is derived data under the data directory, in this phase neither
-WAL-logged nor replicated. Before a scan, a commit's flush or `VACUUM`'s
-deletes, the index proves that this server can serve its store: the server is
-not in recovery, and the store's record of its last flush agrees with the
-index's. A standby, a restore from a backup, a `pg_rewind`, a copied or a
-missing store fail that proof, and
+The store lives in the pages of the index relation, written through
+Postgres's generic WAL like any index: crash recovery, base backups,
+point-in-time recovery, streaming replication and `pg_rewind` carry it with
+the heap, and no `REINDEX` is needed after any of them. What remains to
+check before a scan, a commit's flush or `VACUUM`'s deletes is that this
+server can serve the pages at all: a server in recovery does not yet, and
 [`chdb_search.unavailable_index`](chdb_search.md#chdb_searchunavailable_index)
-decides: by default the statement fails with `chdb index "name" is not available
-on this server` and names the `REINDEX` that rebuilds the store; in `skip` mode
-the planner takes another path, a commit keeps its rows from the store, and the
-index moves on so that the store can never match it again.
+decides what a standby does: by default the statement fails with `chdb
+index "name" is not available on this server`; in `skip` mode the planner
+takes another path and answers from the heap. A promoted standby serves
+the index at once.
 
-Every build writes a new **generation**: a random id in the index's one
-WAL-logged page that names the store table, `idx_<oid>.t_<generation>`. A
-`REINDEX`, `TRUNCATE` or table rewrite builds the new generation beside the
-old, so a rollback leaves a valid index, and `VACUUM` sweeps the loser. A
-request for a generation the store no longer has fails with `chdb index
-"name" does not match its store`; `REINDEX INDEX` rebuilds it.
+Every build writes a new **generation**: a random id in the index's
+metapage that names the store table, `idx_<oid>.t_<generation>`. A
+`REINDEX`, `TRUNCATE` or table rewrite builds the new generation in a new
+relation beside the old, so a rollback leaves a valid index, and `VACUUM`
+sweeps the loser's table out of the engine. A request for a generation the
+engine no longer has fails with `chdb index "name" does not match its
+store`; `REINDEX INDEX` rebuilds it.
 
   [chdb_vector]: ./chdb_vector.md "chdb_vector Docs"
   [query language]: ./chdb_search-query.md "chdb_search Query Language"

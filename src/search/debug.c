@@ -178,8 +178,9 @@ blob_row(void* ud, const char* key, uint64 size, int64 mtime) {
 
 /*
  * The blobs of a chdb index's storage, as the worker holds them for the
- * engine: the key libchdb chose, the size, and when the write committed.
- * Read from the blob store directly, not through the worker.
+ * engine in the index relation's pages: the key libchdb chose, the size,
+ * and when the write committed. Read from the pages directly, not through
+ * the worker.
  */
 PG_FUNCTION_INFO_V1(chdb_search_debug_blobs);
 Datum
@@ -188,9 +189,11 @@ chdb_search_debug_blobs(PG_FUNCTION_ARGS) {
 
     must_be_index(indexoid);
     InitMaterializedSRF(fcinfo, 0);
-    chdb_pagestore_list(
-        psprintf(CHDB_STORE_STORAGE_FMT, indexoid), "", blob_row, fcinfo->resultinfo
-    );
+
+    Relation index = index_open(indexoid, AccessShareLock);
+
+    chdb_pagestore_list_relation(index, blob_row, fcinfo->resultinfo);
+    index_close(index, AccessShareLock);
 
     return (Datum)0;
 }

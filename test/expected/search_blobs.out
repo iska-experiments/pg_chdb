@@ -54,10 +54,11 @@ SELECT id FROM docs WHERE body @@@ 'boots' ORDER BY id;
 (2 rows)
 
 RESET enable_seqscan;
--- Each index has a storage of its own; a rebuild writes its new generation
--- into the same one, under its own prefix, and VACUUM, dropping the
--- generation that lost, removes its blobs: the count of parts returns to
--- what one generation holds.
+-- Each index has a storage of its own, in its own relation's pages; a
+-- rebuild writes its new generation into a new relation, under a prefix
+-- of its own, and the old relation's blobs went with it: the listing shows
+-- one generation before and after, a different one, and VACUUM's drop of
+-- the old table finds nothing left to remove.
 CREATE INDEX docs_idx2 ON docs USING chdb (body);
 SELECT count(*) > 0 AS second_storage FROM chdb_search_blobs('docs_idx2');
  second_storage 
@@ -66,21 +67,25 @@ SELECT count(*) > 0 AS second_storage FROM chdb_search_blobs('docs_idx2');
 (1 row)
 
 DROP INDEX docs_idx2;
-SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') AS parts
+SELECT min(split_part(key, '/', 1)) AS generation,
+       count(DISTINCT split_part(key, '/', 1)) AS generations
   FROM chdb_search_blobs('docs_idx') \gset
 REINDEX INDEX docs_idx;
-SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') > :parts AS rebuilt_beside
+SELECT min(split_part(key, '/', 1)) <> :'generation' AS rebuilt_into_new_generation,
+       count(DISTINCT split_part(key, '/', 1)) = :generations AS one_generation
   FROM chdb_search_blobs('docs_idx');
- rebuilt_beside 
-----------------
- t
+ rebuilt_into_new_generation | one_generation 
+-----------------------------+----------------
+ t                           | t
 (1 row)
 
+SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') AS parts
+  FROM chdb_search_blobs('docs_idx') \gset
 VACUUM docs;
-SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') <= :parts AS old_generation_gone
+SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') = :parts AS parts_kept
   FROM chdb_search_blobs('docs_idx');
- old_generation_gone 
----------------------
+ parts_kept 
+------------
  t
 (1 row)
 

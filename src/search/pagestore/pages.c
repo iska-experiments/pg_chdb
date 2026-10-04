@@ -54,20 +54,44 @@ chdb_pages_open(ChdbPages* p, RelFileLocator loc, Relation rel) {
     return true;
 }
 
+static void
+corrupt(ChdbPages* p, const char* what) {
+    ereport(
+        ERROR,
+        errcode(ERRCODE_DATA_CORRUPTED),
+        errmsg("chdb_search: %s in relation %u", what, p->loc.relNumber),
+        errhint("REINDEX the index.")
+    );
+}
+
 Buffer
 chdb_pages_read(ChdbPages* p, BlockNumber blk, int mode) {
     if (!BlockNumberIsValid(blk)) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_DATA_CORRUPTED),
-            errmsg("chdb_search: a page chain of relation %u is broken", p->loc.relNumber)
-        );
+        corrupt(p, "a page chain is broken");
+    }
+    if (blk >= p->nblocks) {
+        /* A backend listing while the worker extends the relation sees new pages. */
+        p->nblocks = smgrnblocks(smgropen(p->loc, INVALID_PROC_NUMBER), MAIN_FORKNUM);
+        if (blk >= p->nblocks) {
+            corrupt(p, "a page chain names a page past the end");
+        }
     }
 
     Buffer buf =
         ReadBufferWithoutRelcache(p->loc, MAIN_FORKNUM, blk, RBM_NORMAL, NULL, true);
 
     LockBuffer(buf, mode);
+    return buf;
+}
+
+Buffer
+chdb_pages_read_kind(ChdbPages* p, BlockNumber blk, int mode, ChdbPageKind kind) {
+    Buffer buf = chdb_pages_read(p, blk, mode);
+
+    if (blk == CHDB_METAPAGE_BLKNO || CHDB_SPECIAL(BufferGetPage(buf))->kind != kind) {
+        UnlockReleaseBuffer(buf);
+        corrupt(p, "a page is not of the kind its chain says");
+    }
     return buf;
 }
 
@@ -122,7 +146,9 @@ pop_free(ChdbWrite* w, BlockNumber* blk) {
         return InvalidBuffer;
     }
 
-    Buffer top = chdb_pages_read(w->p, meta->free_head, BUFFER_LOCK_EXCLUSIVE);
+    Buffer top = chdb_pages_read_kind(
+        w->p, meta->free_head, BUFFER_LOCK_EXCLUSIVE, CHDB_PAGE_FREE
+    );
 
     if (CHDB_LIST(BufferGetPage(top))->count > 0) {
         /* A number off the top page. */
@@ -131,6 +157,9 @@ pop_free(ChdbWrite* w, BlockNumber* blk) {
 
         *blk = CHDB_LIST_BLOCKS(page)[--h->count];
         ((PageHeader)page)->pd_lower -= sizeof(BlockNumber);
+        if (*blk == CHDB_METAPAGE_BLKNO || *blk == meta->free_head) {
+            corrupt(w->p, "the free stack names a page in use");
+        }
         return chdb_pages_read(w->p, *blk, BUFFER_LOCK_EXCLUSIVE);
     }
     /* The top page itself, the one under it becoming the top. */
@@ -202,8 +231,9 @@ top_has_room(ChdbPages* p) {
         return false;
     }
 
-    Buffer top = chdb_pages_read(p, p->meta.free_head, BUFFER_LOCK_SHARE);
-    bool room  = CHDB_LIST(BufferGetPage(top))->count < CHDB_LIST_PER_PAGE;
+    Buffer top =
+        chdb_pages_read_kind(p, p->meta.free_head, BUFFER_LOCK_SHARE, CHDB_PAGE_FREE);
+    bool room = CHDB_LIST(BufferGetPage(top))->count < CHDB_LIST_PER_PAGE;
 
     UnlockReleaseBuffer(top);
     return room;

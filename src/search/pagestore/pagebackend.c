@@ -3,7 +3,11 @@
  * the relation behind a storage and a key (routes.c) and working its
  * directory (dir.c) and pages (blob.c, chain.c). A relation the worker was
  * never told of, or that is gone, is a storage without blobs: nothing is
- * found in it, removing from it succeeds, and only a write raises.
+ * found in it, removing from it and copying within it succeed, a write
+ * into it is taken and discarded, and only a read raises. Before a
+ * relation is given up as gone the catalog is asked where the generation
+ * is now (routes.h), so a write never goes to the void while its pages
+ * live elsewhere.
  */
 
 #include "postgres.h"
@@ -12,14 +16,29 @@
 
 #include "blob.h"
 #include "dir.h"
+#include "pagestore.h"
 #include "routes.h"
 #include "store.h"
+
+/*
+ * The relation for a storage and a key, open: the one routed, or, with
+ * that one gone, the one the catalog's index holds the generation in now.
+ * False leaves `loc` as the last route tried, invalid when there was none.
+ */
+static bool
+route(const char* storage, const char* key, RelFileLocator* loc, ChdbPages* p) {
+    loc->relNumber = InvalidRelFileNumber;
+    if (chdb_routes_find(storage, key, loc) && chdb_pages_open(p, *loc, NULL)) {
+        return true;
+    }
+    return chdb_routes_refresh(storage, key, loc) && chdb_pages_open(p, *loc, NULL);
+}
 
 static bool
 open_for(const char* storage, const char* key, ChdbPages* p) {
     RelFileLocator loc;
 
-    return chdb_routes_find(storage, key, &loc) && chdb_pages_open(p, loc, NULL);
+    return route(storage, key, &loc, p);
 }
 
 static bool
@@ -68,17 +87,13 @@ pg_read(const char* storage, const char* key, uint64 offset, void* buf, size_t l
     return chdb_blob_read(&p, e, offset, buf, len);
 }
 
+/* A write into a relation that is gone is taken and discarded (blob.c). */
 static void*
 pg_write_begin(const char* storage, const char* key) {
     RelFileLocator loc;
+    ChdbPages p;
 
-    if (!chdb_routes_find(storage, key, &loc)) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_UNDEFINED_OBJECT),
-            errmsg("chdb_search: no index relation holds blob \"%s\"", key)
-        );
-    }
+    route(storage, key, &loc, &p);
     return chdb_blob_begin(loc, key);
 }
 
@@ -138,6 +153,12 @@ pg_list(const char* storage, const char* prefix, chdbBlobListSink sink, void* ud
  * The copy shares the source's pages: one more entry names the chain. The
  * count is raised before the entry is put, so a crash between leaves a
  * count too high, which recover.c lowers, never pages freed while named.
+ *
+ * A storage whose relation is gone has nothing to copy and nobody to miss
+ * the copy: the engine copies a blob aside before it unlinks it, and
+ * renames and writes directory markers as it drops a table whose pages
+ * Postgres took with the index. Any of those failing fails the drop, which
+ * ClickHouse retries without end while the request waits on it.
  */
 static void
 pg_copy(const char* storage, const char* from, const char* to) {
@@ -146,7 +167,10 @@ pg_copy(const char* storage, const char* from, const char* to) {
     RelFileLocator dst_loc;
     Size keylen = strlen(to);
 
-    if (!open_entry(storage, from, &p, &src)) {
+    if (!open_for(storage, from, &p)) {
+        return;
+    }
+    if (!chdb_dir_lookup(&p, from, &src)) {
         missing(from);
     }
     if (!chdb_routes_find(storage, to, &dst_loc) ||
@@ -179,11 +203,6 @@ pg_copy(const char* storage, const char* from, const char* to) {
     }
 }
 
-/* The pages go with the relation Postgres unlinks; nothing is left to remove. */
-static void
-pg_remove_storage(const char* storage) {
-}
-
 const chdbBlobStore chdb_blob_pagestore = {
     .init           = chdb_routes_init,
     .storages       = chdb_routes_storages,
@@ -197,5 +216,16 @@ const chdbBlobStore chdb_blob_pagestore = {
     .remove         = pg_remove,
     .list           = pg_list,
     .copy           = pg_copy,
-    .remove_storage = pg_remove_storage,
 };
+
+/* ---- a backend reading its own index ---- */
+
+void
+chdb_pagestore_list_relation(Relation index, chdbBlobListSink sink, void* ud) {
+    ChdbPages p;
+    Listing l = { .sink = sink, .ud = ud };
+
+    if (chdb_pages_open(&p, index->rd_locator, index)) {
+        chdb_dir_list(&p, "", list_entry, &l);
+    }
+}

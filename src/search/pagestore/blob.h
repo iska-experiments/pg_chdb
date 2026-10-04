@@ -14,7 +14,11 @@
 /* A write under way, in TopMemoryContext until its commit or abort. */
 typedef struct ChdbBlobWrite ChdbBlobWrite;
 
-/* Raises if the relation at `loc` is gone. */
+/*
+ * Never raises for a relation that is gone, or an invalid `loc`: such a
+ * write is taken and its bytes dropped, as the engine's drop of a table
+ * whose pages went with its index must not fail.
+ */
 extern ChdbBlobWrite*
 chdb_blob_begin(RelFileLocator loc, const char* key);
 extern void
@@ -22,7 +26,7 @@ chdb_blob_append(ChdbBlobWrite* w, const void* buf, Size len);
 /* Publishes the blob under its key, replacing any there. Frees w even on raise. */
 extern void
 chdb_blob_commit(ChdbBlobWrite* w);
-/* Gives the pages back and frees w. Never raises. */
+/* Gives the pages back and frees w, the latter even on a raise. */
 extern void
 chdb_blob_abort(ChdbBlobWrite* w);
 
