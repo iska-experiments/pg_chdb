@@ -55,6 +55,13 @@ typedef struct chdbHelperContext {
 /* Refuse a payload larger than this rather than sizing a buffer from it. */
 #define CHDB_SETUP_MAX (16 * 1024 * 1024)
 
+/*
+ * Largest chunk of a chunked data stream either side will take, so a corrupt
+ * count cannot size a buffer: the framing of channel.h, which a program
+ * without Postgres speaking it must see too.
+ */
+#define CHDB_CHUNK_MAX (8 * 1024 * 1024)
+
 /* Exit status telling the backend execution broke rather than the query. */
 #define CHDB_HELPER_LOST_BACKEND 2
 

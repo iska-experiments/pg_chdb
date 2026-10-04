@@ -3,6 +3,8 @@
 
 #include "postgres.h"
 
+#include "setup.h" /* CHDB_CHUNK_MAX bounds a chunk */
+
 /*
  * A duplex byte channel to a process that runs chDB, with an optional pipe for
  * its error text. Two ways open one: helper.c forks chdb_helper for a COPY,
@@ -19,13 +21,11 @@
  *
  * A channel is either plain, where end of stream is end of data, or chunked:
  * uint32 byte count and that many bytes, ended by a zero count. The chunked
- * form lets one connection carry many requests.
+ * form lets one connection carry many requests, and CHDB_CHUNK_MAX of setup.h
+ * bounds a chunk.
  */
 
 #define CHDB_CHANNEL_ERR_MAX 4096
-
-/* Largest chunk either side will take, so a corrupt count cannot size a buffer. */
-#define CHDB_CHANNEL_CHUNK_MAX (8 * 1024 * 1024)
 
 typedef struct chdbChannel chdbChannel;
 

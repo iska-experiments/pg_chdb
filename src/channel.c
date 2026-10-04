@@ -280,7 +280,7 @@ next_chunk(chdbChannel* ch) {
             return false;
         }
         chdb_channel_recv_exact(ch, &ch->chunk_left, sizeof(ch->chunk_left));
-        if (ch->chunk_left > CHDB_CHANNEL_CHUNK_MAX) {
+        if (ch->chunk_left > CHDB_CHUNK_MAX) {
             ch->fail(ch, "bad chunk from chDB", 0);
         }
         ch->data_ended = ch->chunk_left == 0;
@@ -320,7 +320,7 @@ chdb_channel_write(chdbChannel* ch, const void* p, size_t len) {
     const char* at = p;
 
     while (len) {
-        uint32_t n = ch->chunked ? (uint32_t)Min(len, CHDB_CHANNEL_CHUNK_MAX)
+        uint32_t n = ch->chunked ? (uint32_t)Min(len, CHDB_CHUNK_MAX)
                                  : (uint32_t)Min(len, UINT32_MAX);
 
         if (ch->chunked) {
