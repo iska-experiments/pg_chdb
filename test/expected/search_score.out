@@ -1,0 +1,343 @@
+-- chdb.score() through the custom scan: the store ranks the rows a text
+-- search finds by an IDF-weighted overlap, idf(t) = ln((N - df(t) + 0.5) /
+-- (df(t) + 0.5) + 1) summed over the query's tokens the row has, with N the
+-- store's rows and df(t) the rows with the token. The corpus is small enough
+-- to check by hand: of six rows, 'running' is in three, 'light', 'boots',
+-- 'trail' and 'shoes' in two, 'socks' in one. Needs the worker, like
+-- search_planner; search_stub_score covers the plans with the stub client.
+\set VERBOSITY terse
+SET client_min_messages = warning;
+CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
+SET chdb_search.mask_oids = on;
+CREATE TABLE docs (id int PRIMARY KEY, body text, title text, tags text[], price numeric(10, 2));
+INSERT INTO docs VALUES
+    (1, 'Running shoes for runners', 'Shoes', '{Sport,shoes}', 49.90),
+    (2, 'Walking boots', 'Boots', '{outdoor}', 89.00),
+    (3, 'Trail running shoes, fast and light', 'Trail', '{sport,trail}', 120.00),
+    (4, 'Running socks', 'Socks', '{sport}', 5.00),
+    (5, NULL, NULL, NULL, NULL),
+    (6, 'Light trail boots', 'Light', '{outdoor,trail}', 90.00);
+CREATE INDEX docs_idx ON docs USING chdb (
+    body, title text_ops (tokenizer = 'ngrams', ngram_size = 3), tags text_array_ops, price
+);
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+-- The weight of a token by hand, from the table the store holds.
+CREATE FUNCTION pg_temp.idf(tok text) RETURNS double precision LANGUAGE sql AS $$
+    SELECT ln((n - df + 0.5) / (df + 0.5) + 1)
+      FROM (SELECT count(*) AS n, count(*) FILTER (WHERE body @@= tok) AS df FROM docs) c
+$$;
+-- As search_planner's: EXPLAIN as Postgres 18 prints it.
+CREATE FUNCTION pg_temp.explain(q text, actual bool DEFAULT false) RETURNS SETOF text
+LANGUAGE plpgsql AS $$
+DECLARE line text;
+BEGIN
+    FOR line IN EXECUTE 'EXPLAIN (COSTS OFF' || CASE WHEN actual
+        THEN ', ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF' ELSE '' END || ') ' || q LOOP
+        line := regexp_replace(line, 'rows=(\d+) loops', 'rows=\1.00 loops', 'g');
+        RETURN NEXT replace(line, 'InitPlan expr_', 'InitPlan ');
+    END LOOP;
+END $$;
+----------------------------------------------------------------------------
+-- The plan: the score is a column the store computes, with the weights of
+-- the needle's tokens as the index counts them, and ORDER BY it DESC takes
+-- the LIMIT along, ties broken by ctid
+----------------------------------------------------------------------------
+EXPLAIN (COSTS OFF)
+SELECT id, chdb.score(id) FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC LIMIT 3;
+                                                                                                                                                                     QUERY PLAN                                                                                                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@? 'running light'::text)
+         Pushed Score: score(id)
+         Pushed Limit: 3
+         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') ORDER BY _score DESC, ctid LIMIT 3
+(6 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT id, chdb.score(id) AS score FROM docs WHERE body @@? 'running light' AND chdb.score(id) > 1 ORDER BY id;
+                                                                                                                                                    QUERY PLAN                                                                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: id, (score(id))
+   Sort Key: docs.id
+   ->  Custom Scan (chdb_search) on public.docs
+         Output: id, (score(id))
+         Filter: ((score(docs.id)) > '1'::double precision)
+         Pushed Cond: (docs.body @@? 'running light'::text)
+         Pushed Score: score(docs.id)
+         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light')
+(9 rows)
+
+----------------------------------------------------------------------------
+-- The ranking: a rare token outranks a common one, and a row with two
+-- tokens outranks a row with either; equal scores come in ctid order
+----------------------------------------------------------------------------
+SELECT id, body, chdb.score(id) FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC LIMIT 3;
+ id |                body                 |   score   
+----+-------------------------------------+-----------
+  3 | Trail running shoes, fast and light | 1.7227666
+  6 | Light trail boots                   | 1.0296195
+  1 | Running shoes for runners           | 0.6931472
+(3 rows)
+
+SELECT id, body, chdb.score(id) FROM docs WHERE body @@? 'running socks light' ORDER BY chdb.score(id) DESC;
+ id |                body                 |   score   
+----+-------------------------------------+-----------
+  4 | Running socks                       | 2.2335923
+  3 | Trail running shoes, fast and light | 1.7227666
+  6 | Light trail boots                   | 1.0296195
+  1 | Running shoes for runners           | 0.6931472
+(4 rows)
+
+SELECT id FROM docs WHERE body @@@ 'running' ORDER BY chdb.score(id) DESC LIMIT 2;
+ id 
+----
+  1
+  3
+(2 rows)
+
+SELECT id, chdb.score(id) FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC OFFSET 1 LIMIT 2;
+ id |   score   
+----+-----------
+  6 | 1.0296195
+  1 | 0.6931472
+(2 rows)
+
+-- The store's weights are the formula's.
+SELECT id, chdb.score(id) AS score,
+       (pg_temp.idf('running') * (body @@= 'running')::int + pg_temp.idf('light') * (body @@= 'light')::int)::real AS by_hand
+  FROM docs WHERE body @@? 'running light' ORDER BY id;
+ id |   score   |  by_hand  
+----+-----------+-----------
+  1 | 0.6931472 | 0.6931472
+  3 | 1.7227666 | 1.7227666
+  4 | 0.6931472 | 0.6931472
+  6 | 1.0296195 | 1.0296195
+(4 rows)
+
+-- A score is per text column searched, summed; the second argument keeps one.
+EXPLAIN (COSTS OFF)
+SELECT id, chdb.score(id), chdb.score(id, 'title') FROM docs WHERE body @@? 'running light' AND title @@@ 'sho';
+                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Pushed Cond: (body @@? 'running light'::text), (title @@@ 'sho'::text)
+   Pushed Score: score(id), score(id, 'title'::text)
+   ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0) + log(5.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("title"), ['sho'], 'ngrams(3)'), 0)) AS _score1, toFloat32(log(5.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("title"), ['sho'], 'ngrams(3)'), 0)) AS _score2 FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') AND hasAllTokens("title", 'sho')
+(4 rows)
+
+SELECT id, chdb.score(id), chdb.score(id, 'body'), chdb.score(id, 'title') FROM docs WHERE body @@? 'running light' AND title @@@ 'sho';
+ id |   score   |   score   |   score   
+----+-----------+-----------+-----------
+  1 | 2.2335923 | 0.6931472 | 1.5404451
+(1 row)
+
+-- A text[] column: its elements are the tokens, lowercased as the index has them.
+EXPLAIN (COSTS OFF) SELECT id, chdb.score(id) FROM docs WHERE tags @@= 'SPORT' ORDER BY chdb.score(id) DESC LIMIT 5;
+                                                                                                                    QUERY PLAN                                                                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (tags @@= 'SPORT'::text)
+         Pushed Score: score(id)
+         Pushed Limit: 5
+         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(arrayMap(x -> lowerUTF8(x), "tags"), ['sport'], 'array'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("tags", 'SPORT') ORDER BY _score DESC, ctid LIMIT 5
+(6 rows)
+
+SELECT id, chdb.score(id) FROM docs WHERE tags @@= 'SPORT' ORDER BY chdb.score(id) DESC LIMIT 5;
+ id |   score   
+----+-----------
+  1 | 0.6931472
+  3 | 0.6931472
+  4 | 0.6931472
+(3 rows)
+
+-- A WHERE on the score filters here, on the column the store computed.
+SELECT id, chdb.score(id) FROM docs WHERE body @@? 'running light' AND chdb.score(id) > 1 ORDER BY id;
+ id |   score   
+----+-----------
+  3 | 1.7227666
+  6 | 1.0296195
+(2 rows)
+
+----------------------------------------------------------------------------
+-- Wherever else the query puts the call, the scan computes it: an order
+-- the store does not serve, a sort by two keys, an aggregate, a window, a
+-- join above the scan, a rescan with another needle
+----------------------------------------------------------------------------
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id), id LIMIT 2;
+                                                                                                                                                       QUERY PLAN                                                                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (score(id)), id
+         ->  Custom Scan (chdb_search) on docs
+               Pushed Cond: (body @@? 'running light'::text)
+               Pushed Score: score(id)
+               ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light')
+(7 rows)
+
+SELECT id FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id), id LIMIT 2;
+ id 
+----
+  1
+  4
+(2 rows)
+
+SELECT id FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC, id DESC LIMIT 2;
+ id 
+----
+  3
+  6
+(2 rows)
+
+SELECT max(chdb.score(id)), count(*) FROM docs WHERE body @@? 'running light';
+    max    | count 
+-----------+-------
+ 1.7227666 |     4
+(1 row)
+
+SELECT id, rank() OVER (ORDER BY chdb.score(id) DESC) FROM docs WHERE body @@? 'running light' ORDER BY 2, 1;
+ id | rank 
+----+------
+  3 |    1
+  6 |    2
+  1 |    3
+  4 |    3
+(4 rows)
+
+SELECT d.id, chdb.score(d.id), v.n FROM docs d JOIN (VALUES (1, 'x'), (3, 'y')) v(id, n) ON v.id = d.id WHERE d.body @@? 'running light' ORDER BY 1;
+ id |   score   | n 
+----+-----------+---
+  1 | 0.6931472 | x
+  3 | 1.7227666 | y
+(2 rows)
+
+SELECT q, d.id, d.score FROM (VALUES ('boots'), ('running')) v(q), LATERAL (SELECT id, chdb.score(id) FROM docs WHERE body @@@ v.q OFFSET 0) d ORDER BY 1, 2;
+    q    | id |   score   
+---------+----+-----------
+ boots   |  2 | 1.0296195
+ boots   |  6 | 1.0296195
+ running |  1 | 0.6931472
+ running |  3 | 0.6931472
+ running |  4 | 0.6931472
+(5 rows)
+
+SELECT *, chdb.score(id) FROM docs WHERE body @@@ 'light' ORDER BY id;
+ id |                body                 | title |      tags       | price  |   score   
+----+-------------------------------------+-------+-----------------+--------+-----------
+  3 | Trail running shoes, fast and light | Trail | {sport,trail}   | 120.00 | 1.0296195
+  6 | Light trail boots                   | Light | {outdoor,trail} |  90.00 | 1.0296195
+(2 rows)
+
+SELECT d, ctid, chdb.score(d.id) FROM docs d WHERE body @@@ 'light' ORDER BY id;
+                                   d                                    | ctid  |   score   
+------------------------------------------------------------------------+-------+-----------
+ (3,"Trail running shoes, fast and light",Trail,"{sport,trail}",120.00) | (0,3) | 1.0296195
+ (6,"Light trail boots",Light,"{outdoor,trail}",90.00)                  | (0,6) | 1.0296195
+(2 rows)
+
+-- A NULL needle from a generic plan: no statement, no rows, no counts.
+PREPARE q(text) AS SELECT id, chdb.score(id) FROM docs WHERE body @@@ $1;
+SET plan_cache_mode = force_generic_plan;
+EXPLAIN (COSTS OFF) EXECUTE q(NULL);
+                QUERY PLAN                
+------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Pushed Cond: (body @@@ $1)
+   Pushed Score: score(id)
+   ClickHouse: none: a search key is NULL
+(4 rows)
+
+EXECUTE q(NULL);
+ id | score 
+----+-------
+(0 rows)
+
+EXECUTE q('running');
+ id |   score   
+----+-----------
+  1 | 0.6931472
+  3 | 0.6931472
+  4 | 0.6931472
+(3 rows)
+
+RESET plan_cache_mode;
+DEALLOCATE q;
+----------------------------------------------------------------------------
+-- The custom scan is the only path a scoring query gets: the others would
+-- evaluate the function in Postgres, where it raises
+----------------------------------------------------------------------------
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+EXPLAIN (COSTS OFF) SELECT id, chdb.score(id) FROM docs WHERE body @@@ 'running';
+                                                                                              QUERY PLAN                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Pushed Cond: (body @@@ 'running'::text)
+   Pushed Score: score(id)
+   ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(4 rows)
+
+RESET enable_indexscan;
+SET enable_seqscan = off;
+-- Outside one it raises: without a text search to score, in a FOR UPDATE
+-- or a data-modifying statement, which recheck rows in Postgres, bound to
+-- no table, naming a column the index has no text index on, or with the
+-- custom scan turned off.
+SELECT chdb.score(id) FROM docs;
+ERROR:  chdb.score() needs a chdb index scan
+SELECT chdb.score(id) FROM docs WHERE price < 100;
+ERROR:  chdb.score() needs a chdb index scan
+SELECT chdb.score(id) FROM docs WHERE body @@@ 'running' FOR UPDATE;
+ERROR:  chdb.score() needs a chdb index scan
+UPDATE docs SET price = chdb.score(id) WHERE body @@@ 'running';
+ERROR:  chdb.score() needs a chdb index scan
+SELECT chdb.score(1);
+ERROR:  chdb.score() needs a chdb index scan
+SELECT chdb.score(id, 'price') FROM docs WHERE body @@@ 'running';
+ERROR:  chdb.score() needs a chdb index scan
+SELECT chdb.score(id, 'nope') FROM docs WHERE body @@@ 'running';
+ERROR:  chdb.score() needs a chdb index scan
+SET chdb_search.enable_custom_scan = off;
+SELECT chdb.score(id) FROM docs WHERE body @@@ 'running';
+ERROR:  chdb.score() needs a chdb index scan
+RESET chdb_search.enable_custom_scan;
+----------------------------------------------------------------------------
+-- A deleted row the store still holds does not shorten the ranking: the
+-- scan asks again with the same weights
+----------------------------------------------------------------------------
+DELETE FROM docs WHERE id = 3;
+SELECT * FROM pg_temp.explain($$SELECT id FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC LIMIT 2$$, true);
+                                                                                                                                                                       explain                                                                                                                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=2.00 loops=1)
+   ->  Custom Scan (chdb_search) on docs (actual rows=2.00 loops=1)
+         Pushed Cond: (body @@? 'running light'::text)
+         Pushed Score: score(id)
+         Pushed Limit: 2
+         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') ORDER BY _score DESC, ctid LIMIT 4
+         Store Rows: 5
+         Store Queries: 2
+(8 rows)
+
+SELECT id, chdb.score(id) FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC LIMIT 2;
+ id |   score   
+----+-----------
+  6 | 1.0296195
+  1 | 0.6931472
+(2 rows)
+
+DROP TABLE docs;
+DROP EXTENSION chdb_search;
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;
