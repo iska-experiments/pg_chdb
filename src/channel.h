@@ -107,4 +107,12 @@ chdb_channel_drain_err(chdbChannel* ch);
 extern const char*
 chdb_channel_error(chdbChannel* ch);
 
+/*
+ * Drops what differs between runs of one chDB error from the NUL-terminated
+ * `msg` of `len` bytes: the Request ID line and the version suffix. Returns the
+ * new length. For error text that arrived whole, outside a channel's capture.
+ */
+extern size_t
+chdb_channel_scrub_error(char* msg, size_t len);
+
 #endif /* CHDB_CHANNEL_H */
