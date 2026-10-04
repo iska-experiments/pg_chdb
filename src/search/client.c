@@ -176,7 +176,7 @@ read_status(chdbSearchConn* conn) {
 
     chdb_channel_recv_exact(&conn->ch, &status, sizeof(status));
     chdb_channel_recv_exact(&conn->ch, &len, sizeof(len));
-    if (len > CHDB_CHANNEL_CHUNK_MAX) {
+    if (len > CHDB_SEARCH_CHUNK_MAX) {
         lost_worker(&conn->ch, "worker sent a bad status", 0);
     }
 

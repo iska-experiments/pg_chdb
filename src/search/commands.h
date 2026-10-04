@@ -11,15 +11,15 @@
 #include "request.h"
 
 extern bool
-command_exec(int fd, const request* req);
+command_exec(int fd, const chdbSearchRequest* req);
 
 extern bool
-command_drop(int fd, const request* req);
+command_drop(int fd, const chdbSearchRequest* req);
 
 extern bool
-command_select(int fd, const request* req);
+command_select(int fd, const chdbSearchRequest* req);
 
 extern bool
-command_insert(int fd, const request* req);
+command_insert(int fd, const chdbSearchRequest* req);
 
 #endif /* CHDB_SEARCH_COMMANDS_H */

@@ -1,14 +1,13 @@
 #ifndef CHDB_SEARCH_PROTOCOL_H
 #define CHDB_SEARCH_PROTOCOL_H
 
-#include "postgres.h"
-
-#include "../channel.h"
+/* Plain C: the engine program includes this without Postgres. */
 #include "../setup.h"
 
 /*
  * The wire protocol between backends and the chdb_search worker, spoken over
- * the unix stream socket at pg_chdb/<dboid>.sock under the data directory.
+ * the unix stream socket at pg_chdb/<dboid>.sock under the data directory,
+ * and by chdb_search_engine on the socketpair end its supervisor hands it.
  * Fields are native endian. A string is a uint32 byte count followed by that
  * many bytes, unterminated.
  *
@@ -21,9 +20,10 @@
  *              chdb_helper_build_setup writes it for chdb_helper: command,
  *              limits, query and parameters. The command is CHDB_CMD_SELECT,
  *              _INSERT, _EXEC or _DROP; parameters are not supported yet.
- *   data       Native blocks in the chunked form of channel.h: a run of
- *              uint32 byte count and that many bytes, ended by a zero count.
- *              A chunk is an arbitrary slice of the stream, not a block.
+ *   data       Native blocks as a run of chunks, each a uint32 byte count of
+ *              at most CHDB_SEARCH_CHUNK_MAX and that many bytes, ended by a
+ *              zero count. A chunk is an arbitrary slice of the stream, not a
+ *              block. This is the chunked form of channel.h.
  *                CHDB_CMD_INSERT   client to worker, after the request
  *                CHDB_CMD_SELECT   worker to client, after the request
  *                EXEC, DROP        none
@@ -41,7 +41,28 @@
 #define CHDB_CMD_EXEC 'E' /* run a statement, no result rows */
 #define CHDB_CMD_DROP 'X' /* drop the index's chDB database */
 
+/* Largest chunk either side will take, so a corrupt count cannot size a buffer. */
+#define CHDB_SEARCH_CHUNK_MAX (8 * 1024 * 1024)
+
 /* Where the worker for `dboid` listens, relative to the data directory. */
 #define CHDB_SEARCH_SOCKET_FMT "pg_chdb/%u.sock"
+
+/* A decoded request. The query borrows from the frame it was decoded from. */
+typedef struct chdbSearchRequest {
+    uint32_t index;        /* the index OID */
+    chdbHelperContext ctx; /* command and limits */
+    chdbSetupStr query;
+    uint16_t nparams;
+} chdbSearchRequest;
+
+/* Decodes the `len` bytes of a request after its byte count. False if they end early.
+ */
+static inline bool
+chdb_search_decode_request(const char* frame, size_t len, chdbSearchRequest* req) {
+    chdbSetupCursor cur = { .at = frame, .end = frame + len };
+
+    return chdb_setup_take(&cur, &req->index, sizeof(req->index)) &&
+           chdb_setup_parse_head(&cur, &req->ctx, &req->query, &req->nparams);
+}
 
 #endif /* CHDB_SEARCH_PROTOCOL_H */

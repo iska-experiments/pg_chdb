@@ -20,6 +20,10 @@ PG_CONFIG   ?= pg_config
 TAP_TESTS   ?= 1
 OBJS         = $(subst .c,.o, $(wildcard src/*.c))
 
+# The programs linking libchdb, each built by a sub-make beside its sources.
+HELPER       = src/helper/chdb_helper
+ENGINE       = src/search/engine/chdb_search_engine
+
 # One jobserver sized to the machine's processors reaches every sub-make, so a
 # bare make builds with every core; a -j on the command line still wins.
 NPROC       ?= $(shell nproc --all 2>/dev/null || sysctl -n hw.ncpu)
@@ -59,7 +63,7 @@ PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chd
                -DCHC_ERR_MSG_LEN=4096
 
 # Clean up generated files.
-EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc src/helper/chdb_helper src/helper/*.o test/schedule*
+EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc test/schedule*
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -72,7 +76,7 @@ endif
 # Build against, install, uninstall a local copy of libchdb.
 ifneq ($(BUNDLE_LIBCHDB),)
 LIBCHDB_DIR = vendor/libchdb-$(LIBCHDB_VERSION)-$(OS)-$(ARCH)
-src/helper/chdb_helper: $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
+$(HELPER) $(ENGINE): $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
 ifneq ($(LIBCHDB_BUILD),static)
 install: install-libchdb
 uninstall: uninstall-libchdb
@@ -80,11 +84,11 @@ endif
 endif
 
 # Require the versioned SQL script.
-all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper src/hook/chdb_hook$(DLSUFFIX)
+all: sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX)
 
 # PGXS tracks no header dependencies, and the vendored libraries are all header.
 # *.bc compiles same sources, so needs same headers.
-$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h \
+$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h src/search/protocol.h \
                         $(wildcard src/*.h $(PGCH_DIR)/*.h $(CH_C_DIR)/*.h)
 
 # Versioned SQL script.
@@ -139,20 +143,30 @@ $(eval $(call ext_module,chdb_search,$(OBJS),CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGC
 $(CH_C_DIR)/clickhouse.h: .gitmodules
 	git submodule update --init --recursive
 
-# The only program linking libchdb, kept beside the library that starts it.
-src/helper/chdb_helper: $(wildcard src/helper/*.c) src/setup.h
-	@$(MAKE) -C $(dir $@) all LIBCHDB_DIR=$(LIBCHDB_DIR) LIBCHDB_BUILD=$(LIBCHDB_BUILD)
+# A program linking libchdb: built by a sub-make beside its sources, installed
+# into pkglibdir beside the library that starts it. Write beside the live copy
+# and rename over it: install unlinks its target first, so a COPY starting in
+# that moment finds no helper. rename leaves no such gap.
+#   $(eval $(call libchdb_program,<short name>,<path>,<extra prerequisites>))
+define libchdb_program
+$(2): $$(wildcard $$(dir $(2))*.c $$(dir $(2))*.h) $(3)
+	@$$(MAKE) -C $$(dir $$@) all LIBCHDB_DIR=$$(LIBCHDB_DIR) LIBCHDB_BUILD=$$(LIBCHDB_BUILD)
+install-$(1): $(2)
+	@to=$$(DESTDIR)$$(pkglibdir)/$$(notdir $(2)); \
+	  $$(INSTALL_PROGRAM) $$< $$$$to.new && mv -f $$$$to.new $$$$to
+uninstall-$(1):
+	rm -f $$(DESTDIR)$$(pkglibdir)/$$(notdir $(2))
+all: $(2)
+install: install-$(1)
+uninstall: uninstall-$(1)
+EXTRA_CLEAN += $(2) $$(dir $(2))*.o
+endef
 
-# Install the helper. Write beside the live copy and rename over it: install
-# unlinks its target first, so a COPY starting in that moment finds no helper.
-# rename leaves no such gap.
-install-helper: src/helper/chdb_helper
-	@to=$(DESTDIR)$(pkglibdir)/chdb_helper; \
-	  $(INSTALL_PROGRAM) $< $$to.new && mv -f $$to.new $$to
-uninstall-helper:
-	rm -f $(DESTDIR)$(pkglibdir)/chdb_helper
-install: install-helper
-uninstall: uninstall-helper
+# chdb_helper answers one COPY. The search worker forks chdb_search_engine to
+# run libchdb, so that a libchdb crash never takes the worker, and with it the
+# cluster, down.
+$(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
+$(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h))
 
 .PHONY: test/schedule$(MAX_CONCURRENT_TESTS)
 test/schedule$(MAX_CONCURRENT_TESTS): schedule = $(if $(TESTS),$(patsubst test/sql/%.sql,%,$(TESTS)),)
@@ -189,7 +203,7 @@ uninstall-libchdb:
 	rm -f $(DESTDIR)/usr/local/lib/libchdb.so
 
 .PHONY: format # Format .c and .h files to project standard in .clang-format.
-format: $(wildcard src/*.c src/*.h src/helper/*.c src/search/*.c src/search/*.h)
+format: $(wildcard src/*.c src/*.h src/helper/*.c src/search/*.c src/search/*.h src/search/engine/*.c src/search/engine/*.h)
 	@$(CLANG_FORMAT) --style=file:.clang-format -i $^
 
 .PHONY: type-table # Regenerate the data type tables of doc/chdb_hook.md.

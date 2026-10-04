@@ -17,6 +17,7 @@
 
 #include "postgres.h"
 
+#include "../channel.h"
 /* Commands: CHDB_CMD_SELECT and _INSERT of src/setup.h, plus _EXEC and _DROP. */
 #include "protocol.h"
 

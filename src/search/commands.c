@@ -14,7 +14,7 @@
 
 /* Settings and database every statement against an index needs first. */
 static char*
-prepare(const request* req) {
+prepare(const chdbSearchRequest* req) {
     char* err = chdb_search_apply_settings(&req->ctx);
 
     if (err) {
@@ -29,7 +29,7 @@ prepare(const request* req) {
 }
 
 bool
-command_exec(int fd, const request* req) {
+command_exec(int fd, const chdbSearchRequest* req) {
     char* err = prepare(req);
 
     if (!err) {
@@ -40,7 +40,7 @@ command_exec(int fd, const request* req) {
 }
 
 bool
-command_drop(int fd, const request* req) {
+command_drop(int fd, const chdbSearchRequest* req) {
     char* err = chdb_search_apply_settings(&req->ctx);
 
     if (!err) {
@@ -53,7 +53,7 @@ command_drop(int fd, const request* req) {
 }
 
 bool
-command_select(int fd, const request* req) {
+command_select(int fd, const chdbSearchRequest* req) {
     char* err = prepare(req);
     bool lost = false;
 
@@ -107,7 +107,7 @@ command_select(int fd, const request* req) {
 }
 
 bool
-command_insert(int fd, const request* req) {
+command_insert(int fd, const chdbSearchRequest* req) {
     char* err                 = prepare(req);
     chdb_insert_stream stream = NULL;
     bool live                 = false;
@@ -136,7 +136,7 @@ command_insert(int fd, const request* req) {
     for (;;) {
         uint32_t len;
 
-        if (frame_recv(fd, &len, sizeof(len)) != 1 || len > CHDB_CHANNEL_CHUNK_MAX) {
+        if (frame_recv(fd, &len, sizeof(len)) != 1 || len > CHDB_SEARCH_CHUNK_MAX) {
             in_step = false;
             break;
         }

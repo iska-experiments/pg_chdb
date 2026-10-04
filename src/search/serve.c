@@ -33,7 +33,7 @@ static char socket_path[MAXPGPATH];
 static bool
 serve_request(int fd, MemoryContext cxt) {
     MemoryContext old = MemoryContextSwitchTo(cxt);
-    request req       = { 0 };
+    chdbSearchRequest req = { 0 };
     bool keep         = false;
 
     if (request_recv(fd, &req) == 1) {

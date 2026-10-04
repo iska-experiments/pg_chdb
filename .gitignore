@@ -13,6 +13,7 @@ _build/
 /release-notes.md
 src/version.h
 /src/helper/chdb_helper
+/src/search/engine/chdb_search_engine
 /sql/*--*.sql
 !/sql/*--*--*.sql
 compile_commands.json
