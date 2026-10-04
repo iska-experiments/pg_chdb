@@ -6,7 +6,9 @@
  * offset) and the order-by values from the distance columns. xs_recheck is
  * false: ClickHouse has already applied the quals, and the heap fetch still
  * decides visibility, so rows of dead or rolled-back tuples that linger in the
- * store until VACUUM are harmless.
+ * store until VACUUM are harmless. A ctid past the heap's end, which a store
+ * the fail-safe check has not refused can still hold, is skipped rather than
+ * fetched (tid_in_heap), as heapam would raise on it.
  *
  * There is no amgetbitmap. A TIDBitmap past work_mem, or ANDed with a lossy
  * sibling, makes the bitmap heap scan recheck the quals with the Postgres
@@ -21,6 +23,7 @@
 #include "access/relscan.h"
 #include "catalog/pg_type_d.h"
 #include "pgstat.h"
+#include "storage/bufmgr.h"
 #include "utils/memutils.h"
 
 #include "../native.h"
@@ -31,6 +34,7 @@ typedef struct ScanOpaque {
     MemoryContext cxt;
     ChdbStream* stream;
     bool started;
+    BlockNumber heap_nblocks; /* of the heap as last measured, for tid_in_heap */
 } ScanOpaque;
 
 /* Reads the request's status, which raises the worker's error, and closes. */
@@ -192,7 +196,8 @@ reset_stream(ScanOpaque* so) {
         so->stream = NULL;
     }
     MemoryContextReset(so->cxt);
-    so->started = false;
+    so->started      = false;
+    so->heap_nblocks = 0;
 }
 
 void
@@ -259,6 +264,24 @@ start(IndexScanDesc scan) {
     }
 }
 
+/*
+ * Whether `tid` points into the heap. A store from before the heap lost its
+ * last pages, or copied from after they were allocated, names blocks past
+ * the heap's end, and heapam reads such a block unconditionally and raises
+ * "could not read blocks". The count is measured again when a block is at
+ * or past it: any row the store can return had its block allocated before
+ * the flush that sent it, so a fresh count only ever filters phantoms.
+ */
+static bool
+tid_in_heap(IndexScanDesc scan, ScanOpaque* so, ItemPointer tid) {
+    BlockNumber blk = ItemPointerGetBlockNumber(tid);
+
+    if (blk >= so->heap_nblocks) {
+        so->heap_nblocks = RelationGetNumberOfBlocks(scan->heapRelation);
+    }
+    return blk < so->heap_nblocks;
+}
+
 bool
 chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir) {
     ScanOpaque* so = scan->opaque;
@@ -266,9 +289,14 @@ chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir) {
     if (!so->started) {
         start(scan);
     }
-    if (!so->stream || !chdb_search_stream_next(so->stream, &scan->xs_heaptid)) {
+    if (!so->stream) {
         return false;
     }
+    do {
+        if (!chdb_search_stream_next(so->stream, &scan->xs_heaptid)) {
+            return false;
+        }
+    } while (!tid_in_heap(scan, so, &scan->xs_heaptid));
 
     scan->xs_recheck = false;
     for (int i = 0; i < scan->numberOfOrderBys; i++) {
