@@ -95,6 +95,14 @@ jobs:
         run: make -j $(nproc)
       - name: Install
         run: sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install
+      - name: Install libchdb.so for chdb_search
+        # The chdb_search worker dlopens libchdb.so inside the server, which a
+        # static build, linking libchdb.a into chdb_helper, never installs.
+        if: matrix.build == 'static'
+        run: |
+          set -eu
+          make ${{ steps.chdb.outputs.directory }}/lib/libchdb.so LIBCHDB_BUILD=dynamic LIBCHDB_VERSION=${{ matrix.libchdb }}
+          sudo BUNDLE_LIBCHDB=1 LIBCHDB_BUILD=dynamic LIBCHDB_VERSION=${{ matrix.libchdb }} make install-libchdb
       - name: Configure AWS credentials # for s3.sql round-trip test
         if: env.AWS_ROLE_TO_ASSUME != ''
         uses: aws-actions/configure-aws-credentials@v6
