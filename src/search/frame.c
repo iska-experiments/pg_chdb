@@ -18,7 +18,13 @@ append_string(StringInfo buf, const char* str) {
 }
 
 void
-chdb_search_frame_request(StringInfo buf, chdbCmdType cmd, Oid index, const char* sql) {
+chdb_search_frame_request(
+    StringInfo buf,
+    chdbCmdType cmd,
+    Oid index,
+    uint64 generation,
+    const char* sql
+) {
     uint16_t memory  = (uint16_t)chdb_max_memory;
     uint16_t threads = (uint16_t)chdb_max_threads;
     uint16_t parsers = (uint16_t)chdb_max_parsers;
@@ -26,6 +32,7 @@ chdb_search_frame_request(StringInfo buf, chdbCmdType cmd, Oid index, const char
 
     appendBinaryStringInfo(buf, (char*)&cmd, sizeof(cmd));
     appendBinaryStringInfo(buf, (char*)&index, sizeof(index));
+    appendBinaryStringInfo(buf, (char*)&generation, sizeof(generation));
     appendBinaryStringInfo(buf, (char*)&memory, sizeof(memory));
     appendBinaryStringInfo(buf, (char*)&threads, sizeof(threads));
     appendBinaryStringInfo(buf, (char*)&parsers, sizeof(parsers));

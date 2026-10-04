@@ -63,7 +63,7 @@ engine_request(chdbCmdType cmd, Oid index, const char* sql) {
         ereport(ERROR, errmsg("chdb_search: %s", dead));
     }
     initStringInfo(&buf);
-    chdb_search_frame_request(&buf, cmd, index, sql);
+    chdb_search_frame_request(&buf, cmd, index, 0, sql);
     if (!engine_send(buf.data, buf.len)) {
         ereport(ERROR, errmsg("chdb_search: %s", engine_death()));
     }

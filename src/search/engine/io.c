@@ -71,9 +71,8 @@ io_send_end(int fd) {
 }
 
 bool
-io_send_status(int fd, const char* err) {
-    uint8_t status = err ? 1 : 0;
-    uint32_t len   = err ? (uint32_t)strlen(err) : 0;
+io_send_status(int fd, uint8_t status, const char* err) {
+    uint32_t len = err ? (uint32_t)strlen(err) : 0;
 
     return io_send(fd, &status, sizeof(status)) && io_send(fd, &len, sizeof(len)) &&
            (len == 0 || io_send(fd, err, len));
@@ -104,7 +103,7 @@ recv_string(int fd, char** out, size_t* out_len) {
 
 int
 io_recv_request(int fd, request* req, bool* has_params) {
-    uint8_t head[1 + 4 + 2 + 2 + 2];
+    uint8_t head[1 + 4 + 8 + 2 + 2 + 2];
     int rc = io_recv(fd, head, sizeof(head));
 
     if (rc != 1) {
@@ -112,9 +111,10 @@ io_recv_request(int fd, request* req, bool* has_params) {
     }
     req->cmd = head[0];
     memcpy(&req->index, head + 1, 4);
-    memcpy(&req->max_memory, head + 5, 2);
-    memcpy(&req->max_threads, head + 7, 2);
-    memcpy(&req->max_parsers, head + 9, 2);
+    memcpy(&req->generation, head + 5, 8);
+    memcpy(&req->max_memory, head + 13, 2);
+    memcpy(&req->max_threads, head + 15, 2);
+    memcpy(&req->max_parsers, head + 17, 2);
 
     if (recv_string(fd, &req->query, &req->query_len) != 1) {
         return -1;

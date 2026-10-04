@@ -17,6 +17,7 @@
 /* One index's rows buffered by the current transaction. */
 typedef struct Pending {
     Oid indexoid;
+    uint64 generation; /* of the metapage when the first row was buffered */
     ChdbRowWriter* rw;
     char* table;   /* idx_<oid>.t_<generation> */
     char* collist; /* (ctid, xmin, ...) for the INSERT */

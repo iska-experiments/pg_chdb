@@ -36,7 +36,9 @@ serve_request(int fd) {
 
     if (io_recv_request(fd, &req, &has_params) == 1) {
         if (has_params) {
-            keep = io_send_status(fd, "query parameters are not supported");
+            keep = io_send_status(
+                fd, CHDB_STATUS_ERROR, "query parameters are not supported"
+            );
         } else {
             switch (req.cmd) {
             case CHDB_CMD_EXEC:
@@ -53,7 +55,7 @@ serve_request(int fd) {
                 break;
             default:
                 /* Unknown commands carry unknown data, so the framing is gone. */
-                io_send_status(fd, "unknown command");
+                io_send_status(fd, CHDB_STATUS_ERROR, "unknown command");
                 break;
             }
         }

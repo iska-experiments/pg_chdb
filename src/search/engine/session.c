@@ -99,19 +99,64 @@ session_apply_settings(const request* req) {
     return apply_settings(req->max_memory, req->max_threads, req->max_parsers);
 }
 
-char*
-session_prepare(const request* req) {
-    char* err = session_apply_settings(req);
+/*
+ * Whether the table of `req`'s generation exists. The one-line text answer
+ * of EXISTS is read rather than a Native block.
+ */
+static char*
+table_exists(const request* req, bool* exists) {
     char* sql = NULL;
 
+    if (asprintf(
+            &sql, "EXISTS TABLE " CHDB_STORE_TABLE_FMT, req->index, req->generation
+        ) < 0) {
+        return strdup("out of memory");
+    }
+
+    chdb_result* res = chdb_query_n(*session_conn, sql, strlen(sql), "TSV", 3);
+    const char* err  = chdb_result_error(res);
+    char* out        = err ? session_clean_error(err) : NULL;
+
+    *exists = !err && chdb_result_length(res) > 0 && chdb_result_buffer(res)[0] == '1';
+    chdb_destroy_query_result(res);
+    free(sql);
+
+    return out;
+}
+
+char*
+session_prepare(const request* req, bool* no_store) {
+    char* err   = session_apply_settings(req);
+    char* sql   = NULL;
+    bool exists = false;
+
+    *no_store = false;
     if (err) {
         return err;
     }
-    if (asprintf(&sql, "CREATE DATABASE IF NOT EXISTS idx_%u", req->index) < 0) {
+    if (asprintf(&sql, "CREATE DATABASE IF NOT EXISTS " CHDB_STORE_DB_FMT, req->index) <
+        0) {
         return strdup("out of memory");
     }
     err = session_run(sql, strlen(sql));
     free(sql);
+    if (err || req->generation == 0) {
+        return err;
+    }
+
+    /* A backend names the generation its metapage holds; the store must have it. */
+    err = table_exists(req, &exists);
+    if (!err && !exists) {
+        *no_store = true;
+        if (asprintf(
+                &err,
+                "the store has no table " CHDB_STORE_TABLE_FMT,
+                req->index,
+                req->generation
+            ) < 0) {
+            err = strdup("out of memory");
+        }
+    }
 
     return err;
 }

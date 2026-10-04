@@ -13,8 +13,11 @@
 
 /* Sends the status and frees the error. */
 static bool
-reply(int fd, char* err) {
-    bool ok = io_send_status(fd, err);
+reply(int fd, char* err, bool no_store) {
+    uint8_t status = !err       ? CHDB_STATUS_OK
+                     : no_store ? CHDB_STATUS_NO_STORE
+                                : CHDB_STATUS_ERROR;
+    bool ok        = io_send_status(fd, status, err);
 
     free(err);
 
@@ -23,13 +26,14 @@ reply(int fd, char* err) {
 
 bool
 command_exec(int fd, const request* req) {
-    char* err = session_prepare(req);
+    bool no_store;
+    char* err = session_prepare(req, &no_store);
 
     if (!err) {
         err = session_run(req->query, req->query_len);
     }
 
-    return reply(fd, err);
+    return reply(fd, err, no_store);
 }
 
 bool
@@ -47,12 +51,13 @@ command_drop(int fd, const request* req) {
         }
     }
 
-    return reply(fd, err);
+    return reply(fd, err, false);
 }
 
 bool
 command_select(int fd, const request* req) {
-    char* err = session_prepare(req);
+    bool no_store;
+    char* err = session_prepare(req, &no_store);
     bool lost = false;
 
     if (!err) {
@@ -94,12 +99,13 @@ command_select(int fd, const request* req) {
     /* A failure after data was sent still ends the data and reports itself. */
     bool ok = !lost && io_send_end(fd);
 
-    return reply(fd, err) && ok;
+    return reply(fd, err, no_store) && ok;
 }
 
 bool
 command_insert(int fd, const request* req) {
-    char* err                 = session_prepare(req);
+    bool no_store;
+    char* err                 = session_prepare(req, &no_store);
     chdb_insert_stream stream = NULL;
     bool live                 = false;
     char* buf                 = NULL;
@@ -177,5 +183,5 @@ command_insert(int fd, const request* req) {
         return false;
     }
 
-    return reply(fd, err);
+    return reply(fd, err, no_store);
 }

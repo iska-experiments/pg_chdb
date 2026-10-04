@@ -2,6 +2,7 @@
 #define CHDB_SEARCH_PROTOCOL_H
 
 /* Plain C: the engine program includes this without Postgres. */
+#include <inttypes.h>
 #include <stdint.h>
 
 #include "../setup.h"
@@ -14,9 +15,15 @@
  *
  * A connection carries one request at a time and can carry many in turn.
  *
- *   request    the setup payload of src/setup.h with the index OID added:
+ *   request    the setup payload of src/setup.h with the index OID and the
+ *              store generation added:
  *                uint8   command: CHDB_CMD_SELECT, _INSERT, _EXEC or _DROP
  *                uint32  index OID
+ *                uint64  store generation: the metapage generation of the
+ *                        table the statement works on, which the worker
+ *                        checks exists first; zero for a statement that
+ *                        creates that table, works in no table, or cleans
+ *                        up after an abort
  *                uint16  max_memory, max_threads, max_parsers, as in setup.h
  *                string  query
  *                uint16  parameter count, always zero for now
@@ -27,7 +34,9 @@
  *                CHDB_CMD_SELECT   worker to client, after the request
  *                EXEC, DROP        none
  *   status     worker to client, last frame of every request:
- *                uint8   zero for success
+ *                uint8   CHDB_STATUS_OK, _ERROR, or _NO_STORE when the
+ *                        request's generation names a table the store
+ *                        does not have, so the index needs a REINDEX
  *                string  error text, empty on success (a debug command's answer)
  *
  * An INSERT the worker cannot run is still read to its end-of-data chunk so
@@ -53,8 +62,21 @@
 #define CHDB_CMD_ENGINE_PID 'P'
 #define CHDB_CMD_ENGINE_KILL 'K'
 
+/* The status byte that ends every request. */
+#define CHDB_STATUS_OK 0
+#define CHDB_STATUS_ERROR 1
+#define CHDB_STATUS_NO_STORE 2
+
 /* Largest chunk either side will take, so a corrupt count cannot size a buffer. */
 #define CHDB_SEARCH_CHUNK_MAX (8 * 1024 * 1024)
+
+/*
+ * The layout of a store, which ddl.c writes and the engine checks: one chDB
+ * database per index, idx_<oid>, holding one MergeTree table per build,
+ * t_<generation>, named after the index's metapage generation.
+ */
+#define CHDB_STORE_DB_FMT "idx_%u"
+#define CHDB_STORE_TABLE_FMT CHDB_STORE_DB_FMT ".t_%" PRIu64
 
 /*
  * The store directory under the data directory: a <dboid> subdirectory holding

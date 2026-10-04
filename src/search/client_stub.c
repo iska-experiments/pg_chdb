@@ -62,17 +62,32 @@ chdb_search_close(chdbSearchConn* conn) {
 }
 
 void
-chdb_search_exec(chdbSearchConn* conn, Oid indexoid, const char* sql) {
+chdb_search_exec(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+) {
     elog(DEBUG2, "chdb_search stub: exec");
 }
 
 void
-chdb_search_select(chdbSearchConn* conn, Oid indexoid, const char* sql) {
+chdb_search_select(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+) {
     open_stream(conn, "select");
 }
 
 void
-chdb_search_insert(chdbSearchConn* conn, Oid indexoid, const char* sql) {
+chdb_search_insert(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+) {
     open_stream(conn, "insert");
 }
 

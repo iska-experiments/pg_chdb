@@ -260,7 +260,9 @@ SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 
 RESET enable_indexscan;
 SET enable_seqscan = off;
--- A search ClickHouse cannot run raises, rather than finding nothing.
+-- A search whose table the store no longer has raises, naming the index and
+-- the REINDEX that rebuilds it, rather than finding nothing: the worker
+-- checks the generation every request carries before running it.
 SELECT chdb_search_exec(format('DROP TABLE %s', :'tbl'));
  chdb_search_exec 
 ------------------
@@ -268,7 +270,7 @@ SELECT chdb_search_exec(format('DROP TABLE %s', :'tbl'));
 (1 row)
 
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
-ERROR:  chdb_search: error executing chDB query
+ERROR:  chdb index "prod_idx" does not match its store
 REINDEX INDEX prod_idx;
 SELECT chdb_search_store_table('prod_idx') AS tbl \gset
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;

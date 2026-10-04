@@ -121,8 +121,11 @@ extern ChdbColumn*
 chdb_search_columns(Relation index);
 
 /* ---- ddl.c ---- */
+/* `idx_<oid>.t_<generation>`, for the index's current generation or a given one. */
 extern char*
 chdb_search_table_name(Relation index);
+extern char*
+chdb_search_table_of(Oid indexoid, uint64 generation);
 extern char*
 chdb_search_create_sql(Relation index);
 extern char*
@@ -131,10 +134,15 @@ extern char*
 chdb_search_column_list(const ChdbColumn* cols, int natts);
 extern void
 chdb_search_create_store(Relation index);
+/*
+ * Run one statement on a connection of their own. `generation` is that of
+ * the table the statement works on, which the worker checks exists, or zero
+ * (see client.h).
+ */
 extern void
-chdb_search_run(Oid indexoid, const char* sql);
+chdb_search_run(Oid indexoid, uint64 generation, const char* sql);
 extern void
-chdb_search_try_run(Oid indexoid, const char* sql);
+chdb_search_try_run(Oid indexoid, uint64 generation, const char* sql);
 extern void
 chdb_search_warn_failure(Oid indexoid);
 
@@ -264,10 +272,17 @@ typedef struct ChdbStream {
 } ChdbStream;
 
 extern ChdbStream*
-chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext cxt);
+chdb_search_stream_open(
+    Oid indexoid,
+    uint64 generation,
+    const char* sql,
+    int ndist,
+    MemoryContext cxt
+);
 extern ChdbStream*
 chdb_search_stream_query(
     Oid indexoid,
+    uint64 generation,
     const char* sql,
     const Oid* types,
     int ncols,

@@ -15,6 +15,7 @@
 typedef struct request {
     chdbCmdType cmd;
     uint32_t index;
+    uint64_t generation; /* of the table the query works on, zero for none */
     uint16_t max_memory;
     uint16_t max_threads;
     uint16_t max_parsers;
@@ -36,9 +37,9 @@ io_send_chunks(int fd, const char* buf, size_t len);
 extern bool
 io_send_end(int fd);
 
-/* The status frame: success when `err` is NULL. */
+/* The status frame: `status` is CHDB_STATUS_OK when `err` is NULL. */
 extern bool
-io_send_status(int fd, const char* err);
+io_send_status(int fd, uint8_t status, const char* err);
 
 /* 1 for a request, 0 when the supervisor closed between requests, -1 on a bad one. */
 extern int

@@ -13,9 +13,11 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "access/xact.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "storage/latch.h"
+#include "utils/lsyscache.h"
 #include "utils/timestamp.h"
 #include "utils/wait_event.h"
 
@@ -30,6 +32,7 @@
 struct chdbSearchConn {
     chdbChannel ch;
     chdbCmdType cmd;   /* of the request under way, so finish knows which end it is */
+    Oid index;         /* of the request under way, for the no-store error */
     const char* query; /* for error context */
 };
 
@@ -143,16 +146,23 @@ chdb_search_close(chdbSearchConn* conn) {
 
 /* Sends the request frame of protocol.h. */
 static void
-send_request(chdbSearchConn* conn, chdbCmdType cmd, Oid index, const char* sql) {
+send_request(
+    chdbSearchConn* conn,
+    chdbCmdType cmd,
+    Oid index,
+    uint64 generation,
+    const char* sql
+) {
     StringInfoData buf;
 
     conn->cmd           = cmd;
+    conn->index         = index;
     conn->query         = sql;
     conn->ch.chunk_left = 0;
     conn->ch.data_ended = false;
 
     initStringInfo(&buf);
-    chdb_search_frame_request(&buf, cmd, index, sql);
+    chdb_search_frame_request(&buf, cmd, index, generation, sql);
     chdb_channel_send_exact(&conn->ch, buf.data, buf.len);
     pfree(buf.data);
 }
@@ -176,8 +186,21 @@ read_status(chdbSearchConn* conn) {
 
     chdb_channel_recv_exact(&conn->ch, detail, len);
     detail[len] = '\0';
-    if (status == 0) {
+    if (status == CHDB_STATUS_OK) {
         return detail;
+    }
+    if (status == CHDB_STATUS_NO_STORE) {
+        /* Outside a transaction (a commit callback) the name cannot be looked up. */
+        char* name = IsTransactionState() ? get_rel_name(conn->index) : NULL;
+
+        ereport(
+            ERROR,
+            errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+            name ? errmsg("chdb index \"%s\" does not match its store", name)
+                 : errmsg("chdb index %u does not match its store", conn->index),
+            errdetail("%s", detail),
+            errhint("REINDEX INDEX rebuilds the store.")
+        );
     }
     ereport(
         ERROR,
@@ -191,25 +214,40 @@ read_status(chdbSearchConn* conn) {
 }
 
 void
-chdb_search_exec(chdbSearchConn* conn, Oid indexoid, const char* sql) {
-    send_request(conn, CHDB_CMD_EXEC, indexoid, sql);
+chdb_search_exec(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+) {
+    send_request(conn, CHDB_CMD_EXEC, indexoid, generation, sql);
     read_status(conn);
 }
 
 void
 chdb_search_drop(chdbSearchConn* conn, Oid indexoid) {
-    send_request(conn, CHDB_CMD_DROP, indexoid, "DROP");
+    send_request(conn, CHDB_CMD_DROP, indexoid, 0, "DROP");
     read_status(conn);
 }
 
 void
-chdb_search_select(chdbSearchConn* conn, Oid indexoid, const char* sql) {
-    send_request(conn, CHDB_CMD_SELECT, indexoid, sql);
+chdb_search_select(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+) {
+    send_request(conn, CHDB_CMD_SELECT, indexoid, generation, sql);
 }
 
 void
-chdb_search_insert(chdbSearchConn* conn, Oid indexoid, const char* sql) {
-    send_request(conn, CHDB_CMD_INSERT, indexoid, sql);
+chdb_search_insert(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+) {
+    send_request(conn, CHDB_CMD_INSERT, indexoid, generation, sql);
 }
 
 chdbChannel*
@@ -232,14 +270,14 @@ chdb_search_finish(chdbSearchConn* conn) {
 
 int
 chdb_search_engine_pid(chdbSearchConn* conn) {
-    send_request(conn, CHDB_CMD_ENGINE_PID, 0, "");
+    send_request(conn, CHDB_CMD_ENGINE_PID, 0, 0, "");
 
     return atoi(read_status(conn));
 }
 
 int
 chdb_search_engine_kill(chdbSearchConn* conn, int signo) {
-    send_request(conn, CHDB_CMD_ENGINE_KILL, 0, psprintf("%d", signo));
+    send_request(conn, CHDB_CMD_ENGINE_KILL, 0, 0, psprintf("%d", signo));
 
     return atoi(read_status(conn));
 }

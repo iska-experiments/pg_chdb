@@ -64,7 +64,7 @@ slurp_request(chdbChannel* client, StringInfo raw, int* query_at, bool* has_para
     int skip;
     uint16_t nparams;
 
-    slurp(client, raw, 1 + 4 + 2 + 2 + 2);
+    slurp(client, raw, 1 + 4 + 8 + 2 + 2 + 2);
     slurp_string(client, raw, query_at);
     slurp(client, raw, sizeof(nparams));
     memcpy(&nparams, raw->data + raw->len - sizeof(nparams), sizeof(nparams));

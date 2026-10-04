@@ -13,11 +13,18 @@
 #include "../setup.h"
 
 /*
- * Appends a whole request to `buf`: `cmd` against index `index`, with the
- * chDB settings of the GUCs, carrying `sql` and no parameters. Raises if
- * the frame would exceed what the other side takes.
+ * Appends a whole request to `buf`: `cmd` against index `index` and store
+ * generation `generation`, with the chDB settings of the GUCs, carrying
+ * `sql` and no parameters. Raises if the frame would exceed what the other
+ * side takes.
  */
 extern void
-chdb_search_frame_request(StringInfo buf, chdbCmdType cmd, Oid index, const char* sql);
+chdb_search_frame_request(
+    StringInfo buf,
+    chdbCmdType cmd,
+    Oid index,
+    uint64 generation,
+    const char* sql
+);
 
 #endif /* CHDB_SEARCH_FRAME_H */

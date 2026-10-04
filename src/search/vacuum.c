@@ -32,7 +32,13 @@ typedef struct VacuumStats {
 } VacuumStats;
 
 static void
-delete_batch(Oid indexoid, const char* table, uint64* dead, size_t n) {
+delete_batch(
+    Oid indexoid,
+    uint64 generation,
+    const char* table,
+    uint64* dead,
+    size_t n
+) {
     StringInfoData buf;
 
     initStringInfo(&buf);
@@ -41,7 +47,7 @@ delete_batch(Oid indexoid, const char* table, uint64* dead, size_t n) {
         appendStringInfo(&buf, "%s" UINT64_FORMAT, i ? "," : "", dead[i]);
     }
     appendStringInfoChar(&buf, ')');
-    chdb_search_run(indexoid, buf.data);
+    chdb_search_run(indexoid, generation, buf.data);
 }
 
 IndexBulkDeleteResult*
@@ -76,11 +82,12 @@ chdb_search_ambulkdelete(
     }
     old = MemoryContextSwitchTo(cxt);
 
-    char* table = chdb_search_table_name(index);
+    uint64 generation = chdb_meta_generation(index);
+    char* table       = chdb_search_table_of(oid, generation);
 
     /* Read everything before deleting: one connection cannot do both. */
     ChdbStream* s = chdb_search_stream_open(
-        oid, chdb_search_build_select(index, NULL, 0, NULL, 0, -1), 0, cxt
+        oid, generation, chdb_search_build_select(index, NULL, 0, NULL, 0, -1), 0, cxt
     );
 
     while (chdb_search_stream_next(s, &tid)) {
@@ -98,7 +105,7 @@ chdb_search_ambulkdelete(
     chdb_search_stream_close(s);
 
     for (size_t i = 0; i < ndead; i += DELETE_BATCH) {
-        delete_batch(oid, table, dead + i, Min(DELETE_BATCH, ndead - i));
+        delete_batch(oid, generation, table, dead + i, Min(DELETE_BATCH, ndead - i));
         vacuum_delay_point(false);
     }
     vs->base.tuples_removed += ndead;
@@ -174,8 +181,10 @@ sweep_tables(Relation index) {
     List* stale       = NIL;
     ListCell* lc;
 
+    /* Cleanup names no generation: it must run with the current table gone too. */
     ChdbStream* s = chdb_search_stream_query(
         oid,
+        0,
         psprintf(
             "SELECT name FROM system.tables WHERE database = 'idx_%u' "
             "AND name LIKE 't\\\\_%%'",
@@ -199,7 +208,7 @@ sweep_tables(Relation index) {
 
     foreach (lc, stale) {
         chdb_search_try_run(
-            oid, psprintf("DROP TABLE IF EXISTS idx_%u.%s", oid, (char*)lfirst(lc))
+            oid, 0, psprintf("DROP TABLE IF EXISTS idx_%u.%s", oid, (char*)lfirst(lc))
         );
     }
     MemoryContextSwitchTo(old);
@@ -227,9 +236,15 @@ chdb_search_amvacuumcleanup(IndexVacuumInfo* info, IndexBulkDeleteResult* stats)
         double ratio = chdb_search_index_optimize_ratio(info->index);
 
         if (vs->base.tuples_removed / vs->scanned >= ratio) {
+            uint64 generation = chdb_meta_generation(info->index);
+
             chdb_search_run(
                 RelationGetRelid(info->index),
-                psprintf("OPTIMIZE TABLE %s FINAL", chdb_search_table_name(info->index))
+                generation,
+                psprintf(
+                    "OPTIMIZE TABLE %s FINAL",
+                    chdb_search_table_of(RelationGetRelid(info->index), generation)
+                )
             );
         }
     }

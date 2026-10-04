@@ -65,11 +65,12 @@ find_pending(Relation index) {
     MemoryContext old = MemoryContextSwitchTo(TopTransactionContext);
     Pending* p        = palloc0(sizeof(*p));
 
-    p->indexoid = RelationGetRelid(index);
-    p->table    = chdb_search_table_name(index);
-    p->rw       = chdb_rowwriter_new(index);
-    p->collist  = chdb_rowwriter_column_list(p->rw);
-    pending     = lappend(pending, p);
+    p->indexoid   = RelationGetRelid(index);
+    p->generation = chdb_meta_generation(index);
+    p->table      = chdb_search_table_of(p->indexoid, p->generation);
+    p->rw         = chdb_rowwriter_new(index);
+    p->collist    = chdb_rowwriter_column_list(p->rw);
+    pending       = lappend(pending, p);
     MemoryContextSwitchTo(old);
     return p;
 }
