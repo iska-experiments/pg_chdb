@@ -30,7 +30,7 @@
  *     tags Array(Nullable(String)), author Nullable(String),
  *     INDEX body_idx body TYPE text(tokenizer = ngrams(3),
  *       preprocessor = lowerUTF8(body)),
- *     INDEX tags_idx tags TYPE text(tokenizer = array))
+ *     INDEX tags_idx tags TYPE text(tokenizer = array, preprocessor = lowerUTF8(tags)))
  *     ENGINE = MergeTree ORDER BY ctid
  *   INSERT INTO idx_16401.t (ctid, xmin, body, tags, author)
  *   SELECT ctid FROM idx_16401.t WHERE hasAllTokens(body, 'running shoes')
