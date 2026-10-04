@@ -31,6 +31,17 @@ CREATE FUNCTION chdb_search_store_table(regclass) RETURNS TEXT
 AS 'MODULE_PATHNAME', 'chdb_search_debug_store_table'
 LANGUAGE C STRICT;
 
+-- The metapage of a chdb index, which ties it to its store: the magic (the
+-- bytes "CHDS" as a number), the version, the generation that names the
+-- store table, and the WAL position of the last flush, which the store's
+-- meta table must match for a scan to trust it.
+CREATE FUNCTION chdb_search_metapage(
+    regclass,
+    OUT magic bigint, OUT version integer, OUT generation text, OUT flushed_lsn pg_lsn
+) RETURNS record
+AS 'MODULE_PATHNAME', 'chdb_search_debug_metapage'
+LANGUAGE C STRICT;
+
 -- The process that runs libchdb for this database's worker; NULL until a
 -- request has started it.
 CREATE FUNCTION chdb_search_engine_pid() RETURNS INTEGER
@@ -47,6 +58,7 @@ REVOKE EXECUTE ON FUNCTION chdb_search_drop() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_query(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_copy_to(regclass, text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_store_table(regclass) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION chdb_search_metapage(regclass) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_engine_pid() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_debug_kill_engine(integer) FROM PUBLIC;
 

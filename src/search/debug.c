@@ -7,12 +7,15 @@
 #include "postgres.h"
 
 #include "access/genam.h"
+#include "access/htup_details.h"
 #include "access/table.h"
 #include "catalog/pg_class.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
+#include "utils/pg_lsn.h"
 #include "utils/rel.h"
 
 /* Type mapping declarations; native.c is the TU carrying the implementation. */
@@ -151,6 +154,43 @@ chdb_search_debug_store_table(PG_FUNCTION_ARGS) {
     index_close(index, AccessShareLock);
 
     PG_RETURN_TEXT_P(cstring_to_text(table));
+}
+
+/*
+ * The metapage of a chdb index: the magic, version, generation and WAL
+ * position of the last flush (meta.c), as a row of the function's result type.
+ */
+PG_FUNCTION_INFO_V1(chdb_search_debug_metapage);
+Datum
+chdb_search_debug_metapage(PG_FUNCTION_ARGS) {
+    Oid indexoid = PG_GETARG_OID(0);
+    TupleDesc desc;
+    ChdbMetaPageData meta;
+    Datum values[4];
+    bool nulls[4] = { false, false, false, false };
+
+    require_superuser();
+    if (!chdb_search_is_index(indexoid)) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_WRONG_OBJECT_TYPE),
+            errmsg("\"%s\" is not a chdb index", get_rel_name(indexoid))
+        );
+    }
+    if (get_call_result_type(fcinfo, NULL, &desc) != TYPEFUNC_COMPOSITE) {
+        elog(ERROR, "chdb_search: the metapage function must return a row");
+    }
+
+    Relation index = index_open(indexoid, AccessShareLock);
+
+    chdb_meta_read(index, &meta);
+    index_close(index, AccessShareLock);
+    values[0] = Int64GetDatum((int64)meta.magic);
+    values[1] = Int32GetDatum((int32)meta.version);
+    values[2] = CStringGetTextDatum(psprintf(UINT64_FORMAT, meta.generation));
+    values[3] = LSNGetDatum((XLogRecPtr)meta.flushed_lsn);
+
+    PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(desc, values, nulls)));
 }
 
 /* The pid of the worker's engine process, or NULL when none runs yet. */
