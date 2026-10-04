@@ -29,6 +29,7 @@ jobs:
       BUNDLE_LIBCHDB: ${{ case(matrix.pg.os == 'linux' || matrix.build == 'static', '1', '') }}
       LIBCHDB_BUILD: ${{ matrix.build }}
       MAX_CONCURRENT_TESTS: 10
+      WALG_VERSION: v3.0.9
       AWS_ROLE_TO_ASSUME: ${{ secrets.aws_role_to_assume }}
     steps:
       - name: Checkout the Repository
@@ -97,6 +98,22 @@ jobs:
           sudo cp ${{ steps.chdb.outputs.directory }}/include/chdb.* /usr/local/include
           sudo install_name_tool -id /usr/local/lib/libchdb.so /usr/local/lib/libchdb.so
           sudo codesign -f -s - /usr/local/lib/libchdb.so
+      # The replication tests back up a cluster with WAL-G when its binary is
+      # on the PATH, and skip without it. The release is one static binary.
+      - name: Cache WAL-G
+        id: cache-walg
+        uses: actions/cache@v6
+        with:
+          key: wal-g-${{ env.WALG_VERSION }}-${{ runner.os }}-${{ matrix.pg.arch }}
+          path: ~/.local/bin/wal-g
+      - name: Install WAL-G
+        if: steps.cache-walg.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          curl -sSL https://github.com/wal-g/wal-g/releases/download/$WALG_VERSION/wal-g-pg-24.04-${{ matrix.pg.arch }}.tar.gz | tar xz -C ~/.local/bin
+          mv ~/.local/bin/wal-g-pg-24.04-${{ matrix.pg.arch }} ~/.local/bin/wal-g
+      - name: Put WAL-G on the PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Build
         run: make -j $(nproc)
       # chdb-core's static archive keeps only the function objects its link
