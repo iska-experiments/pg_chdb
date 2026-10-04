@@ -7,7 +7,10 @@
 override CFLAGS  += -Wall -Werror -O2
 
 ifneq ($(LIBCHDB_DIR),)
-    override LIBCHDB_DIR := $(TOP)/$(LIBCHDB_DIR)
+    # Relative to the repository root unless absolute.
+    ifeq ($(filter /%,$(LIBCHDB_DIR)),)
+        override LIBCHDB_DIR := $(TOP)/$(LIBCHDB_DIR)
+    endif
     override LDFLAGS += -L$(LIBCHDB_DIR)/lib
     override CFLAGS  += -I$(LIBCHDB_DIR)/include
 else

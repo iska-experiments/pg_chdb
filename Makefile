@@ -87,6 +87,14 @@ install: install-libchdb
 uninstall: uninstall-libchdb
 endif
 endif
+# The engine keeps its store through libchdb's callback object storage
+# (chdb_register_object_storage), which the releases after v26.9.0 gain.
+# Until the release the helper builds against carries it, the engine builds
+# against another tree: a directory holding include/chdb.h and
+# lib/libchdb.so, absolute or relative to this directory. Both programs load
+# libchdb.so by its soname, so the server's library path decides which
+# library each runs on; the engine checks for the API when it starts.
+ENGINE_LIBCHDB_DIR ?= $(LIBCHDB_DIR)
 
 SEARCH_VERSION := $(shell sed -n "s/^default_version *= *'\(.*\)'/\1/p" chdb_search.control)
 SEARCH_MODULE  := src/search/chdb_search$(DLSUFFIX)
@@ -147,14 +155,15 @@ endef
 $(CH_C_DIR)/clickhouse.h: .gitmodules
 	git submodule update --init --recursive
 
-# A program linking libchdb: built by a sub-make beside its sources, installed
-# into pkglibdir beside the library that starts it. Write beside the live copy
-# and rename over it: install unlinks its target first, so a COPY starting in
-# that moment finds no helper. rename leaves no such gap.
-#   $(eval $(call libchdb_program,<short name>,<path>,<extra prerequisites>))
+# A program linking libchdb: built by a sub-make beside its sources against
+# the libchdb tree named, installed into pkglibdir beside the library that
+# starts it. Write beside the live copy and rename over it: install unlinks
+# its target first, so a COPY starting in that moment finds no helper. rename
+# leaves no such gap.
+#   $(eval $(call libchdb_program,<short name>,<path>,<extra prerequisites>,<libchdb dir>))
 define libchdb_program
 $(2): $$(wildcard $$(dir $(2))*.c $$(dir $(2))*.h) $(3)
-	@$$(MAKE) -C $$(dir $$@) all LIBCHDB_DIR=$$(LIBCHDB_DIR) LIBCHDB_BUILD=$$(LIBCHDB_BUILD)
+	@$$(MAKE) -C $$(dir $$@) all LIBCHDB_DIR=$(4) LIBCHDB_BUILD=$$(LIBCHDB_BUILD)
 install-$(1): $(2)
 	@to=$$(DESTDIR)$$(pkglibdir)/$$(notdir $(2)); \
 	  $$(INSTALL_PROGRAM) $$< $$$$to.new && mv -f $$$$to.new $$$$to
@@ -167,7 +176,7 @@ EXTRA_CLEAN += $(2) $$(dir $(2))*.o
 endef
 
 # chdb_helper answers one COPY.
-$(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
+$(eval $(call libchdb_program,helper,$(HELPER),src/setup.h,$(LIBCHDB_DIR)))
 
 # The chdb_search extension: the search worker, its clients and the chdb index
 # access method, with the chdb_search_engine the worker forks to run libchdb,
@@ -184,7 +193,7 @@ ifeq ($(shell test $(VERSION_NUM) -ge 170000 && echo yes),yes)
 # come last.
 SEARCH_SQL_PARTS := sql/chdb_search_query.sql sql/chdb_search_opclass.sql
 $(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB),$(SEARCH_SQL_PARTS)))
-$(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h))
+$(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h,$(ENGINE_LIBCHDB_DIR)))
 # The chdb_vector extension: pgvector operator classes for the access
 # method. A plain PGXS module, it needs neither libchdb nor pgvector's
 # headers to build, only pgvector installed to CREATE EXTENSION.
