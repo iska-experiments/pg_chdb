@@ -36,9 +36,10 @@ PG_FUNCTION_INFO_V1(chdb_search_handler);
 
 /*
  * The planner asks what a scan costs before it knows the query is cheap in
- * ClickHouse. A search qual is a round trip plus a result proportional to the
- * matches, which are streamed without touching index pages, so the generic
- * page cost is scaled down; an unqualified scan stays at the generic cost.
+ * ClickHouse. A search qual or an order is a round trip plus a result
+ * proportional to the matches, which are streamed without touching index
+ * pages, so the generic page cost is scaled down; an unqualified scan stays
+ * at the generic cost.
  */
 void
 chdb_search_costestimate(
@@ -78,7 +79,8 @@ chdb_search_costestimate(
         return;
     }
 costed:
-    if (path->indexclauses != NIL) {
+    /* Any scan that sends a statement, by a key or by an order, pays the trip. */
+    if (path->indexclauses != NIL || path->indexorderbys != NIL) {
         costs.indexStartupCost += random_page_cost;
         costs.indexTotalCost = costs.indexStartupCost +
                                0.1 * (costs.indexTotalCost - costs.indexStartupCost);
