@@ -1,6 +1,7 @@
--- Tests of the chdb index access method against the stub worker client
--- (make CHDB_SEARCH_STUB=1): every statement the access method generates is
--- logged at DEBUG1, and the stub accepts it and returns no rows.
+-- Tests of the statements the chdb index access method generates, logged at
+-- DEBUG1. The output is the same with the worker and with the stub client
+-- (make CHDB_SEARCH_STUB=1), which accepts everything and returns no rows: rows
+-- found through the index are discarded here and checked by search_e2e.
 \set VERBOSITY terse
 CREATE EXTENSION chdb_search;
 SET chdb_search.mask_oids = on;
@@ -95,15 +96,9 @@ CREATE INDEX docs_idx ON docs USING chdb (
 ) WITH (vacuum_optimize_ratio = 0.5);
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), title Nullable(String), tags Array(Nullable(String)), author Nullable(String), price Nullable(Decimal(10,2)), seen Nullable(DateTime64(6, 'UTC')), flag Nullable(Bool), INDEX body_idx body TYPE text(tokenizer = ngrams(2), preprocessor = lowerUTF8(body), support_phrase_search = 1), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title)), INDEX tags_idx tags TYPE text(tokenizer = array, preprocessor = lowerUTF8(tags))) ENGINE = MergeTree ORDER BY ctid SETTINGS allow_experimental_text_index_phrase_search = 1
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 RESET client_min_messages;
 \d docs_idx
                 Index "public.docs_idx"
@@ -130,53 +125,29 @@ CREATE INDEX docs_title ON docs USING chdb (
 );
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8(title))) ENGINE = MergeTree ORDER BY ctid
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 CREATE INDEX docs_regexp ON docs USING chdb (
     title text_ops (tokenizer = 'splitByRegexp', tokenizer_arg = '\s+''x', preprocessor = 'none')
 );
 DEBUG:  building index "docs_regexp" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByRegexp('\\s+\'x'))) ENGINE = MergeTree ORDER BY ctid
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 CREATE INDEX docs_icu ON docs USING chdb (title text_ops (tokenizer = 'icu', tokenizer_arg = 'en'));
 DEBUG:  building index "docs_icu" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = icu('en'), preprocessor = lowerUTF8(title))) ENGINE = MergeTree ORDER BY ctid
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 CREATE INDEX docs_html ON docs USING chdb (body text_ops (preprocessor = 'extractTextFromHTML'));
 DEBUG:  building index "docs_html" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = extractTextFromHTML(body))) ENGINE = MergeTree ORDER BY ctid
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 RESET client_min_messages;
 DROP INDEX docs_regexp, docs_icu, docs_html;
 -- Rejected options.
@@ -215,15 +186,9 @@ CREATE INDEX docs_raw ON docs USING chdb (
 );
 DEBUG:  building index "docs_raw" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(replaceAll(body, '-', ' ')))) ENGINE = MergeTree ORDER BY ctid
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 RESET client_min_messages;
 DROP INDEX docs_raw;
 CREATE ROLE chdb_search_user NOSUPERUSER;
@@ -297,50 +262,23 @@ RESET enable_seqscan;
 SET enable_seqscan = off;
 SET enable_bitmapscan = off;
 SET client_min_messages = debug1;
+\o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasAllTokens(body, 'running shoes')
-DEBUG:  chdb_search stub: select
- id 
-----
-(0 rows)
-
 SELECT id FROM docs WHERE body @@? 'it''s a \back\slash';
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasAnyTokens(body, 'it\'s a \\back\\slash')
-DEBUG:  chdb_search stub: select
- id 
-----
-(0 rows)
-
 SELECT id FROM docs WHERE title @@= 'Shoes' AND tags @@@ 'sport' AND author >= 'a' AND price < 50.50;
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasToken(title, 'Shoes') AND hasAllTokens(tags, 'sport') AND author >= 'a' AND price < toDecimal256('50.50', 2)
-DEBUG:  chdb_search stub: select
- id 
-----
-(0 rows)
-
 SELECT id FROM docs WHERE seen > '2026-01-01 00:00:00+00' AND flag = false;
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE seen > fromUnixTimestamp64Micro(1767225600000000, 'UTC') AND flag = false
-DEBUG:  chdb_search stub: select
- id 
-----
-(0 rows)
-
 SELECT id FROM docs WHERE body @@@ NULL;
- id 
-----
-(0 rows)
-
 RESET client_min_messages;
 SET enable_indexscan = off;
 SET enable_bitmapscan = on;
 SET client_min_messages = debug1;
 SELECT id FROM docs WHERE body @@@ 'running shoes';
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasAllTokens(body, 'running shoes')
-DEBUG:  chdb_search stub: select
- id 
-----
-(0 rows)
-
+\o
 RESET client_min_messages;
 RESET enable_indexscan;
 RESET enable_bitmapscan;
@@ -355,13 +293,7 @@ INSERT INTO docs VALUES (3, 'committed row', 'T', '{a}', 'cy', 1, now(), true);
 -- nothing is sent before COMMIT
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 \echo -- rolled back
 -- rolled back
 BEGIN;
@@ -379,51 +311,27 @@ INSERT INTO docs VALUES (7, 'released', 'T', '{a}', 'gus', 1, now(), true);
 RELEASE s2;
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 \echo -- update and delete
 -- update and delete
 UPDATE docs SET body = 'changed' WHERE id = 1;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 DELETE FROM docs WHERE id = 2;
 \echo -- rows with NULLs
 -- rows with NULLs
 INSERT INTO docs (id) VALUES (8);
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 \echo -- a failing statement
 -- a failing statement
 INSERT INTO docs VALUES (1, 'duplicate key');
 ERROR:  duplicate key value violates unique constraint "docs_pkey"
 RESET client_min_messages;
 ----------------------------------------------------------------------------
--- VACUUM
+-- VACUUM (what it deletes depends on the store's rows; see search_e2e)
 ----------------------------------------------------------------------------
-SET client_min_messages = debug1;
 VACUUM docs;
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t
-DEBUG:  chdb_search stub: select
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t
-DEBUG:  chdb_search stub: select
-RESET client_min_messages;
 ----------------------------------------------------------------------------
 -- REINDEX, TRUNCATE, DROP INDEX, DROP TABLE
 ----------------------------------------------------------------------------
@@ -431,15 +339,9 @@ SET client_min_messages = debug1;
 REINDEX INDEX docs_title;
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8(title))) ENGINE = MergeTree ORDER BY ctid
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: send block
-DEBUG:  chdb_search stub: finish
 -- (TRUNCATE rebuilds the indexes too; its core DEBUG lines carry OIDs.)
 RESET client_min_messages;
 TRUNCATE docs;
@@ -449,26 +351,26 @@ DROP INDEX docs_title;
 ROLLBACK;
 DROP INDEX docs_title;
 DEBUG:  chdb_search drop: idx_N
-DEBUG:  chdb_search stub: drop
 \echo -- a rolled-back CREATE INDEX drops its store
 -- a rolled-back CREATE INDEX drops its store
 BEGIN;
 CREATE INDEX docs_rolled ON docs USING chdb (title text_ops);
 DEBUG:  building index "docs_rolled" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title))) ENGINE = MergeTree ORDER BY ctid
-DEBUG:  chdb_search stub: exec
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title)
-DEBUG:  chdb_search stub: insert
-DEBUG:  chdb_search stub: finish
 ROLLBACK;
 DEBUG:  chdb_search drop: idx_N
-DEBUG:  chdb_search stub: drop
 DROP TABLE docs;
 DEBUG:  chdb_search drop: idx_N
-DEBUG:  chdb_search stub: drop
 RESET client_min_messages;
 DROP EXTENSION chdb_search;
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it. There is none with the stub client.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;
