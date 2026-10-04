@@ -34,11 +34,15 @@ extern char*
 session_begin(const chdbSearchRequest* req);
 
 /*
- * session_begin, then the index's database, created if it is missing, and,
- * for a request naming a generation, that its table exists: `*no_store` is
- * set with the error when it does not.
+ * session_begin, then the index's database and meta table, created if they
+ * are missing, and, for a request naming a generation, that its table exists:
+ * `*no_store` is set with the error when it does not.
  */
 extern char*
 session_prepare(const chdbSearchRequest* req, bool* no_store);
+
+/* A database was dropped, so the next request for each index makes its own again. */
+extern void
+session_forget(void);
 
 #endif /* CHDB_SEARCH_ENGINE_SESSION_H */

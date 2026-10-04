@@ -10,9 +10,11 @@ half when an interface changes.
 
 Phase 0 (local directory): the index relation has one metapage (WAL-logged)
 holding a magic, version, a random 64-bit store generation, and the store's
-LSN high-water mark written at every flush. The worker checks the
-generation and LSN stored in `t`'s `SELECT max(lsn)` against the metapage
-on open; mismatch (crash between flush and commit, restore from backup,
+LSN high-water mark written at every flush. Beside its generation tables
+the store keeps a `meta` table, (generation, lsn), which the engine creates
+with the database (`CHDB_STORE_META_DDL`) and the access method writes at
+every flush; a backend checks its `max(lsn)` against the metapage before
+trusting the store; mismatch (crash between flush and commit, restore from backup,
 `pg_rewind`) marks the index invalid (`indisvalid = false`) and schedules a
 rebuild. `DROP INDEX` and `REINDEX` register the store directory for
 removal in an `XACT_EVENT_COMMIT` callback; before it listens, the worker

@@ -4,6 +4,7 @@
  */
 
 #define _GNU_SOURCE
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,37 @@ reply(int fd, char* err, bool no_store) {
     return ok;
 }
 
+/* Whether the statement begins with the words DROP or DETACH, then DATABASE. */
+static bool
+drops_database(const chdbSetupStr* query) {
+    static const char* const first[] = { "DROP", "DETACH" };
+    const char* at                   = query->data;
+    const char* end                  = at + query->len;
+
+    for (int word = 0; word < 2; word++) {
+        const char* from;
+
+        while (at < end && isspace((unsigned char)*at)) {
+            at++;
+        }
+        for (from = at; at < end && isalpha((unsigned char)*at); at++) {}
+
+        size_t len = (size_t)(at - from);
+        bool ok    = false;
+
+        for (size_t i = 0; i < 2 && !ok; i++) {
+            const char* want = word ? "DATABASE" : first[i];
+
+            ok = len == strlen(want) && strncasecmp(from, want, len) == 0;
+        }
+        if (!ok) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool
 command_exec(int fd, const chdbSearchRequest* req) {
     bool no_store;
@@ -31,6 +63,10 @@ command_exec(int fd, const chdbSearchRequest* req) {
 
     if (!err) {
         err = session_run(req->query.data, req->query.len);
+    }
+    /* Run as a statement, as the debug functions may, a drop is a drop too. */
+    if (!err && drops_database(&req->query)) {
+        session_forget();
     }
 
     return reply(fd, err, no_store);
@@ -50,6 +86,7 @@ command_drop(int fd, const chdbSearchRequest* req) {
         } else {
             err = session_run(sql, strlen(sql));
             free(sql);
+            session_forget();
         }
     }
 
