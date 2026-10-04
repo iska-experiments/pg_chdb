@@ -15,11 +15,12 @@ CREATE TABLE docs (
     author text COLLATE "C",
     price numeric(10, 2),
     seen timestamptz,
-    flag bool
+    flag bool,
+    loc point
 );
 INSERT INTO docs VALUES
-    (1, 'Running shoes for runners', 'Shoes', '{sport,shoes}', 'ann', 49.90, '2026-01-02 03:04:05+00', true),
-    (2, 'Walking boots', 'Boots', '{outdoor}', 'bob', 89.00, '2026-02-03 00:00:00+00', false);
+    (1, 'Running shoes for runners', 'Shoes', '{sport,shoes}', 'ann', 49.90, '2026-01-02 03:04:05+00', true, '(1,2)'),
+    (2, 'Walking boots', 'Boots', '{outdoor}', 'bob', 89.00, '2026-02-03 00:00:00+00', false, '(3,4)');
 CREATE INDEX docs_idx ON docs USING chdb (
     body, title, tags text_array_ops, author columnar_ops, price, seen, flag columnar_ops
 );
@@ -103,6 +104,49 @@ ERROR:  an infinite timestamp without time zone cannot be stored in a chdb index
 INSERT INTO types (n) VALUES ('NaN');
 ERROR:  chdb: cannot encode "NaN" as ClickHouse Decimal256(38)
 DROP TABLE types;
+----------------------------------------------------------------------------
+-- ORDER BY a distance operator of the column's family
+----------------------------------------------------------------------------
+-- Postgres's own point distance stands in for the operators chdb_vector
+-- will add; the ClickHouse Point is a tuple, which L2Distance takes.
+ALTER OPERATOR FAMILY columnar_ops USING chdb ADD OPERATOR 1 <-> (point, point) FOR ORDER BY float_ops;
+SELECT amvalidate(oid) FROM pg_opclass WHERE opcname = 'columnar_ops';
+ amvalidate 
+------------
+ t
+(1 row)
+
+CREATE INDEX docs_loc ON docs USING chdb (loc, body);
+EXPLAIN (COSTS OFF) SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
+                 QUERY PLAN                 
+--------------------------------------------
+ Limit
+   ->  Index Scan using docs_loc on docs
+         Order By: (loc <-> '(1,2)'::point)
+(3 rows)
+
+SET client_min_messages = debug1;
+\o /dev/null
+SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
+DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (1,2)) AS _distance FROM idx_N.t_N ORDER BY _distance
+SELECT id FROM docs WHERE body @@@ 'shoes' ORDER BY loc <-> '(1,2)', loc <-> '(3,4)' LIMIT 2;
+DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (1,2)) AS _distance1, L2Distance("loc", (3,4)) AS _distance2 FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes') ORDER BY _distance1, _distance2
+-- A NULL argument reaches the scan from a generic plan (a custom plan folds
+-- the strict operator to NULL and sorts nothing): every row then has a NULL
+-- distance, as by seqscan, rather than vanishing.
+SET plan_cache_mode = force_generic_plan;
+PREPARE near(point) AS SELECT id FROM docs ORDER BY loc <-> $1 LIMIT 1;
+EXECUTE near(NULL);
+DEBUG:  chdb_search select: SELECT ctid, CAST(NULL AS Nullable(Float64)) AS _distance FROM idx_N.t_N ORDER BY _distance
+EXECUTE near('(3,4)');
+DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (3,4)) AS _distance FROM idx_N.t_N ORDER BY _distance
+RESET plan_cache_mode;
+\o
+RESET client_min_messages;
+SELECT id FROM docs ORDER BY loc <-> '(1,NaN)' LIMIT 1;
+ERROR:  unsupported value in distance argument: "(1,NaN)"
+DROP INDEX docs_loc;
+ALTER OPERATOR FAMILY columnar_ops USING chdb DROP OPERATOR 1 (point, point);
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
 -- The worker stays connected to the database, which could not be dropped for

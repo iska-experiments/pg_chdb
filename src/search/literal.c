@@ -134,28 +134,28 @@ chdb_search_append_literal(StringInfo buf, Datum value, Oid typid) {
 }
 
 /*
- * A vector or real[] argument as a ClickHouse array literal. Both output as
- * `[1,2,3]` (vector) or `{1,2,3}` (array); only digits and number punctuation
- * are accepted, so nothing else can reach the statement.
+ * The argument of a distance operator as a ClickHouse array or tuple literal:
+ * a vector outputs as `[1,2,3]`, an array as `{1,2,3}` and a point as
+ * `(1,2)`. Only digits, number punctuation and brackets are accepted, so
+ * nothing else can reach the statement, and the error shows the argument as
+ * Postgres wrote it.
  */
 void
 chdb_search_append_vector(StringInfo buf, Datum value, Oid typid) {
-    char* s = output_of(value, typid);
+    const char* s = output_of(value, typid);
 
-    for (char* p = s; *p; p++) {
-        if (*p == '{') {
-            *p = '[';
-        } else if (*p == '}') {
-            *p = ']';
-        } else if (!strchr("0123456789.eE+-,[]", *p)) {
+    for (const char* p = s; *p; p++) {
+        if (!strchr("0123456789.eE+-,[](){}", *p)) {
             ereport(
                 ERROR,
                 errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                errmsg("unsupported value in vector argument: \"%s\"", s)
+                errmsg("unsupported value in distance argument: \"%s\"", s)
             );
         }
     }
-    appendStringInfoString(buf, s);
+    for (; *s; s++) {
+        appendStringInfoChar(buf, *s == '{' ? '[' : *s == '}' ? ']' : *s);
+    }
 }
 
 /*

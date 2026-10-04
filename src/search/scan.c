@@ -169,6 +169,12 @@ chdb_search_ambeginscan(Relation index, int nkeys, int norderbys) {
         CurrentMemoryContext, "chdb_search scan", ALLOCSET_DEFAULT_SIZES
     );
     scan->opaque = so;
+    /* RelationGetIndexScan leaves these to the access method, as gist does. */
+    if (norderbys > 0) {
+        scan->xs_orderbyvals  = palloc0(sizeof(Datum) * norderbys);
+        scan->xs_orderbynulls = palloc(sizeof(bool) * norderbys);
+        memset(scan->xs_orderbynulls, true, sizeof(bool) * norderbys);
+    }
     return scan;
 }
 
@@ -216,7 +222,9 @@ start(IndexScanDesc scan) {
         return;
     }
 
-    char* sql = chdb_search_build_select(
+    /* In the scan's context, which a rescan resets, not the executor's. */
+    MemoryContext old = MemoryContextSwitchTo(so->cxt);
+    char* sql         = chdb_search_build_select(
         scan->indexRelation,
         scan->keyData,
         scan->numberOfKeys,
@@ -225,6 +233,7 @@ start(IndexScanDesc scan) {
         -1
     );
 
+    MemoryContextSwitchTo(old);
     so->started = true;
     pgstat_count_index_scan(scan->indexRelation);
 #if PG_VERSION_NUM >= 180000

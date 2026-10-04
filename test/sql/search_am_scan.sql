@@ -16,11 +16,12 @@ CREATE TABLE docs (
     author text COLLATE "C",
     price numeric(10, 2),
     seen timestamptz,
-    flag bool
+    flag bool,
+    loc point
 );
 INSERT INTO docs VALUES
-    (1, 'Running shoes for runners', 'Shoes', '{sport,shoes}', 'ann', 49.90, '2026-01-02 03:04:05+00', true),
-    (2, 'Walking boots', 'Boots', '{outdoor}', 'bob', 89.00, '2026-02-03 00:00:00+00', false);
+    (1, 'Running shoes for runners', 'Shoes', '{sport,shoes}', 'ann', 49.90, '2026-01-02 03:04:05+00', true, '(1,2)'),
+    (2, 'Walking boots', 'Boots', '{outdoor}', 'bob', 89.00, '2026-02-03 00:00:00+00', false, '(3,4)');
 CREATE INDEX docs_idx ON docs USING chdb (
     body, title, tags text_array_ops, author columnar_ops, price, seen, flag columnar_ops
 );
@@ -79,6 +80,33 @@ INSERT INTO types (d) VALUES ('infinity');
 INSERT INTO types (ts) VALUES ('-infinity');
 INSERT INTO types (n) VALUES ('NaN');
 DROP TABLE types;
+
+----------------------------------------------------------------------------
+-- ORDER BY a distance operator of the column's family
+----------------------------------------------------------------------------
+-- Postgres's own point distance stands in for the operators chdb_vector
+-- will add; the ClickHouse Point is a tuple, which L2Distance takes.
+ALTER OPERATOR FAMILY columnar_ops USING chdb ADD OPERATOR 1 <-> (point, point) FOR ORDER BY float_ops;
+SELECT amvalidate(oid) FROM pg_opclass WHERE opcname = 'columnar_ops';
+CREATE INDEX docs_loc ON docs USING chdb (loc, body);
+EXPLAIN (COSTS OFF) SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
+SET client_min_messages = debug1;
+\o /dev/null
+SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
+SELECT id FROM docs WHERE body @@@ 'shoes' ORDER BY loc <-> '(1,2)', loc <-> '(3,4)' LIMIT 2;
+-- A NULL argument reaches the scan from a generic plan (a custom plan folds
+-- the strict operator to NULL and sorts nothing): every row then has a NULL
+-- distance, as by seqscan, rather than vanishing.
+SET plan_cache_mode = force_generic_plan;
+PREPARE near(point) AS SELECT id FROM docs ORDER BY loc <-> $1 LIMIT 1;
+EXECUTE near(NULL);
+EXECUTE near('(3,4)');
+RESET plan_cache_mode;
+\o
+RESET client_min_messages;
+SELECT id FROM docs ORDER BY loc <-> '(1,NaN)' LIMIT 1;
+DROP INDEX docs_loc;
+ALTER OPERATOR FAMILY columnar_ops USING chdb DROP OPERATOR 1 (point, point);
 
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
