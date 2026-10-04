@@ -121,7 +121,7 @@ writer_for(const char* structure, int nattrs) {
 /* Buffers small writes before sending them to helper. */
 typedef struct nativeSink {
     chc_io io;
-    chdbHelper* helper;
+    chdbChannel* helper;
     size_t len;
     uint8_t buf[CHDB_NATIVE_SINK_BYTES];
 } nativeSink;
@@ -129,7 +129,7 @@ typedef struct nativeSink {
 static void
 sink_flush(nativeSink* s) {
     if (s->len) {
-        chdb_helper_write(s->helper, s->buf, s->len);
+        chdb_channel_write(s->helper, s->buf, s->len);
         s->len = 0;
     }
 }
@@ -140,7 +140,7 @@ sink_write(void* ud, const void* p, size_t len, chc_err* err pg_attribute_unused
 
     if (len >= CHDB_NATIVE_SINK_DIRECT) {
         sink_flush(s); /* send buffered bytes first */
-        chdb_helper_write(s->helper, p, len);
+        chdb_channel_write(s->helper, p, len);
 
         return CHC_OK;
     }
@@ -155,7 +155,7 @@ sink_write(void* ud, const void* p, size_t len, chc_err* err pg_attribute_unused
 }
 
 static nativeSink*
-sink_for(chdbHelper* helper) {
+sink_for(chdbChannel* helper) {
     nativeSink* s = palloc0(sizeof(*s));
 
     s->helper = helper;
@@ -213,7 +213,12 @@ append_slot(pgch_writer* w, TupleTableSlot* slot, List* attnums) {
 }
 
 uint64_t
-chdb_copy_send(Relation rel, const char* structure, List* attnums, chdbHelper* helper) {
+chdb_copy_send(
+    Relation rel,
+    const char* structure,
+    List* attnums,
+    chdbChannel* helper
+) {
     pgch_writer* w   = writer_for(structure, list_length(attnums));
     nativeSink* sink = sink_for(helper);
     MemoryContext rowcxt =
@@ -270,7 +275,7 @@ typedef struct nativeSource {
     chc_io io;
     chc_in* in;
     MemoryContext cxt; /* decoded blocks outlive rows read from them */
-    chdbHelper* helper;
+    chdbChannel* helper;
     char* error;
 } nativeSource;
 
@@ -285,7 +290,7 @@ source_read(
 ) {
     nativeSource* s = ud;
 
-    *got = chdb_helper_recv(s->helper, buf, len);
+    *got = chdb_channel_recv(s->helper, buf, len);
 
     return CHC_OK;
 }
@@ -330,7 +335,7 @@ source_error(void* ud) {
 
 /* Creates block reader for helper output in current memory context. */
 static pgch_block_source
-source_for(chdbHelper* helper) {
+source_for(chdbChannel* helper) {
     nativeSource* s = palloc0(sizeof(*s));
     chc_err err     = {};
 
@@ -540,7 +545,7 @@ report_reader_error(const char* error) {
  * describe_compact_output limits result to String name and type columns
  */
 List*
-chdb_native_describe(chdbHelper* helper) {
+chdb_native_describe(chdbChannel* helper) {
     /* Keep reader buffers temporary and allocate returned columns in caller context */
     MemoryContext streamcxt = AllocSetContextCreate(
         CurrentMemoryContext, "chdb describe", ALLOCSET_SMALL_SIZES
@@ -613,7 +618,7 @@ chdb_copy_receive(
     List* rtable,
     List* rteperminfos,
     uint16_t encoding_check,
-    chdbHelper* helper
+    chdbChannel* helper
 ) {
     TupleDesc desc = RelationGetDescr(rel);
     /* Blocks and reader state live here, one row's values in rowcxt. */
@@ -901,7 +906,7 @@ chdb_select_receive(
     char* query,
     ReturnSetInfo* rsinfo,
     TupleDesc tupdesc,
-    chdbHelper* helper
+    chdbChannel* helper
 ) {
     /*
      * Build result info in per-query context so it outlives this call.

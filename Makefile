@@ -1,6 +1,10 @@
-EXTENSION    = $(patsubst %.control,%,$(wildcard *.control))
-EXTVERSION   = $(shell grep -m 1 'default_version' chdb.control | \
+# Named, not globbed: the control files of the other modules live here too.
+EXTENSION    = chdb
+# The default_version a control file names, so a module's versioned script
+# always matches its control file.
+ctl_version  = $(shell grep -m 1 'default_version' $(1).control | \
                sed -e "s/[[:space:]]*default_version[[:space:]]*=[[:space:]]*'\([^']*\)',\{0,1\}/\1/")
+EXTVERSION   = $(call ctl_version,$(EXTENSION))
 DISTVERSION  = $(shell grep -m 1 '^[[:space:]]\{2\}"version":' META.json | \
                sed -e 's/[[:space:]]*"version":[[:space:]]*"\([^"]*\)",\{0,1\}/\1/')
 
@@ -15,6 +19,11 @@ MODULE_big   = $(EXTENSION)
 PG_CONFIG   ?= pg_config
 TAP_TESTS   ?= 1
 OBJS         = $(subst .c,.o, $(wildcard src/*.c))
+
+# One jobserver sized to the machine's processors reaches every sub-make, so a
+# bare make builds with every core; a -j on the command line still wins.
+NPROC       ?= $(shell nproc --all 2>/dev/null || sysctl -n hw.ncpu)
+MAKEFLAGS   += -j$(NPROC)
 
 # Determine the OS and architecture.
 OS         ?= $(shell uname -s | tr A-Z a-z)
@@ -57,7 +66,7 @@ include $(PGXS)
 
 # Set default prove flags.
 ifeq ($(PROVE_FLAGS),)
-PROVE_FLAGS = -fwvj $(if $(MAX_CONCURRENT_TESTS),$(MAX_CONCURRENT_TESTS),$(shell nproc))
+PROVE_FLAGS = -fwvj $(if $(MAX_CONCURRENT_TESTS),$(MAX_CONCURRENT_TESTS),$(NPROC))
 endif
 
 # Build against, install, uninstall a local copy of libchdb.
@@ -89,7 +98,7 @@ src/version.h: META.json
 # Hook module.
 HOOK_MODULE := src/hook/chdb_hook$(DLSUFFIX)
 $(HOOK_MODULE): $(wildcard src/hook/*.c src/hook/*.h) $(OBJS)
-	@$(MAKE) -C $(dir $@) all -j $$(nproc) CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) NO_FILE_SCHEME=$(NO_FILE_SCHEME)
+	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) NO_FILE_SCHEME=$(NO_FILE_SCHEME)
 
 # Install and uninstall the chdb_hook module.
 install-hook: $(HOOK_MODULE)
@@ -98,6 +107,30 @@ uninstall-hook:
 	rm -f $(DESTDIR)$(pkglibdir)/$(HOOK_MODULE)
 install: install-hook
 uninstall: uninstall-hook
+
+# An extension module of its own: built by a sub-make under src/<name>/ and
+# installed here like chdb_hook, with its control file and versioned script.
+# Eval it below this point, once PGXS has set DLSUFFIX:
+#   $(eval $(call ext_module,chdb_<name>,<extra prerequisites>,<sub-make arguments>))
+define ext_module
+$(1)_VERSION := $$(call ctl_version,$(1))
+$(1)_SO := src/$(patsubst chdb_%,%,$(1))/$(1)$$(DLSUFFIX)
+$$($(1)_SO): $$(wildcard $$(dir $$($(1)_SO))*.c $$(dir $$($(1)_SO))*.h) $(2)
+	@$$(MAKE) -C $$(dir $$@) all $(3)
+sql/$(1)--$$($(1)_VERSION).sql: sql/$(1).sql
+	cp $$< $$@
+install-$(patsubst chdb_%,%,$(1)): $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
+	$$(INSTALL_SHLIB) $$< '$$(DESTDIR)$$(pkglibdir)/'
+	$$(MKDIR_P) '$$(DESTDIR)$$(datadir)/extension'
+	$$(INSTALL_DATA) $(1).control sql/$(1)--$$($(1)_VERSION).sql '$$(DESTDIR)$$(datadir)/extension/'
+uninstall-$(patsubst chdb_%,%,$(1)):
+	rm -f $$(DESTDIR)$$(pkglibdir)/$(1)$$(DLSUFFIX)
+	rm -f $$(DESTDIR)$$(datadir)/extension/$(1).control $$(DESTDIR)$$(datadir)/extension/$(1)--$$($(1)_VERSION).sql
+all: $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
+install: install-$(patsubst chdb_%,%,$(1))
+uninstall: uninstall-$(patsubst chdb_%,%,$(1))
+EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc
+endef
 
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules

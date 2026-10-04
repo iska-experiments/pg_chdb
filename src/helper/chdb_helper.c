@@ -74,56 +74,6 @@ read_setup(size_t* len) {
     return buf;
 }
 
-typedef struct cursor {
-    const char* at;
-    const char* end;
-} cursor;
-
-static uint8_t
-take1(cursor* c) {
-    if (c->at == c->end) {
-        fail("chdb: setup payload is truncated");
-    }
-
-    return (uint8_t)*c->at++;
-}
-
-static uint16_t
-take2(cursor* c) {
-    if ((size_t)(c->end - c->at) < sizeof(uint16_t)) {
-        fail("chdb: setup payload is truncated");
-    }
-    uint16_t val;
-    memcpy(&val, c->at, sizeof(val));
-    c->at += sizeof(val);
-
-    return val;
-}
-
-/* Borrowed from the setup payload, which the process holds to the end. */
-typedef struct str {
-    const char* data;
-    size_t len;
-} str;
-
-static str
-take_str(cursor* c) {
-    if ((size_t)(c->end - c->at) < sizeof(uint32_t)) {
-        fail("chdb: setup payload is truncated");
-    }
-    uint32_t len;
-    memcpy(&len, c->at, sizeof(len));
-    c->at += sizeof(len);
-
-    if ((size_t)(c->end - c->at) < len) {
-        fail("chdb: setup payload is truncated");
-    }
-    str val = { c->at, len };
-    c->at += len;
-
-    return val;
-}
-
 /* Parameters as the _n entry points take them, all of it borrowed. */
 typedef struct params {
     const char** names;
@@ -152,7 +102,7 @@ write_all(const char* at, size_t len) {
 
 /* COPY FROM: the query's Native blocks, straight out to the backend. */
 static int
-run_select(chdb_connection conn, str query, const params* par) {
+run_select(chdb_connection conn, chdbSetupStr query, const params* par) {
     chdb_result* stream = chdb_stream_query_with_params_n(
         conn,
         query.data,
@@ -210,7 +160,7 @@ run_select(chdb_connection conn, str query, const params* par) {
  * Buffer complete result in memory
  */
 static int
-run_query(chdb_connection conn, str query, const params* par) {
+run_query(chdb_connection conn, chdbSetupStr query, const params* par) {
     chdb_result* result = chdb_query_with_params_n(
         conn,
         query.data,
@@ -243,7 +193,7 @@ run_query(chdb_connection conn, str query, const params* par) {
 
 /* COPY TO: the backend's Native blocks, straight into the insert. */
 static int
-run_insert(chdb_connection conn, str query, const params* par) {
+run_insert(chdb_connection conn, chdbSetupStr query, const params* par) {
     chdb_insert_stream stream = chdb_stream_insert_with_params_n(
         conn,
         query.data,
@@ -305,26 +255,15 @@ run_insert(chdb_connection conn, str query, const params* par) {
 }
 
 static int
-setup_session(
-    chdb_connection conn,
-    uint16_t max_mem,
-    uint16_t max_threads,
-    uint16_t max_parsers
-) {
+setup_session(chdb_connection conn, const chdbHelperContext* ctx) {
     char settings[1024];
     snprintf(
         settings,
-        1024,
-        "SET allow_experimental_nullable_tuple_type,"
-        "output_format_json_quote_denormals,"
-        "output_format_native_write_json_as_string,"
-        "output_format_native_encode_types_in_binary_format=0,"
-        "date_time_output_format='iso',"
-        "max_threads=%" PRIu16 ",max_parsing_threads=%" PRIu16
-        ",max_memory_usage=%" PRIu64,
-        max_threads,
-        max_parsers,
-        (uint64_t)max_mem * 1024 * 1024
+        sizeof settings,
+        CHDB_SESSION_SETTINGS_FMT,
+        ctx->max_threads,
+        ctx->max_parsers,
+        CHDB_SESSION_MEMORY_BYTES(ctx->max_memory)
     );
     chdb_result* res = chdb_query(conn, settings, native_format);
     const char* err  = chdb_result_error(res);
@@ -340,14 +279,14 @@ setup_session(
 int
 main(void) {
     size_t len;
-    char* setup          = read_setup(&len);
-    cursor cur           = { setup, setup + len };
-    chdbCmdType cmd_type = take1(&cur);
-    uint16_t max_mem     = take2(&cur);
-    uint16_t max_threads = take2(&cur);
-    uint16_t max_parsers = take2(&cur);
-    str query            = take_str(&cur);
-    uint16_t npar        = take2(&cur);
+    char* setup         = read_setup(&len);
+    chdbSetupCursor cur = { setup, setup + len };
+    chdbHelperContext ctx;
+    chdbSetupStr query;
+    uint16_t npar;
+    if (!chdb_setup_parse_head(&cur, &ctx, &query, &npar)) {
+        fail("chdb: setup payload is truncated");
+    }
 
     size_t nalloc       = npar ? npar : 1;
     const char** names  = not_null(calloc(nalloc, sizeof(*names)));
@@ -355,9 +294,12 @@ main(void) {
     const char** values = not_null(calloc(nalloc, sizeof(*values)));
     size_t* value_lens  = not_null(calloc(nalloc, sizeof(*value_lens)));
     for (uint16_t i = 0; i < npar; i++) {
-        str name  = take_str(&cur);
-        str value = take_str(&cur);
+        chdbSetupStr name;
+        chdbSetupStr value;
 
+        if (!chdb_setup_next_param(&cur, &name, &value)) {
+            fail("chdb: setup payload is truncated");
+        }
         names[i]      = name.data;
         name_lens[i]  = name.len;
         values[i]     = value.data;
@@ -380,10 +322,10 @@ main(void) {
      * Unfortunately, setting via argv doesn't work, so we have to set them a
      * an initial query. https://github.com/chdb-io/chdb-core/issues/191
      */
-    int status = setup_session(*conn, max_mem, max_threads, max_parsers);
+    int status = setup_session(*conn, &ctx);
 
     if (!status) {
-        switch (cmd_type) {
+        switch (ctx.cmd) {
         case CHDB_CMD_SELECT:
             status = run_select(*conn, query, &par);
             break;
