@@ -10,6 +10,12 @@
  * the fail-safe check has not refused can still hold, is skipped rather than
  * fetched (tid_in_heap), as heapam would raise on it.
  *
+ * The index returns no column (amcanreturn is unset), yet the planner may
+ * still choose an index-only scan of it when a query needs none, as count(*)
+ * does, so a scan wanting an index tuple gets one with every column null,
+ * which the executor stores and never reads: on an all-visible page each
+ * store row is one live tuple, so the count is right.
+ *
  * There is no amgetbitmap. A TIDBitmap past work_mem, or ANDed with a lossy
  * sibling, makes the bitmap heap scan recheck the quals with the Postgres
  * fallbacks of ops.c, which know the default tokenizer only, so every match
@@ -35,6 +41,7 @@ typedef struct ScanOpaque {
     ChdbStream* stream;
     bool started;
     BlockNumber heap_nblocks; /* of the heap as last measured, for tid_in_heap */
+    IndexTuple null_itup;     /* for an index-only scan, built on first use */
 } ScanOpaque;
 
 /* Reads the request's status, which raises the worker's error, and closes. */
@@ -180,6 +187,8 @@ chdb_search_ambeginscan(Relation index, int nkeys, int norderbys) {
         CurrentMemoryContext, "chdb_search scan", ALLOCSET_DEFAULT_SIZES
     );
     scan->opaque = so;
+    /* For an index-only scan's tuple; RelationGetIndexScan leaves it NULL. */
+    scan->xs_itupdesc = RelationGetDescr(index);
     /* RelationGetIndexScan leaves these to the access method, as gist does. */
     if (norderbys > 0) {
         scan->xs_orderbyvals  = palloc0(sizeof(Datum) * norderbys);
@@ -198,6 +207,7 @@ reset_stream(ScanOpaque* so) {
     MemoryContextReset(so->cxt);
     so->started      = false;
     so->heap_nblocks = 0;
+    so->null_itup    = NULL;
 }
 
 void
@@ -299,6 +309,20 @@ chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir) {
     } while (!tid_in_heap(scan, so, &scan->xs_heaptid));
 
     scan->xs_recheck = false;
+    if (scan->xs_want_itup) {
+        if (!so->null_itup) {
+            TupleDesc desc = RelationGetDescr(scan->indexRelation);
+            Datum* values  = palloc0(sizeof(Datum) * desc->natts);
+            bool* isnull   = palloc(sizeof(bool) * desc->natts);
+            MemoryContext old;
+
+            memset(isnull, true, sizeof(bool) * desc->natts);
+            old           = MemoryContextSwitchTo(so->cxt);
+            so->null_itup = index_form_tuple(desc, values, isnull);
+            MemoryContextSwitchTo(old);
+        }
+        scan->xs_itup = so->null_itup;
+    }
     for (int i = 0; i < scan->numberOfOrderBys; i++) {
         scan->xs_orderbyvals[i]  = so->stream->vals[1 + i];
         scan->xs_orderbynulls[i] = so->stream->nulls[1 + i];
