@@ -128,6 +128,9 @@ validate_preprocessor(const char* value) {
 /* The expression goes into ClickHouse DDL unchecked, so only trusted roles. */
 static void
 validate_raw_preprocessor(const char* value) {
+    if (!value) {
+        return;
+    }
     if (!superuser()) {
         ereport(
             ERROR,
@@ -306,7 +309,8 @@ chdb_search_skip_index_args(
 PG_FUNCTION_INFO_V1(chdb_search_no_options);
 Datum
 chdb_search_no_options(PG_FUNCTION_ARGS) {
-    init_local_reloptions((local_relopts*)PG_GETARG_POINTER(0), 0);
+    /* Just the varlena header: a zero-size options struct breaks CopyIndexAttOptions. */
+    init_local_reloptions((local_relopts*)PG_GETARG_POINTER(0), sizeof(int32));
     PG_RETURN_VOID();
 }
 
