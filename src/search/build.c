@@ -23,8 +23,6 @@
 /* Matches src/native.c: ClickHouse coalesces small blocks itself. */
 #define BLOCK_BYTES (8 * 1024 * 1024)
 
-/* Matches src/native.c: ClickHouse coalesces small blocks itself. */
-#define BLOCK_BYTES (8 * 1024 * 1024)
 /* ---- ambuild ---- */
 
 typedef struct BuildState {
@@ -70,9 +68,22 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
     }
 
     chdb_meta_init(index, MAIN_FORKNUM);
+
+    /*
+     * Registered before any DDL, so a build that fails halfway is undone too.
+     * A new index loses its whole store on abort; a rebuild of an existing
+     * one loses only the generation it was writing, as the metapage then goes
+     * back to naming the previous table.
+     */
+    if (index->rd_createSubid != InvalidSubTransactionId) {
+        chdb_search_drop_on_abort(RelationGetRelid(index));
+    } else {
+        chdb_search_drop_statement_on_abort(
+            RelationGetRelid(index),
+            psprintf("DROP TABLE IF EXISTS %s", chdb_search_table_name(index))
+        );
+    }
     chdb_search_create_store(index);
-    /* A build that rolls back leaves a store nothing refers to. */
-    chdb_search_drop_on_abort(RelationGetRelid(index));
 
     bs.rw   = chdb_rowwriter_new(index);
     bs.conn = chdb_search_connect();
@@ -81,7 +92,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
     {
         char* sql = psprintf(
             "INSERT INTO %s %s",
-            chdb_search_table_name(RelationGetRelid(index)),
+            chdb_search_table_name(index),
             chdb_search_column_list(index)
         );
 

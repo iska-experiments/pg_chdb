@@ -304,7 +304,7 @@ chdb_search_build_select(
             );
         }
     }
-    appendStringInfo(&buf, " FROM %s", chdb_search_table_name(RelationGetRelid(index)));
+    appendStringInfo(&buf, " FROM %s", chdb_search_table_name(index));
     if (where.len) {
         appendStringInfo(&buf, " WHERE %s", where.data);
     }

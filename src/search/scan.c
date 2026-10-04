@@ -37,7 +37,13 @@ end_stream(ChdbStream* s) {
 }
 
 ChdbStream*
-chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext cxt) {
+chdb_search_stream_query(
+    Oid indexoid,
+    const char* sql,
+    const Oid* types,
+    int ncols,
+    MemoryContext cxt
+) {
     MemoryContext old = MemoryContextSwitchTo(cxt);
     ChdbStream* s     = palloc0(sizeof(*s));
 
@@ -73,14 +79,14 @@ chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext 
         /* No block at all, not even an empty one: no rows, or a failed query. */
         end_stream(s);
     } else {
-        if (s->ncols != 1 + ndist) {
+        if (s->ncols != ncols) {
             ereport(
                 ERROR,
                 errcode(ERRCODE_DATA_EXCEPTION),
                 errmsg(
                     "chdb_search: worker returned %d columns, expected %d",
                     s->ncols,
-                    1 + ndist
+                    ncols
                 )
             );
         }
@@ -88,13 +94,23 @@ chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext 
         s->vals   = palloc(sizeof(Datum) * s->ncols);
         s->nulls  = palloc(sizeof(bool) * s->ncols);
         for (int i = 0; i < s->ncols; i++) {
-            s->states[i] = pgch_reader_convert_init(
-                &s->reader, i, i == 0 ? INT8OID : FLOAT8OID, -1
-            );
+            s->states[i] = pgch_reader_convert_init(&s->reader, i, types[i], -1);
         }
     }
     MemoryContextSwitchTo(old);
     return s;
+}
+
+/* A scan's stream: the packed ctid, then `ndist` distances. */
+ChdbStream*
+chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext cxt) {
+    Oid* types = palloc(sizeof(Oid) * (1 + ndist));
+
+    types[0] = INT8OID;
+    for (int i = 0; i < ndist; i++) {
+        types[1 + i] = FLOAT8OID;
+    }
+    return chdb_search_stream_query(indexoid, sql, types, 1 + ndist, cxt);
 }
 
 bool
@@ -111,7 +127,9 @@ chdb_search_stream_next(ChdbStream* s, ItemPointer tid) {
         MemoryContextSwitchTo(old);
 
         if (more) {
-            chdb_search_u64_to_tid((uint64)DatumGetInt64(s->vals[0]), tid);
+            if (tid) {
+                chdb_search_u64_to_tid((uint64)DatumGetInt64(s->vals[0]), tid);
+            }
             return true;
         }
         if (s->reader.error) {

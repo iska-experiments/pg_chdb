@@ -15,7 +15,8 @@
  * that `idx_<indexoid>.t_<generation>` exists, raising with a REINDEX hint if
  * not, so a statement against a store that is gone or rebuilt fails clearly
  * rather than in ClickHouse's words. Queries pass through unchanged, so
- * callers name the table in full. The framing is documented in protocol.h.
+ * callers name the table in full (see ddl.c). The framing is documented in
+ * protocol.h.
  *
  * Every call returns or raises within chdb_search.worker_timeout when
  * interrupts are held (a commit or abort callback), where a cancel could not

@@ -29,6 +29,12 @@ CREATE FUNCTION chdb_search_copy_to(regclass, TEXT) RETURNS BIGINT
 AS 'MODULE_PATHNAME', 'chdb_search_debug_copy_to'
 LANGUAGE C STRICT;
 
+-- The ClickHouse table behind a chdb index, idx_<oid>.t_<generation>, for
+-- reading its rows through chdb_search_query.
+CREATE FUNCTION chdb_search_store_table(regclass) RETURNS TEXT
+AS 'MODULE_PATHNAME', 'chdb_search_debug_store_table'
+LANGUAGE C STRICT;
+
 -- The process that runs libchdb for this database's worker; NULL until a
 -- request has started it.
 CREATE FUNCTION chdb_search_engine_pid() RETURNS INTEGER
@@ -44,6 +50,7 @@ REVOKE EXECUTE ON FUNCTION chdb_search_exec(text, bigint) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_drop() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_query(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_copy_to(regclass, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION chdb_search_store_table(regclass) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_engine_pid() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_debug_kill_engine(integer) FROM PUBLIC;
 

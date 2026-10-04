@@ -2,8 +2,10 @@
  * The index relation's only page: a WAL-logged metapage tying the relation to
  * its ClickHouse store. Postgres decides what survives a crash or a restore;
  * the store is derived data, so the page records which store belongs to this
- * relation (generation) and how far it was written (flushed_lsn). The worker
- * compares them on open and has the index rebuilt on a mismatch.
+ * relation (generation) and how far it was written (flushed_lsn). The
+ * generation names the store table, idx_<oid>.t_<generation>, so a rebuild
+ * that rolls back leaves the table the metapage still names untouched, and
+ * the worker compares the LSN on open to have a stale index rebuilt.
  */
 
 #include "postgres.h"
@@ -22,7 +24,8 @@ meta_of(Page page) {
     return (ChdbMetaPageData*)PageGetContents(page);
 }
 
-void
+/* Writes a fresh metapage and returns the generation it chose. */
+uint64
 chdb_meta_init(Relation index, ForkNumber fork) {
     /* No concurrent inserters can exist yet, as in contrib/bloom. */
     Buffer buf = ReadBufferExtended(index, fork, P_NEW, RBM_NORMAL, NULL);
@@ -35,15 +38,17 @@ chdb_meta_init(Relation index, ForkNumber fork) {
 
     PageInit(page, BLCKSZ, 0);
     ChdbMetaPageData* meta = meta_of(page);
+    uint64 generation      = pg_prng_uint64(&pg_global_prng_state);
 
     meta->magic       = CHDB_META_MAGIC;
     meta->version     = CHDB_META_VERSION;
-    meta->generation  = pg_prng_uint64(&pg_global_prng_state);
+    meta->generation  = generation;
     meta->flushed_lsn = 0;
     ((PageHeader)page)->pd_lower += sizeof(ChdbMetaPageData);
 
     GenericXLogFinish(xlog);
     UnlockReleaseBuffer(buf);
+    return generation;
 }
 
 void
@@ -59,6 +64,14 @@ chdb_meta_read(Relation index, ChdbMetaPageData* out) {
             ERROR, "relation \"%s\" is not a chdb index", RelationGetRelationName(index)
         );
     }
+}
+
+uint64
+chdb_meta_generation(Relation index) {
+    ChdbMetaPageData meta;
+
+    chdb_meta_read(index, &meta);
+    return meta.generation;
 }
 
 /*
