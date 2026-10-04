@@ -8,7 +8,8 @@
  * ANALYZE would have run; with a score it also asks the store for the
  * counts behind the statement's weights. ANALYZE adds the rows the store
  * returned, which the heap fetch may have thinned, and how many times it
- * was asked.
+ * was asked; for the aggregate scan, why the exact plan answered instead,
+ * when it did.
  */
 
 #include "postgres.h"
@@ -118,4 +119,19 @@ chdb_planner_explain(CustomScanState* css, List* ancestors, ExplainState* es) {
         chdb_planner_build_sql(st, st->spec->limit);
     }
     explain_statement(st, es);
+}
+
+void
+chdb_planner_agg_explain(CustomScanState* css, List* ancestors, ExplainState* es) {
+    ChdbAggState* a   = (ChdbAggState*)css;
+    ChdbScanState* st = &a->scan;
+
+    explain_pushed(st, ancestors, es);
+    if (!st->built && !st->exec_params) {
+        chdb_planner_build_agg_sql(st);
+    }
+    explain_statement(st, es);
+    if (es->analyze && a->fallback) {
+        ExplainPropertyText("Exact Plan", a->fallback, es);
+    }
 }

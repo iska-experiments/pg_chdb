@@ -73,3 +73,25 @@ chdb_planner_cost(PlannerInfo* root, RelOptInfo* rel, ChdbPath* p) {
     path->startup_cost = startup;
     path->total_cost   = startup + run * chdb_search_custom_scan_cost_factor;
 }
+
+/*
+ * What an aggregate scan costs: the round trip and the visibility map,
+ * then a row per group, with the HAVING clauses and the target list on
+ * each. The Agg plan it carries for the fallback is not charged: the store
+ * answers unless the heap changed under it.
+ */
+void
+chdb_planner_cost_aggregate(PlannerInfo* root, ChdbPath* p, double ngroups) {
+    Path* path = &p->cpath.path;
+    QualCost having_cost;
+    Cost startup, run;
+
+    path->rows = ngroups;
+    startup = random_page_cost + cpu_operator_cost * (list_length(p->spec.quals) + 1);
+    run     = ngroups * cpu_tuple_cost;
+    cost_qual_eval(&having_cost, p->having, root);
+    startup += having_cost.startup + path->pathtarget->cost.startup;
+    run += ngroups * (having_cost.per_tuple + path->pathtarget->cost.per_tuple);
+    path->startup_cost = startup;
+    path->total_cost   = startup + run;
+}

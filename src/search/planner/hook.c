@@ -293,4 +293,5 @@ chdb_search_planner_init(void) {
     );
     prev_hook             = set_rel_pathlist_hook;
     set_rel_pathlist_hook = rel_pathlist_hook;
+    chdb_planner_aggregate_init();
 }

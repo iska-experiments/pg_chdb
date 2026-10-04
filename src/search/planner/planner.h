@@ -24,9 +24,15 @@
  * the distances, which plan.c names in a custom_scan_tlist behind the heap
  * columns the query needs, so that setrefs.c points the target list and the
  * quals at them, and exec.c fills a virtual scan tuple from the heap row and
- * the stream. An aggregate stage builds a spec of its own from
- * create_upper_paths_hook and a scan with no relation, scanrelid 0,
- * returning the store's row as the scan tuple.
+ * the stream.
+ *
+ * The aggregate scan (agg_*.c) is the stage for GROUP BY and the aggregates
+ * the store computes: a create_upper_paths hook builds a spec whose
+ * agg_outputs are the grouping columns and the aggregates (ChdbAggOutput),
+ * the plan is a scan with no relation, scanrelid 0, whose custom_scan_tlist
+ * names them, and the executor fills a virtual scan tuple from the store's
+ * groups, or from the Agg plan it carries as a child when the heap cannot
+ * vouch for the store's answer.
  */
 
 #include "postgres.h"
@@ -34,6 +40,9 @@
 #include "access/skey.h"
 #include "nodes/extensible.h"
 #include "nodes/pathnodes.h"
+
+struct ChdbColumn; /* search.h */
+struct ChdbStream; /* stream.h */
 
 /* One expression the scan sends to ClickHouse rather than evaluating. */
 typedef struct ChdbPushed {
@@ -56,14 +65,34 @@ typedef struct ChdbOutput {
     AttrNumber attno; /* the index column it is restricted to, or 0 for all */
 } ChdbOutput;
 
+/* What one column of an aggregate scan's output is. */
+typedef enum ChdbAggKind {
+    CHDB_AGG_GROUP,     /* a GROUP BY column, returned as stored */
+    CHDB_AGG_COUNT,     /* count(*) */
+    CHDB_AGG_COUNT_COL, /* count(col): the rows where it is not NULL */
+    CHDB_AGG_MIN,
+    CHDB_AGG_MAX,
+    CHDB_AGG_SUM,
+    CHDB_AGG_AVG, /* the store's sum and count, divided here as Postgres does */
+} ChdbAggKind;
+
+typedef struct ChdbAggOutput {
+    ChdbAggKind kind;
+    AttrNumber attno;   /* index column, 1-based; 0 for count(*) */
+    Oid typid;          /* the Postgres type of the output */
+    Expr* expr;         /* the Var or Aggref it stands for: the scan tuple's column */
+    Index sortgroupref; /* at planning, the GROUP BY clause it belongs to, or 0 */
+} ChdbAggOutput;
+
 /* What one scan sends: shared by the path, the plan and the executor. */
 typedef struct ChdbScanSpec {
     Oid indexoid;
-    List* quals;     /* ChdbPushed, ANDed into the WHERE clause */
-    List* orderbys;  /* ChdbPushed, the ORDER BY in order */
-    List* outputs;   /* ChdbOutput, selected after the distances */
-    int score_order; /* 1-based output the rows are ordered by, or 0 */
-    int64 limit;     /* LIMIT the query takes, negative for none */
+    List* quals;       /* ChdbPushed, ANDed into the WHERE clause */
+    List* orderbys;    /* ChdbPushed, the ORDER BY in order */
+    List* outputs;     /* ChdbOutput, selected after the distances */
+    int score_order;   /* 1-based output the rows are ordered by, or 0 */
+    int64 limit;       /* LIMIT the query takes, negative for none */
+    List* agg_outputs; /* ChdbAggOutput, an aggregate scan's SELECT list; else NIL */
 } ChdbScanSpec;
 
 /* ---- match.c: clauses and pathkeys to pushed expressions ---- */
@@ -132,7 +161,8 @@ typedef struct ChdbPath {
     CustomPath cpath;
     ChdbScanSpec spec;
     IndexOptInfo* index;
-    List* local; /* RestrictInfo, the clauses the scan applies itself */
+    List* local;  /* RestrictInfo, the clauses the scan applies itself */
+    List* having; /* an aggregate scan: the HAVING clauses it applies to its output */
 } ChdbPath;
 
 /* Whether the hook plans scans of `rel`: a plain heap table with an index. */
@@ -149,10 +179,41 @@ chdb_planner_usable_index(IndexOptInfo* index);
 extern bool
 chdb_planner_collect_quals(PlannerInfo* root, RelOptInfo* rel, ChdbPath* p);
 
+/* ---- agg_hook.c: the aggregate path ---- */
+
+extern bool chdb_search_enable_aggregate_pushdown;
+
+/* Defines the GUC and installs the hook; run by chdb_search_planner_init. */
+extern void
+chdb_planner_aggregate_init(void);
+/* Whether the visibility map says every page of `heap` is all-visible. */
+extern bool
+chdb_planner_heap_all_visible(Relation heap);
+
+/* ---- agg_match.c: the grouped target to outputs ---- */
+
+/*
+ * Whether the store can compute `exprs`, the grouped target and the HAVING
+ * clauses: every Var a GROUP BY column of the index, every Aggref one of
+ * count, min, max, sum and avg over an index column. Fills *outputs with
+ * the GROUP BY columns first.
+ */
+extern bool
+chdb_planner_match_aggregates(
+    PlannerInfo* root,
+    RelOptInfo* rel,
+    IndexOptInfo* index,
+    const struct ChdbColumn* cols,
+    List* exprs,
+    List** outputs
+);
+
 /* ---- cost.c ---- */
 
 extern void
 chdb_planner_cost(PlannerInfo* root, RelOptInfo* rel, ChdbPath* path);
+extern void
+chdb_planner_cost_aggregate(PlannerInfo* root, ChdbPath* path, double ngroups);
 
 /* ---- plan.c: the CustomScan and its private data ---- */
 
@@ -181,6 +242,13 @@ chdb_planner_unpack(const CustomScan* cscan);
 /* The same, leaving *lc at what custom_private holds after the spec. */
 extern ChdbScanSpec*
 chdb_planner_unpack_at(const CustomScan* cscan, ListCell** lc);
+
+/* ---- agg_plan.c ---- */
+
+extern const CustomPathMethods chdb_planner_agg_path_methods;
+extern const CustomScanMethods chdb_planner_agg_scan_methods;
+extern ChdbScanSpec*
+chdb_planner_agg_unpack(const CustomScan* cscan);
 
 /* ---- sql.c, exec.c, explain.c ---- */
 
@@ -233,5 +301,41 @@ chdb_planner_reset(ChdbScanState* st);
 struct ExplainState;
 extern void
 chdb_planner_explain(CustomScanState* css, List* ancestors, struct ExplainState* es);
+
+/* ---- agg_select.c, agg_exec.c: the aggregate scan ---- */
+
+typedef struct ChdbAggState {
+    ChdbScanState scan; /* the spec, the index, the arguments, the statement */
+    Relation heap;
+    struct PlanState* exact; /* the Agg plan that answers when the store cannot */
+    struct Tuplestorestate*
+        rows;             /* the store's groups, until the heap is checked again */
+    const char* fallback; /* why the exact plan answers, or NULL */
+} ChdbAggState;
+
+extern const CustomExecMethods chdb_planner_agg_exec_methods;
+
+/* The aggregate statement from the evaluated arguments; for EXPLAIN too. */
+extern void
+chdb_planner_build_agg_sql(ChdbScanState* st);
+/* The Postgres types the statement's columns decode to; AVG takes two. */
+extern Oid*
+chdb_planner_agg_types(const ChdbScanSpec* spec, int* ncols);
+/* The stream's current row as the scan tuple. */
+extern void
+chdb_planner_agg_fill(
+    const ChdbScanSpec* spec,
+    const struct ChdbStream* s,
+    TupleTableSlot* slot
+);
+/* Nulls the scan tuple's columns from `from` on, the ones no output fills. */
+extern void
+chdb_planner_agg_pad(TupleTableSlot* slot, int from);
+extern void
+chdb_planner_agg_explain(
+    CustomScanState* css,
+    List* ancestors,
+    struct ExplainState* es
+);
 
 #endif /* CHDB_SEARCH_PLANNER_H */
