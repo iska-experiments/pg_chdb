@@ -24,6 +24,12 @@ SELECT id FROM docs WHERE body @@@ 'x';
 -- An offset past the page's line pointers is skipped by the heap fetch.
 SET chdb_search_stub.ctids = '1,2,200';
 SELECT id FROM docs WHERE body @@@ 'x';
+-- A block at or past the heap's end, as a store left behind by a restore
+-- holds, is skipped rather than read: the heap fetch would raise on it.
+SET chdb_search_stub.ctids = '4294967296';
+SELECT id FROM docs WHERE body @@@ 'x';
+SET chdb_search_stub.ctids = '1,4294967296,65537';
+SELECT id FROM docs WHERE body @@@ 'x';
 -- No rows at all, as the stub answers by default.
 RESET chdb_search_stub.ctids;
 SELECT id FROM docs WHERE body @@@ 'x';
