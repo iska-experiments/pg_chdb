@@ -36,10 +36,16 @@ jobs:
         with:
           submodules: true
           dry-run: true
+      # No libchdb release has the callback object storage chdb_search_engine
+      # needs (chdb-io/chdb-core#256), so the release is built without the
+      # engine and its search module tested with the stub worker client, the
+      # worker's tests skipping, until one does.
       - name: Test the Release
         env:
           TAP_TESTS: ""
-          DIST_TEST_SUDO: "sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD"
+          CHDB_SEARCH_ENGINE: ""
+          CHDB_SEARCH_STUB: 1
+          DIST_TEST_SUDO: "sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD,CHDB_SEARCH_ENGINE,CHDB_SEARCH_STUB"
         run: make dist-test
       - name: Release on PGXN
         uses: pgxn/release-action@v0

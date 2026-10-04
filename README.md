@@ -105,8 +105,8 @@ CREATE INDEX docs_idx ON docs USING chdb (body, author columnar_ops);
 SELECT id FROM docs WHERE body @@@ 'postgres clickhouse' AND author = 'ann';
 ```
 
-It requires PostgreSQL 17 or higher. See the [chdb_search
-documentation](doc/chdb_search.md) for details.
+It requires PostgreSQL 17 or higher and a libchdb that no release ships yet:
+see the [chdb_search documentation](doc/chdb_search.md#installation).
 
 ### chdb_vector Extension
 

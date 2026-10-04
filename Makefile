@@ -96,6 +96,11 @@ endif
 # libchdb.so by its soname, so the server's library path decides which
 # library each runs on; the engine checks for the API when it starts.
 ENGINE_LIBCHDB_DIR ?= $(LIBCHDB_DIR)
+# No release has that API yet, so a tree without such a library builds with
+# CHDB_SEARCH_ENGINE= and leaves the engine out, to be tested with the stub
+# worker client alone (CHDB_SEARCH_STUB=1), as CI does until chdb-core
+# publishes it.
+CHDB_SEARCH_ENGINE ?= 1
 
 SEARCH_VERSION := $(shell sed -n "s/^default_version *= *'\(.*\)'/\1/p" chdb_search.control)
 SEARCH_MODULE  := src/search/chdb_search$(DLSUFFIX)
@@ -194,7 +199,9 @@ ifeq ($(shell test $(VERSION_NUM) -ge 170000 && echo yes),yes)
 # come last.
 SEARCH_SQL_PARTS := sql/chdb_search_query.sql sql/chdb_search_opclass.sql
 $(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB),$(SEARCH_SQL_PARTS)))
+ifneq ($(CHDB_SEARCH_ENGINE),)
 $(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h,$(ENGINE_LIBCHDB_DIR)))
+endif
 # The chdb_vector extension: pgvector operator classes for the access
 # method. A plain PGXS module, it needs neither libchdb nor pgvector's
 # headers to build, only pgvector installed to CREATE EXTENSION.

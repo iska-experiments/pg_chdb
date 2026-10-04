@@ -34,7 +34,10 @@ jobs:
           path: |
             ${{ steps.chdb.outputs.directory }}/lib/libchdb.*
             ${{ steps.chdb.outputs.directory }}/include/chdb.h
+      # chdb_search_engine needs libchdb's callback object storage, which no
+      # release has yet (chdb-io/chdb-core#256), so its sources are left out
+      # of the build and the compilation database until one does.
       - name: Generate compile_commands.json
-        run: make compile_commands.json
+        run: make compile_commands.json CHDB_SEARCH_ENGINE=
       - name: Lint the Code
         run: make lint
