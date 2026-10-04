@@ -10,6 +10,7 @@
 #include "access/amapi.h"
 #include "access/amvalidate.h"
 #include "access/htup_details.h"
+#include "access/xlog.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_class.h"
@@ -71,6 +72,20 @@ chdb_search_costestimate(
 
     genericcostestimate(root, path, loop_count, &costs);
 
+    /*
+     * In skip mode an unavailable store makes the index the most expensive
+     * path, so the planner takes another; in error mode a scan would raise,
+     * and the cost is left alone so a forced scan still reaches that error.
+     */
+    if (chdb_search_unavailable_index == CHDB_UNAVAILABLE_SKIP &&
+        RecoveryInProgress()) {
+        *indexStartupCost = disable_cost;
+        *indexTotalCost   = disable_cost;
+        *indexSelectivity = costs.indexSelectivity;
+        *indexCorrelation = costs.indexCorrelation;
+        *indexPages       = costs.numIndexPages;
+        return;
+    }
     if (path->indexclauses != NIL) {
         costs.indexStartupCost += random_page_cost;
         costs.indexTotalCost = costs.indexStartupCost +
