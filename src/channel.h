@@ -13,11 +13,11 @@
  * side carries its own copy of the waiting, interrupt and cleanup code.
  *
  * The descriptors are nonblocking. Every wait is on the latch, so a cancel or
- * a shutdown gets through, and the error pipe is drained whenever the data
- * channel would block, since a full pipe stalls the peer. While interrupts are
- * held, as they are in a transaction's commit and abort callbacks, nothing
- * gets through, so a channel given a hold timeout fails instead once a call
- * has waited that long.
+ * a shutdown gets through, a background worker's ShutdownRequestPending among
+ * them, and the error pipe is drained whenever the data channel would block,
+ * since a full pipe stalls the peer. While interrupts are held, as they are in
+ * a transaction's commit and abort callbacks, nothing gets through, so a
+ * channel given a hold timeout fails instead once a call has waited that long.
  *
  * A channel is either plain, where end of stream is end of data, or chunked:
  * uint32 byte count and that many bytes, ended by a zero count. The chunked
