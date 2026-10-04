@@ -20,6 +20,7 @@
 #include "utils/wait_event.h"
 
 #include "client.h"
+#include "frame.h"
 #include "protocol.h"
 #include "worker.h"
 
@@ -140,22 +141,10 @@ chdb_search_close(chdbSearchConn* conn) {
 
 /* ---- requests ------------------------------------------------------------ */
 
-static void
-append_string(StringInfo buf, const char* str) {
-    uint32_t len = (uint32_t)strlen(str);
-
-    appendBinaryStringInfo(buf, (char*)&len, sizeof(len));
-    appendBinaryStringInfo(buf, str, len);
-}
-
 /* Sends the request frame of protocol.h. */
 static void
 send_request(chdbSearchConn* conn, chdbCmdType cmd, Oid index, const char* sql) {
     StringInfoData buf;
-    uint16_t memory  = (uint16_t)chdb_max_memory;
-    uint16_t threads = (uint16_t)chdb_max_threads;
-    uint16_t parsers = (uint16_t)chdb_max_parsers;
-    uint16_t nparams = 0;
 
     conn->cmd           = cmd;
     conn->query         = sql;
@@ -163,21 +152,7 @@ send_request(chdbSearchConn* conn, chdbCmdType cmd, Oid index, const char* sql) 
     conn->ch.data_ended = false;
 
     initStringInfo(&buf);
-    appendBinaryStringInfo(&buf, (char*)&cmd, sizeof(cmd));
-    appendBinaryStringInfo(&buf, (char*)&index, sizeof(index));
-    appendBinaryStringInfo(&buf, (char*)&memory, sizeof(memory));
-    appendBinaryStringInfo(&buf, (char*)&threads, sizeof(threads));
-    appendBinaryStringInfo(&buf, (char*)&parsers, sizeof(parsers));
-    append_string(&buf, sql);
-    appendBinaryStringInfo(&buf, (char*)&nparams, sizeof(nparams));
-
-    if (buf.len > CHDB_SETUP_MAX) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-            errmsg("chdb_search: query is too large to send to the worker")
-        );
-    }
+    chdb_search_frame_request(&buf, cmd, index, sql);
     chdb_channel_send_exact(&conn->ch, buf.data, buf.len);
     pfree(buf.data);
 }
