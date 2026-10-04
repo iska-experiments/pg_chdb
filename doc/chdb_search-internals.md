@@ -9,16 +9,9 @@ describe the index access method, which is not yet in the tree.
 
 ## How It Works
 
-```
- backend (chdb_search.so)                 chdb_search worker (per database)
- ┌──────────────────────────┐   unix      ┌────────────────────────────────┐
- │ index AM  (amhandler)    │  socket     │ accept loop, one thread/conn   │
- │ insert buffer → precommit├────────────►│ libchdb session  --path=STORE  │
- │ scan: ctid stream        │◄────────────┤ Native blocks in/out           │
- │ CustomScan / agg pushdown│             │ pg_pages disk callbacks        │
- └──────────────────────────┘             │   (Phase 1) → shared buffers   │
-                                          └────────────────────────────────┘
-```
+The architecture diagram is in the [design notes' Architecture
+section](../dev/design/chdb_search.md#architecture); this page describes
+what the tree ships today.
 
 chDB takes an exclusive lock on its store path, so only one process can use a
 store. Rather than have each backend fork a helper, as `chdb` does for
