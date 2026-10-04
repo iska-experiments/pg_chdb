@@ -444,3 +444,18 @@ Decisions:
   leaves.
 * **Writes.** The worker coalesces commit flushes into fewer parts, measured
   by a benchmark against ParadeDB on the Hacker News dataset.
+
+### Repository boundary (2026-10-05, final)
+
+pg_chdb stays minimal: the shipped `chdb` and `chdb_hook` extensions and a
+small transport library with plugin points, installed as headers plus a
+library and a `chdb.mk` for dependants: the channel (with multiplexing), the
+error scrub, the Native codec with a type-mapping hook other extensions
+register into, the generalised process spawn (`chdb_spawn`), the setup
+payload, `module.h`, `srf.h`, `gucs.h`, `module.mk`, `libchdb.mk`, the
+`ext_module` Makefile template and the `chdb_helper` program. Everything
+search-specific lives in `iska-experiments/pg_chdb_search`: the background
+worker, the engine program, the page store, the client and protocol, the
+access method, the planner, `chdb_vector`, documentation, tests and these
+design notes. What remains of the pg_chdb stack is the transport library,
+which is what goes upstream to ClickHouse/pg_chdb.
