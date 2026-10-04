@@ -1,23 +1,9 @@
 MODULE_big   = chdb_hook
 OBJS 		 = ../native.o ../helper.o ../helper_setup.o ../channel.o $(subst .c,.o, $(wildcard *.c))
-PGCH_DIR     = ../../vendor/pg-clickhouse-c
-CH_C_DIR     = $(PGCH_DIR)/clickhouse-c
-PG_CFLAGS    = -Wno-declaration-after-statement -Wall -Werror
-# -isystem keeps the vendored headers' warnings out of the -Werror build.
-# PGCH_MSG_PREFIX prefixes messages pg-clickhouse-c raises like our own.
-# clickhouse-c recopies reader errors through chc_err.msg, 256 bytes by
-# default, so match chdb_capture_error's buffer. native.c asserts the pairing.
-PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chdb: "' \
-               -DCHC_ERR_MSG_LEN=4096
-PG_CONFIG   ?= pg_config
 
 # Define CHDB_NO_FILE_SCHEME to disable the chdb_hook file:// scheme.
 ifneq ($(NO_FILE_SCHEME),)
 PG_CPPFLAGS += -DCHDB_NO_FILE_SCHEME=1
 endif
 
-PGXS := $(shell $(PG_CONFIG) --pgxs)
-include $(PGXS)
-
-# PGXS tracks no header dependencies, and the vendored libraries are all header.
-$(OBJS): $(wildcard *.h $(PGCH_DIR)/*.h $(CH_C_DIR)/*.h)
+include ../module.mk
