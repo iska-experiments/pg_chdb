@@ -12,61 +12,22 @@
 #include <unistd.h>
 
 #include "common/file_perm.h"
-#include "storage/fd.h"
 #include "miscadmin.h"
 #include "postmaster/interrupt.h"
+#include "storage/fd.h"
 #include "storage/latch.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
 
-#include "commands.h"
-#include "framing.h"
+#include "protocol.h"
+#include "request.h"
 #include "serve.h"
 
 #define CHDB_SEARCH_MAX_CLIENTS 128
 
 static int listen_fd = -1;
 static char socket_path[MAXPGPATH];
-
-/* Serves one request on `fd`. False means close the connection. */
-static bool
-serve_request(int fd, MemoryContext cxt) {
-    MemoryContext old = MemoryContextSwitchTo(cxt);
-    request req       = { 0 };
-    bool has_params   = false;
-    bool keep         = false;
-
-    if (frame_recv_request(fd, &req, &has_params) == 1) {
-        if (has_params) {
-            keep = frame_send_status(fd, "query parameters are not supported");
-        } else {
-            switch (req.cmd) {
-            case CHDB_CMD_EXEC:
-                keep = command_exec(fd, &req);
-                break;
-            case CHDB_CMD_SELECT:
-                keep = command_select(fd, &req);
-                break;
-            case CHDB_CMD_INSERT:
-                keep = command_insert(fd, &req);
-                break;
-            case CHDB_CMD_DROP:
-                keep = command_drop(fd, &req);
-                break;
-            default:
-                /* Unknown commands carry unknown data, so the framing is gone. */
-                frame_send_status(fd, "unknown command");
-                break;
-            }
-        }
-    }
-
-    MemoryContextSwitchTo(old);
-    MemoryContextReset(cxt);
-
-    return keep;
-}
 
 void
 chdb_search_listen(Oid dboid) {
@@ -131,7 +92,7 @@ chdb_search_unlisten(void) {
 void
 chdb_search_serve(void) {
     int clients[CHDB_SEARCH_MAX_CLIENTS] = { 0 };
-    int nclients = 0;
+    int nclients                         = 0;
 
     MemoryContext request_cxt = AllocSetContextCreate(
         TopMemoryContext, "chdb_search request", ALLOCSET_DEFAULT_SIZES
@@ -163,7 +124,7 @@ chdb_search_serve(void) {
         } else if (event.events & WL_SOCKET_READABLE) {
             int i = (int)(intptr_t)event.user_data;
 
-            if (!serve_request(clients[i], request_cxt)) {
+            if (!chdb_search_serve_request(clients[i], request_cxt)) {
                 close(clients[i]);
                 clients[i] = clients[--nclients];
                 rebuild    = true;

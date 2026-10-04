@@ -131,3 +131,37 @@ chdb_search_debug_copy_to(PG_FUNCTION_ARGS) {
 
     PG_RETURN_INT64((int64)rows);
 }
+
+/* The pid of the worker's engine process, or NULL when none runs yet. */
+PG_FUNCTION_INFO_V1(chdb_search_debug_engine_pid);
+Datum
+chdb_search_debug_engine_pid(PG_FUNCTION_ARGS) {
+    require_superuser();
+    chdbSearchConn* conn = chdb_search_connect();
+    int pid              = chdb_search_engine_pid(conn);
+
+    chdb_search_close(conn);
+    if (pid == 0) {
+        PG_RETURN_NULL();
+    }
+
+    PG_RETURN_INT32(pid);
+}
+
+/*
+ * Signals the engine, as a crash would. Does not wait for it to die: the next
+ * request finds out and reports it. Returns the pid signalled.
+ */
+PG_FUNCTION_INFO_V1(chdb_search_debug_kill_engine);
+Datum
+chdb_search_debug_kill_engine(PG_FUNCTION_ARGS) {
+    int signo = PG_GETARG_INT32(0);
+
+    require_superuser();
+    chdbSearchConn* conn = chdb_search_connect();
+    int pid              = chdb_search_engine_kill(conn, signo);
+
+    chdb_search_close(conn);
+
+    PG_RETURN_INT32(pid);
+}

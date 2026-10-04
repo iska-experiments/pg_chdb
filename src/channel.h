@@ -11,8 +11,9 @@
  * side carries its own copy of the waiting, interrupt and cleanup code.
  *
  * The descriptors are nonblocking. Every wait is on the latch, so a cancel or
- * a shutdown gets through, and the error pipe is drained whenever the data
- * channel would block, since a full pipe stalls the peer.
+ * a shutdown, including a background worker's ShutdownRequestPending, gets through, and
+ * the error pipe is drained whenever the data channel would block, since a full pipe
+ * stalls the peer.
  *
  * A channel is either plain, where end of stream is end of data, or chunked:
  * uint32 byte count and that many bytes, ended by a zero count. The chunked
@@ -21,8 +22,10 @@
 
 #define CHDB_CHANNEL_ERR_MAX 4096
 
+#include "search/protocol.h"
+
 /* Largest chunk either side will take, so a corrupt count cannot size a buffer. */
-#define CHDB_CHANNEL_CHUNK_MAX (8 * 1024 * 1024)
+#define CHDB_CHANNEL_CHUNK_MAX CHDB_SEARCH_CHUNK_MAX
 
 typedef struct chdbChannel chdbChannel;
 

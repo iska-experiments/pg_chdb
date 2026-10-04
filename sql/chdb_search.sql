@@ -25,7 +25,20 @@ CREATE FUNCTION chdb_search_copy_to(regclass, TEXT) RETURNS BIGINT
 AS 'MODULE_PATHNAME', 'chdb_search_debug_copy_to'
 LANGUAGE C STRICT;
 
+-- The process that runs libchdb for this database's worker; NULL until a
+-- request has started it.
+CREATE FUNCTION chdb_search_engine_pid() RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'chdb_search_debug_engine_pid'
+LANGUAGE C STRICT;
+
+-- Sends a signal to that process, as a crash would, and returns its pid.
+CREATE FUNCTION chdb_search_debug_kill_engine(INTEGER) RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'chdb_search_debug_kill_engine'
+LANGUAGE C STRICT;
+
 REVOKE EXECUTE ON FUNCTION chdb_search_exec(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_drop() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_query(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_copy_to(regclass, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION chdb_search_engine_pid() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION chdb_search_debug_kill_engine(integer) FROM PUBLIC;
