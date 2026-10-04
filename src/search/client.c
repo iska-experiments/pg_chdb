@@ -186,7 +186,15 @@ read_status(chdbSearchConn* conn) {
     chdb_channel_recv_exact(&conn->ch, &status, sizeof(status));
     chdb_channel_recv_exact(&conn->ch, &len, sizeof(len));
     if (len > CHDB_CHANNEL_CHUNK_MAX) {
-        lost_worker(&conn->ch, "worker sent a bad status", 0);
+        /* The framing cannot be followed past this, so the connection goes. */
+        chdb_channel_close(&conn->ch);
+        ereport(
+            ERROR,
+            errcode(ERRCODE_PROTOCOL_VIOLATION),
+            errmsg("chdb_search: the worker sent a malformed status"),
+            errdetail("Its text would be %u bytes long.", len),
+            errcontext("query: %s", conn->query)
+        );
     }
 
     char* detail = palloc(len + 1);
