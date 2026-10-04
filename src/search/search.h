@@ -97,6 +97,13 @@ chdb_search_skip_index_args(
 extern bool
 chdb_search_wants_phrase_search(Relation index);
 
+/*
+ * The store generation every request names (client.h), which the engine
+ * checks a table idx_<oid>.t_<generation> against: the store holds one table,
+ * idx_<oid>.t, named after no generation, so zero, which asks for no check.
+ */
+#define CHDB_SEARCH_NO_GENERATION 0
+
 /* ---- ddl.c ---- */
 extern ChdbColumn*
 chdb_search_columns(Relation index);
@@ -194,7 +201,6 @@ chdb_search_forget_statement(Oid indexoid, const char* sql);
 
 /* ---- scan.c ---- */
 #include "pg-clickhouse-decode.h"
-
 
 /*
  * A running `SELECT ctid[, distances]` against the worker. Column 0 decodes to

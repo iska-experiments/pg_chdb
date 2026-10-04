@@ -108,8 +108,8 @@ send_rows(Pending* p, const char* table) {
     PG_TRY();
     {
         chdb_search_log_sql("insert", sql);
-        chdb_search_insert(conn, p->indexoid, sql);
-        chdb_search_send(conn, block, len);
+        chdb_search_insert(conn, p->indexoid, CHDB_SEARCH_NO_GENERATION, sql);
+        chdb_channel_write(chdb_search_channel(conn), block, len);
         chdb_search_finish(conn);
     }
     PG_FINALLY();

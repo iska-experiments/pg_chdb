@@ -230,8 +230,8 @@ chdb_search_tokens(PG_FUNCTION_ARGS) {
         pgch_block_source src;
 
         chdb_search_log_sql("select", sql.data);
-        chdb_search_select(conn, InvalidOid, sql.data);
-        src = chdb_native_source(chdb_search_helper(conn));
+        chdb_search_select(conn, InvalidOid, CHDB_SEARCH_NO_GENERATION, sql.data);
+        src = chdb_native_source(chdb_search_channel(conn));
         pgch_reader_init(&reader, &src);
         if (reader.error) {
             ereport(
