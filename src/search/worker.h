@@ -22,4 +22,8 @@ extern int chdb_search_worker_timeout;
 extern void
 chdb_search_worker_ensure(Oid dboid);
 
+/* Entry point the postmaster calls in the worker process. */
+extern PGDLLEXPORT void
+chdb_search_worker_main(Datum arg);
+
 #endif /* CHDB_SEARCH_WORKER_H */
