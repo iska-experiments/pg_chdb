@@ -9,7 +9,7 @@ use Test::More;
 
 our @EXPORT = qw(
     server_log check_log check_query search_node worker_pid worker_socket stderr_of stop_worker
-    store_tables store_rows search_ids check_unavailable pitr_rows check_restored
+    store_tables store_rows search_ids pitr_rows check_restored
 );
 
 =begin server_log
@@ -212,39 +212,12 @@ sub search_ids {
     });
 }
 
-=head2 check_unavailable
-
-Asserts that the node refuses docs_idx as chdb_search.unavailable_index
-says: in error mode a search through the index fails naming the index, with
-a DETAIL matching $detail and a HINT matching $hint; in skip mode the
-planner takes a sequential scan, and the search answers $expect, the ids of
-the rows with the token boots, from the heap.
-
-=cut
-
-sub check_unavailable {
-    my ($node, $expect, $detail, $hint) = @_;
-    local $Test::Builder::Level = $Test::Builder::Level + 1;
-    my $search = "SELECT id FROM docs WHERE body @@@ 'boots'";
-    my $skip   = 'SET chdb_search.unavailable_index = skip;';
-    my $err    = stderr_of($node, "SET enable_seqscan = off; $search");
-    like $err, qr/ERROR:\s+chdb index "docs_idx" is not available on this server/,
-        'The index should be refused';
-    like $err, qr/DETAIL:\s+$detail/, 'Should say why';
-    like $err, qr/HINT:\s+$hint/, 'Should say what to do';
-    like $node->safe_psql(postgres => "$skip EXPLAIN (COSTS OFF) $search"),
-        qr/Seq Scan/, 'Skip mode should plan without the index';
-    is $node->safe_psql(postgres => "$skip $search ORDER BY id"), $expect,
-        'Skip mode should answer from the heap';
-}
-
 =head2 pitr_rows
 
 Commits a row on an archiving primary after its backup, names a restore
 point, commits another, and waits for the WAL holding them to be archived,
 returning the restore point's name. A restore to the point has the first
-row and not the second, and an index whose store is the backup's copy has
-a flush in its metapage that the store never saw.
+row and not the second, in the heap and in the index pages alike.
 
 =cut
 
@@ -264,28 +237,30 @@ sub pitr_rows {
 =head2 check_restored
 
 Asserts what a node restored to pitr_rows' restore point shows: the heap
-has the row committed before the point and not the one after, the index
-refuses the store copied with the backup, which is a flush behind the
-metapage, and REINDEX rebuilds it from the heap, after which searches match
-the heap and the index takes new rows.
+has the row committed before the point and not the one after, and so has
+the index, whose pages were restored and replayed with the heap, with no
+REINDEX; the worker made the engine's directory, which no backup carries,
+again, and the index takes new rows.
 
 =cut
 
 sub check_restored {
     my $node = shift;
     local $Test::Builder::Level = $Test::Builder::Level + 1;
+    my $dboid = $node->safe_psql(postgres =>
+        "SELECT oid FROM pg_database WHERE datname = 'postgres'");
     is $node->safe_psql(postgres => 'SELECT id FROM docs ORDER BY id'), "1\n2\n3",
         'The heap should be at the restore point';
-    check_unavailable($node, "2\n3",
-        qr/The store was last flushed at [0-9A-F]+\/[0-9A-F]+, the index at/,
-        qr/REINDEX INDEX "docs_idx" rebuilds its store\./);
-    $node->safe_psql(postgres => 'REINDEX INDEX docs_idx');
-    is search_ids($node, 'boots'), "2\n3", 'REINDEX should rebuild the store from the heap';
+    is search_ids($node, 'boots'), "2\n3", 'The index should answer for exactly those rows';
     is search_ids($node, 'hiking'), 3,
-        'The row committed before the restore point should be in the rebuilt store';
+        'The row committed before the restore point should be in the index';
     is search_ids($node, 'climbing'), '', 'The row committed after it should not';
+    ok -d $node->data_dir . "/pg_chdb/pgsql_tmp/$dboid",
+        'The worker should have made the engine directory again';
     $node->safe_psql(postgres => "INSERT INTO docs VALUES (5, 'Riding boots')");
-    is search_ids($node, 'boots'), "2\n3\n5", 'The rebuilt index should take new rows';
+    is search_ids($node, 'boots'), "2\n3\n5", 'The restored index should take new rows';
+    ok !$node->log_contains(qr/has no store|does not match its store/, 0),
+        'Nothing should have asked for a REINDEX';
 }
 
 1;

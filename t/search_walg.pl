@@ -1,14 +1,14 @@
 #!/usr/bin/perl
 
-# WAL-G backing up and restoring a cluster with a chdb index whose store is
-# a local directory: backup-push of the data directory, wal-push as the
-# archive_command, backup-fetch and wal-fetch as the restore_command to a
-# recovery target. The store comes back as the backup copied it, a flush
-# behind the restored index, and the fail-safe refuses it until REINDEX, as
-# after any restore. Skipped without a wal-g binary on the PATH or in WALG.
+# WAL-G backing up and restoring a cluster with a chdb index, whose store is
+# the index relation's pages: backup-push of the data directory, wal-push as
+# the archive_command, backup-fetch and wal-fetch as the restore_command to a
+# recovery target. The pages come back and replay with the heap, so the
+# restored index answers for exactly the rows up to the target, with no
+# REINDEX. Skipped without a wal-g binary on the PATH or in WALG.
 #
 # WAL-G tars every file under the data directory and tar has no entry for a
-# socket, so a worker listening on pg_chdb/<dboid>.sock failed backup-push.
+# socket, so a worker listening on a socket file failed backup-push.
 # On Linux the worker listens in the abstract namespace instead, so the
 # backup runs with the worker up; and the restored cluster, on the same host
 # with the same database OID, listens on a name of its own.
@@ -44,7 +44,7 @@ my $dboid  = $primary->safe_psql(postgres =>
 my $socket = worker_socket($primary, 'postgres');
 like $socket, qr{^\@pg_chdb/[0-9a-f]{16}/$dboid$},
     'The worker should listen on an abstract socket';
-ok !-e "$pgdata/pg_chdb/$dboid.sock", 'The data directory should hold no socket';
+ok !-e "$pgdata/pg_chdb/pgsql_tmp/$dboid.sock", 'The data directory should hold no socket';
 $primary->command_ok([ $walg, 'backup-push', $pgdata ],
     'backup-push should back up the data directory with the worker running');
 is worker_socket($primary, 'postgres'), $socket, 'The worker should still listen';

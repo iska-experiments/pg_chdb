@@ -250,14 +250,17 @@ there too.
 
 Tests: `t/search_standby.pl` (a streaming standby answers a search from
 the replicated pages, sees rows replayed after its first search, writes
-nothing, and once promoted serves and takes rows with no REINDEX; the
-cache directory removed and rebuilt), `t/search_crash.pl` (a backend and the postmaster killed with
-rows in flight; recovery leaves the index consistent with the heap),
-`t/search_pagestore.pl` (an engine killed inside a blob; freed pages
-reused; DROP INDEX takes the pages), `t/search_pitr.pl` (base backup with
-WAL archiving restored to a PITR target), `t/search_logical.pl` (a
-logical subscription whose subscriber builds its own index),
-`t/search_walg.pl` (WAL-G itself with `WALG_FILE_PREFIX` pointing at a
-local directory, `backup-push`, `wal-push`, `backup-fetch` and
-`wal-fetch`, skipped when the binary is absent, backing up with the worker
-running) and `t/search_twophase.pl` (two-phase commit through the store).
+nothing, attaches no staging table of a transaction in flight on the
+primary, and once promoted serves and takes rows with no REINDEX; the
+cache directory removed and rebuilt), `t/search_pitr.pl` (a base backup
+and the archive recovered to a restore point: the index answers for
+exactly the rows up to it), `t/search_crash.pl` (a backend and the
+postmaster killed with rows in flight; recovery leaves the index
+consistent with the heap), `t/search_pagestore.pl` (an engine killed
+inside a blob; freed pages reused; DROP INDEX takes the pages),
+`t/search_logical.pl` (a logical subscription whose subscriber builds its
+own index), `t/search_walg.pl` (WAL-G itself with `WALG_FILE_PREFIX`
+pointing at a local directory, `backup-push`, `wal-push`, `backup-fetch`
+and `wal-fetch` to a restore point, skipped when the binary is absent,
+backing up with the worker running) and `t/search_twophase.pl` (two-phase
+commit through the store).

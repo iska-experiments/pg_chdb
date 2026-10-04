@@ -1,10 +1,11 @@
 #!/usr/bin/perl
 
-# Point-in-time recovery from a base backup and archived WAL. The heap comes
-# back as it was at the recovery target, while the store is the copy the
-# backup took, so an index flushed between the backup and the target is
-# ahead of its store: the fail-safe refuses it as chdb_search.unavailable_index
-# says, and REINDEX rebuilds it from the restored heap.
+# Point-in-time recovery from a base backup and archived WAL. The backup and
+# the archive carry the index pages with the heap, so a server recovered to
+# a target holds the rows committed up to it and the index answers for
+# exactly those, with no REINDEX; recovery over, it takes new rows. The
+# engine's directory is left out of the backup, as every pgsql_tmp is, and
+# the worker makes it again.
 
 use v5.34;
 use strict;
@@ -21,7 +22,11 @@ my $primary  = search_node('pitr_primary', { allows_streaming => 1, has_archivin
 my $restored = PostgreSQL::Test::Cluster->new('pitr_restored');
 END { $_->stop for grep { $_ } ($restored, $primary) }
 
+my $dboid = $primary->safe_psql(postgres =>
+    "SELECT oid FROM pg_database WHERE datname = 'postgres'");
 $primary->backup('bkp');
+ok !-e $primary->backup_dir . "/bkp/pg_chdb/pgsql_tmp/$dboid",
+    'The backup should leave the engine directory out';
 my $target = pitr_rows($primary);
 
 $restored->init_from_backup($primary, 'bkp', has_restoring => 1, standby => 0);
