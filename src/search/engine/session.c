@@ -69,6 +69,62 @@ session_begin(const chdbSearchRequest* req) {
 }
 
 /*
+ * The indexes whose database and meta table this engine has made. It is the
+ * only process on the store, and a database goes only through a drop, which
+ * forgets them all, so the DDL need run once per index; a full list only
+ * costs repeats.
+ */
+static uint32_t prepared[128];
+static size_t nprepared;
+
+static bool
+is_prepared(uint32_t index) {
+    for (size_t i = 0; i < nprepared; i++) {
+        if (prepared[i] == index) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void
+session_forget(void) {
+    nprepared = 0;
+}
+
+/* Makes the index's database and meta table, once. */
+static char*
+prepare_database(uint32_t index) {
+    static const char* const ddl[] = {
+        "CREATE DATABASE IF NOT EXISTS " CHDB_STORE_DB_FMT, CHDB_STORE_META_DDL
+    };
+
+    if (is_prepared(index)) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sizeof(ddl) / sizeof(ddl[0]); i++) {
+        char* sql = NULL;
+
+        if (asprintf(&sql, ddl[i], index) < 0) {
+            return strdup("out of memory");
+        }
+
+        char* err = session_run(sql, strlen(sql));
+
+        free(sql);
+        if (err) {
+            return err;
+        }
+    }
+    if (nprepared < sizeof(prepared) / sizeof(prepared[0])) {
+        prepared[nprepared++] = index;
+    }
+
+    return NULL;
+}
+
+/*
  * Whether the table of `req`'s generation exists. The one-line text answer
  * of EXISTS is read rather than a Native block.
  */
@@ -96,19 +152,12 @@ table_exists(const chdbSearchRequest* req, bool* exists) {
 char*
 session_prepare(const chdbSearchRequest* req, bool* no_store) {
     char* err   = session_begin(req);
-    char* sql   = NULL;
     bool exists = false;
 
     *no_store = false;
-    if (err) {
-        return err;
+    if (!err) {
+        err = prepare_database(req->index);
     }
-    if (asprintf(&sql, "CREATE DATABASE IF NOT EXISTS " CHDB_STORE_DB_FMT, req->index) <
-        0) {
-        return strdup("out of memory");
-    }
-    err = session_run(sql, strlen(sql));
-    free(sql);
     if (err || req->generation == 0) {
         return err;
     }

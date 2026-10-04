@@ -13,6 +13,14 @@ SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
 SELECT chdb_search_drop();
 SELECT chdb_search_drop();
 
+-- The store keeps a meta table beside its generation tables, made with the
+-- database on the first request for the index, where the access method will
+-- record each flush. A DROP DATABASE run as a statement is a drop too: the
+-- next request makes both again.
+SELECT * FROM chdb_search_query('SELECT name FROM system.tables WHERE database = ''idx_0''') AS (name text);
+SELECT chdb_search_exec('DROP DATABASE idx_0 SYNC');
+SELECT * FROM chdb_search_query('SELECT name FROM system.tables WHERE database = ''idx_0''') AS (name text);
+
 SELECT chdb_search_exec('CREATE TABLE idx_0.t (id UInt64, body String) ENGINE = MergeTree ORDER BY id');
 
 -- A request names the store generation of the table it works on, zero for

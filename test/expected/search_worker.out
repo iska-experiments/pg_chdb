@@ -29,6 +29,28 @@ SELECT chdb_search_drop();
  
 (1 row)
 
+-- The store keeps a meta table beside its generation tables, made with the
+-- database on the first request for the index, where the access method will
+-- record each flush. A DROP DATABASE run as a statement is a drop too: the
+-- next request makes both again.
+SELECT * FROM chdb_search_query('SELECT name FROM system.tables WHERE database = ''idx_0''') AS (name text);
+ name 
+------
+ meta
+(1 row)
+
+SELECT chdb_search_exec('DROP DATABASE idx_0 SYNC');
+ chdb_search_exec 
+------------------
+ 
+(1 row)
+
+SELECT * FROM chdb_search_query('SELECT name FROM system.tables WHERE database = ''idx_0''') AS (name text);
+ name 
+------
+ meta
+(1 row)
+
 SELECT chdb_search_exec('CREATE TABLE idx_0.t (id UInt64, body String) ENGINE = MergeTree ORDER BY id');
  chdb_search_exec 
 ------------------
