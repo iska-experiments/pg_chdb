@@ -215,9 +215,20 @@ chdb_search_append_text_search(
  * none, or 0 when every leaf names its own. With a column, the expression
  * is false for a NULL text as the strict operator is (a NOT would otherwise
  * admit it); with 0 the caller owns the NULL semantics. Boost weights are
- * ignored here; the filter decides which rows match, the score layer how
- * well.
+ * ignored here; the filter decides which rows match, the score (score.c)
+ * how well.
  */
+/*
+ * The column a leaf searches: the one it names, else column `attno`, the
+ * operator's. Raises for a name that is no text column of the index.
+ */
+extern const struct ChdbColumn*
+chdb_search_leaf_column(
+    const struct ChdbColumn* cols,
+    int natts,
+    int attno,
+    const ChdbQuery* q
+);
 extern void
 chdb_search_render_query(
     StringInfo buf,

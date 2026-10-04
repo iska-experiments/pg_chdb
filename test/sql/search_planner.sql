@@ -103,6 +103,17 @@ SELECT * FROM pg_temp.check($$SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT
 SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ 'running' ORDER BY loc <-> '(0,0)' OFFSET 1 LIMIT 2$$);
 SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ 'running' AND id > 1 ORDER BY loc <-> '(0,0)' LIMIT 2$$);
 SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ 'nothing here'$$);
+-- The query language goes along as well: a chdb.query tree, which carries
+-- the OR and NOT the scan keys cannot, a regex and a wildcard, as operators
+-- and as functions, all members of the column's operator family.
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('trail')) AND price < 100;
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ '^run' AND chdb.wildcard(body, '%shoes%');
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE chdb.query_matches(tags, chdb.term('sport') && !chdb.term('trail'));
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('trail')) AND price < 100$$);
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@/ '^run' AND chdb.wildcard(body, '%shoes%')$$);
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE chdb.regex(body, 'boot') AND body @@% 'walking%'$$);
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ (chdb.phrase('running shoes', 1) || chdb.regex('socks$'))$$);
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE chdb.query_matches(tags, chdb.term('sport') && !chdb.term('trail'))$$);
 -- The order is the store's, nearest first.
 SELECT id, loc <-> '(0,0)' AS distance FROM docs WHERE body @@@ 'running' ORDER BY loc <-> '(0,0)' LIMIT 2;
 -- A NULL needle: folded away when written, no statement from a generic plan.

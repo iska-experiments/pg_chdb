@@ -236,6 +236,20 @@ no part. `k` is any column of the indexed table, which only binds the call
 to that table. With several indexed text columns searched, each column's
 score is summed; `chdb.score(k, 'col')` keeps one column's.
 
+A [`chdb.query`](chdb_search-query.md) is scored by the tokens of its
+match, term and phrase leaves, each idf multiplied by the `chdb.boost`
+weights above the leaf; a token in two leaves counts once, with the larger
+weight. A pattern, `@@/` or `@@%` or a leaf of a query, has no tokens to
+weigh, nor does a leaf under a `!`, which matches no row the score would
+count it for.
+
+```sql
+SELECT id, chdb.score(id)
+  FROM docs
+ WHERE body @@@ (chdb.term('light') || chdb.boost(chdb.term('running'), 2))
+ ORDER BY chdb.score(id) DESC;
+```
+
 The score is a column the [custom scan](#the-custom-scan) has the store
 compute, so it is available where the query runs as one: a `SELECT` from
 one table with a chdb index, with a text search on an indexed column in its

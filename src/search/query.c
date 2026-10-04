@@ -16,9 +16,13 @@
 #include "search.h"
 #include "vector.h"
 
-/* The column a leaf searches: the one it names, else the operator's. */
-static const ChdbColumn*
-leaf_column(const ChdbColumn* cols, int natts, int attno, const ChdbQuery* q) {
+const ChdbColumn*
+chdb_search_leaf_column(
+    const ChdbColumn* cols,
+    int natts,
+    int attno,
+    const ChdbQuery* q
+) {
     if (!q->column) {
         if (attno < 1 || attno > natts) {
             elog(ERROR, "chdb query leaf names no column");
@@ -81,7 +85,11 @@ render(
         return;
     default:
         chdb_search_append_text_search(
-            buf, leaf_column(cols, natts, attno, q), q->kind, q->needle, q->slop
+            buf,
+            chdb_search_leaf_column(cols, natts, attno, q),
+            q->kind,
+            q->needle,
+            q->slop
         );
     }
 }

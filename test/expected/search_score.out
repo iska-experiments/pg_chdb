@@ -268,6 +268,80 @@ EXECUTE q('running');
 RESET plan_cache_mode;
 DEALLOCATE q;
 ----------------------------------------------------------------------------
+-- A chdb.query is scored by its token leaves: a boost multiplies the
+-- weights of the leaves below it, a token in two leaves takes the larger
+-- weight, and a pattern or a leaf under a NOT weighs nothing
+----------------------------------------------------------------------------
+EXPLAIN (COSTS OFF)
+SELECT id FROM docs WHERE body @@@ (chdb.boost(chdb.term('light'), 2) || chdb.term('running'))
+ ORDER BY chdb.score(id) DESC LIMIT 3;
+                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@@ 'or(boost(term(''light''), 2), term(''running''))'::query)
+         Pushed Score: score(id)
+         Pushed Limit: 3
+         ClickHouse: SELECT ctid, toFloat32(2 * log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0) + log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE (hasToken("body", 'light') OR hasToken("body", 'running')) ORDER BY _score DESC, ctid LIMIT 3
+(6 rows)
+
+SELECT id, chdb.score(id) AS score,
+       (2 * pg_temp.idf('light') * (body @@= 'light')::int + pg_temp.idf('running') * (body @@= 'running')::int)::real AS by_hand
+  FROM docs WHERE body @@@ (chdb.boost(chdb.term('light'), 2) || chdb.term('running')) ORDER BY id;
+ id |   score   |  by_hand  
+----+-----------+-----------
+  1 | 0.6931472 | 0.6931472
+  3 |  2.752386 |  2.752386
+  4 | 0.6931472 | 0.6931472
+  6 |  2.059239 |  2.059239
+(4 rows)
+
+-- 'light', the rarer, outranks 'running' until 'running' is boosted.
+SELECT id FROM docs WHERE body @@@ (chdb.term('light') || chdb.term('running')) ORDER BY chdb.score(id) DESC, id;
+ id 
+----
+  3
+  6
+  1
+  4
+(4 rows)
+
+SELECT id FROM docs WHERE body @@@ (chdb.term('light') || chdb.boost(chdb.term('running'), 2)) ORDER BY chdb.score(id) DESC, id;
+ id 
+----
+  3
+  1
+  4
+  6
+(4 rows)
+
+-- Both tokens are in the boosted match: the other leaves do not lower them.
+SELECT id, chdb.score(id) AS score, (3 * (pg_temp.idf('light') * (body @@= 'light')::int + pg_temp.idf('trail') * (body @@= 'trail')::int))::real AS by_hand
+  FROM docs WHERE body @@@ (chdb.term('light') || chdb.boost(chdb.match('light trail'), 3) || chdb.boost(chdb.term('trail'), 0.5))
+ ORDER BY id;
+ id |   score   |  by_hand  
+----+-----------+-----------
+  3 | 6.1777167 | 6.1777167
+  6 | 6.1777167 | 6.1777167
+(2 rows)
+
+SELECT id, chdb.score(id) AS score, pg_temp.idf('running')::real AS by_hand
+  FROM docs WHERE body @@@ (chdb.term('running') && !chdb.term('socks') && chdb.boost(chdb.regex('sho'), 5)) ORDER BY id;
+ id |   score   |  by_hand  
+----+-----------+-----------
+  1 | 0.6931472 | 0.6931472
+  3 | 0.6931472 | 0.6931472
+(2 rows)
+
+-- A pattern alone has no tokens: every row scores zero.
+SELECT id, chdb.score(id) FROM docs WHERE body @@/ 'boot' ORDER BY id;
+ id | score 
+----+-------
+  2 |     0
+  6 |     0
+(2 rows)
+
+----------------------------------------------------------------------------
 -- The custom scan is the only path a scoring query gets: the others would
 -- evaluate the function in Postgres, where it raises
 ----------------------------------------------------------------------------

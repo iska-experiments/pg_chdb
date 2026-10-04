@@ -39,6 +39,26 @@ DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("bo
          ClickHouse: SELECT ctid, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'Running Shoes') ORDER BY _score DESC, ctid LIMIT 2
 (6 rows)
 
+-- A chdb.query is scored by its token leaves, each weighed by the boosts
+-- above it: one tokens() for the match below, none for the NOT and the
+-- pattern, which weigh nothing.
+EXPLAIN (COSTS OFF)
+SELECT id FROM docs WHERE body @@@ (chdb.boost(chdb.match('Running Shoes'), 2) && !chdb.term('boots') && chdb.regex('sho'))
+ ORDER BY chdb.score(id) DESC LIMIT 2;
+DEBUG:  chdb_search select: SELECT tokens(lowerUTF8('Running Shoes'), 'splitByNonAlpha')
+DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N
+DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['running'])
+DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['shoes'])
+                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@@ 'and(boost(match(''Running Shoes''), 2), not(term(''boots'')), regex(''sho''))'::query)
+         Pushed Score: score(id)
+         Pushed Limit: 2
+         ClickHouse: SELECT ctid, toFloat32(2 * log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + 2 * log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAnyTokens("body", 'Running Shoes') AND NOT hasToken("body", 'boots') AND match(lowerUTF8("body"), '(?i)sho'))) ORDER BY _score DESC, ctid LIMIT 2
+(6 rows)
+
 RESET client_min_messages;
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT id, chdb.score(id) FROM docs WHERE body @@@ 'Running Shoes' AND price < 100 AND id > 1;

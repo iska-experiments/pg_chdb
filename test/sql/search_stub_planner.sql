@@ -36,6 +36,9 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE chdb.has_all_tokens(body, 'running shoes') AND price < 100 AND id > 1;
 EXPLAIN (COSTS OFF) SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT 2;
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'shoes' AND id > 1 ORDER BY loc <-> '(0,0)' LIMIT 2;
+-- The query language: a chdb.query tree, a regex and a wildcard.
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ (chdb.match('running') || !chdb.term('trail'));
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ '^run' AND chdb.wildcard(body, 'trail%') ORDER BY loc <-> '(0,0)' LIMIT 1;
 SET chdb_search.enable_custom_scan = off;
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
 RESET chdb_search.enable_custom_scan;

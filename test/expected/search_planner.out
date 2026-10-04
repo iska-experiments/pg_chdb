@@ -262,6 +262,63 @@ SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ 'nothing here'$
  t           |           0 |            0
 (1 row)
 
+-- The query language goes along as well: a chdb.query tree, which carries
+-- the OR and NOT the scan keys cannot, a regex and a wildcard, as operators
+-- and as functions, all members of the column's operator family.
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('trail')) AND price < 100;
+                                                                                       QUERY PLAN                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Pushed Cond: (body @@@ 'and(match_all(''running shoes''), not(term(''trail'')))'::query), (price < '100'::numeric)
+   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAllTokens("body", 'running shoes') AND NOT hasToken("body", 'trail'))) AND "price" < toDecimal256('100', 0)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ '^run' AND chdb.wildcard(body, '%shoes%');
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Pushed Cond: (body @@/ '^run'::text), wildcard(body, '%shoes%'::text)
+   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)^run') AND (lowerUTF8("body") LIKE lowerUTF8('%shoes%'))
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE chdb.query_matches(tags, chdb.term('sport') && !chdb.term('trail'));
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Pushed Cond: query_matches(tags, 'and(term(''sport''), not(term(''trail'')))'::query)
+   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("tags", 'sport') AND NOT hasAllTokens("tags", 'trail'))
+(3 rows)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('trail')) AND price < 100$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@/ '^run' AND chdb.wildcard(body, '%shoes%')$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE chdb.regex(body, 'boot') AND body @@% 'walking%'$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ (chdb.phrase('running shoes', 1) || chdb.regex('socks$'))$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE chdb.query_matches(tags, chdb.term('sport') && !chdb.term('trail'))$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
 -- The order is the store's, nearest first.
 SELECT id, loc <-> '(0,0)' AS distance FROM docs WHERE body @@@ 'running' ORDER BY loc <-> '(0,0)' LIMIT 2;
  id |      distance      

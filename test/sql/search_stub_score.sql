@@ -27,6 +27,12 @@ SET chdb_search_stub.frequencies = 'running:1,shoes:2';
 SET client_min_messages = debug1;
 EXPLAIN (COSTS OFF)
 SELECT id, chdb.score(id) FROM docs WHERE body @@@ 'Running Shoes' ORDER BY chdb.score(id) DESC LIMIT 2;
+-- A chdb.query is scored by its token leaves, each weighed by the boosts
+-- above it: one tokens() for the match below, none for the NOT and the
+-- pattern, which weigh nothing.
+EXPLAIN (COSTS OFF)
+SELECT id FROM docs WHERE body @@@ (chdb.boost(chdb.match('Running Shoes'), 2) && !chdb.term('boots') && chdb.regex('sho'))
+ ORDER BY chdb.score(id) DESC LIMIT 2;
 RESET client_min_messages;
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT id, chdb.score(id) FROM docs WHERE body @@@ 'Running Shoes' AND price < 100 AND id > 1;

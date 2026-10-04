@@ -68,6 +68,26 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'shoes' AND id > 1 ORDER 
          ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes') ORDER BY _distance
 (6 rows)
 
+-- The query language: a chdb.query tree, a regex and a wildcard.
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ (chdb.match('running') || !chdb.term('trail'));
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on docs
+   Pushed Cond: (body @@@ 'or(match(''running''), not(term(''trail'')))'::query)
+   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAnyTokens("body", 'running') OR NOT hasToken("body", 'trail')))
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ '^run' AND chdb.wildcard(body, 'trail%') ORDER BY loc <-> '(0,0)' LIMIT 1;
+                                                                                                  QUERY PLAN                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@/ '^run'::text), wildcard(body, 'trail%'::text)
+         Pushed Order By: (loc <-> '(0,0)'::point)
+         Pushed Limit: 1
+         ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)^run') AND (lowerUTF8("body") LIKE lowerUTF8('trail%')) ORDER BY _distance LIMIT 1
+(6 rows)
+
 SET chdb_search.enable_custom_scan = off;
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
                    QUERY PLAN                   

@@ -98,6 +98,29 @@ RESET plan_cache_mode;
 DEALLOCATE q;
 
 ----------------------------------------------------------------------------
+-- A chdb.query is scored by its token leaves: a boost multiplies the
+-- weights of the leaves below it, a token in two leaves takes the larger
+-- weight, and a pattern or a leaf under a NOT weighs nothing
+----------------------------------------------------------------------------
+EXPLAIN (COSTS OFF)
+SELECT id FROM docs WHERE body @@@ (chdb.boost(chdb.term('light'), 2) || chdb.term('running'))
+ ORDER BY chdb.score(id) DESC LIMIT 3;
+SELECT id, chdb.score(id) AS score,
+       (2 * pg_temp.idf('light') * (body @@= 'light')::int + pg_temp.idf('running') * (body @@= 'running')::int)::real AS by_hand
+  FROM docs WHERE body @@@ (chdb.boost(chdb.term('light'), 2) || chdb.term('running')) ORDER BY id;
+-- 'light', the rarer, outranks 'running' until 'running' is boosted.
+SELECT id FROM docs WHERE body @@@ (chdb.term('light') || chdb.term('running')) ORDER BY chdb.score(id) DESC, id;
+SELECT id FROM docs WHERE body @@@ (chdb.term('light') || chdb.boost(chdb.term('running'), 2)) ORDER BY chdb.score(id) DESC, id;
+-- Both tokens are in the boosted match: the other leaves do not lower them.
+SELECT id, chdb.score(id) AS score, (3 * (pg_temp.idf('light') * (body @@= 'light')::int + pg_temp.idf('trail') * (body @@= 'trail')::int))::real AS by_hand
+  FROM docs WHERE body @@@ (chdb.term('light') || chdb.boost(chdb.match('light trail'), 3) || chdb.boost(chdb.term('trail'), 0.5))
+ ORDER BY id;
+SELECT id, chdb.score(id) AS score, pg_temp.idf('running')::real AS by_hand
+  FROM docs WHERE body @@@ (chdb.term('running') && !chdb.term('socks') && chdb.boost(chdb.regex('sho'), 5)) ORDER BY id;
+-- A pattern alone has no tokens: every row scores zero.
+SELECT id, chdb.score(id) FROM docs WHERE body @@/ 'boot' ORDER BY id;
+
+----------------------------------------------------------------------------
 -- The custom scan is the only path a scoring query gets: the others would
 -- evaluate the function in Postgres, where it raises
 ----------------------------------------------------------------------------

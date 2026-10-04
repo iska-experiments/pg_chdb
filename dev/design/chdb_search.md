@@ -262,7 +262,10 @@ again. The score is therefore a weighted count of matched query terms: a
 row matching two rare terms outranks one matching two common ones, and
 ties are broken by `ctid` for determinism. With several text columns in
 the index the per-column scores are summed; `chdb.score(k, 'body')`
-restricts to one column. A scoring query gets the CustomScan as its only
+restricts to one column. A `chdb.query` key contributes the needles of its
+match, term and phrase leaves outside a NOT, each term multiplied by the
+product of the boosts above its leaf (the largest, for a token two leaves
+share); patterns contribute nothing. A scoring query gets the CustomScan as its only
 path, since every other one would evaluate the placeholder; a statement
 that may recheck rows under EvalPlanQual (row locks, UPDATE, DELETE) gets
 no score, as the recheck hands the scan a heap tuple and the scan tuple
