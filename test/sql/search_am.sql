@@ -39,6 +39,14 @@ SELECT 'Wörter und Zahlen 42' @@@ 'wörter 42',
        ARRAY['Red', 'Blue'] @@? 'green',
        ARRAY['Red', 'Blue'] @@= 'BLUE',
        chdb.has_all_tokens(ARRAY['New York'], 'new york');
+-- Lowercased by Unicode, as lowerUTF8 does, whatever the cluster's ctype.
+SELECT 'ÉCOLE' @@@ 'école', 'ÖL' @@= 'öl', chdb.has_token('ÉCOLE', 'école'), 'ÉCOLE' @@~ 'école',
+       ARRAY['ÉCOLE'] @@@ 'école';
+-- has_token judges the needle as written: a separator in it raises, an
+-- empty one matches nothing, and lowercasing may change its length.
+SELECT chdb.has_token('İzmir ve İstanbul', 'İzmir');
+SELECT chdb.has_token('x ⱥ y', 'Ⱥ ');
+SELECT chdb.has_token('x', '');
 
 ----------------------------------------------------------------------------
 -- Operator classes validate

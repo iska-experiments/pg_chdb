@@ -123,11 +123,17 @@ jobs:
           CLOUDSDK_AUTH_HMAC_KEY: ${{ secrets.gcp_hmac_key }}
           CLOUDSDK_AUTH_HMAC_SECRET: ${{ secrets.gcp_hmac_secret }}
           PG_CHDB_HTTP_URL: http://localhost:9631
+      - name: Test the search module under the C locale
+        # The search predicates must lowercase as the index does whatever the
+        # cluster's ctype, so the search tests run once more in a database
+        # created with --no-locale.
+        id: test-nolocale
+        run: make installcheck NO_LOCALE=1 TAP_TESTS= TESTS="$(ls test/sql/search_*.sql)"
       - name: Show Diffs
-        if: failure() && steps.test.outcome == 'failure'
+        if: failure() && (steps.test.outcome == 'failure' || steps.test-nolocale.outcome == 'failure')
         run: find . -name regression.diffs -exec cat {} +
       - name: Upload Diffs
-        if: failure() && steps.test.outcome == 'failure'
+        if: failure() && (steps.test.outcome == 'failure' || steps.test-nolocale.outcome == 'failure')
         uses: actions/upload-artifact@v7
         with:
           name: regression-${{ matrix.pg.os }}-${{ matrix.pg.arch }}-pg${{ matrix.pg.version }}
