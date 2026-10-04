@@ -103,6 +103,15 @@ CREATE INDEX ON docs USING chdb (id text_ops);
 CREATE INDEX ON docs USING chdb (body) INCLUDE (title);
 CREATE UNIQUE INDEX ON docs USING chdb (body);
 
+-- Only permanent tables: an unlogged heap is reset by crash recovery while
+-- its store is not, and a temporary one is rebuilt and dropped by backends
+-- that need not have the library.
+CREATE UNLOGGED TABLE udocs (body text);
+CREATE INDEX ON udocs USING chdb (body);
+CREATE TEMP TABLE tdocs (body text) ON COMMIT DELETE ROWS;
+CREATE INDEX ON tdocs USING chdb (body);
+DROP TABLE udocs, tdocs;
+
 -- raw_preprocessor needs a superuser.
 SET client_min_messages = debug1;
 CREATE INDEX docs_raw ON docs USING chdb (
