@@ -24,14 +24,17 @@ static const struct config_enum_entry unavailable_index_options[] = {
     { NULL,    0,                      false },
 };
 
-/* Prefixes whose run of digits the mask replaces: OID, generation, xid. */
-static const char* const masked_prefixes[] = { "idx_", ".t_", "_tx_" };
+/*
+ * Prefixes whose run of digits the mask replaces: OID, generation, xid, and
+ * the generation and LSN of a meta row, a list of numbers.
+ */
+static const char* const masked_prefixes[] = { "idx_", ".t_", "_tx_", "VALUES (" };
 
 /*
  * Logs a ClickHouse statement at DEBUG1, so tests can assert on what was
  * generated with client_min_messages = debug1. With mask_oids, index OIDs,
- * store generations and transaction ids become N, as they differ from run to
- * run.
+ * store generations, transaction ids and WAL positions become N, as they
+ * differ from run to run.
  */
 void
 chdb_search_log_sql(const char* what, const char* sql) {
@@ -53,11 +56,16 @@ chdb_search_log_sql(const char* what, const char* sql) {
         if (len) {
             appendBinaryStringInfo(&buf, p, len);
             p += len;
-            if (isdigit((unsigned char)*p)) {
+            while (isdigit((unsigned char)*p)) {
                 while (isdigit((unsigned char)*p)) {
                     p++;
                 }
                 appendStringInfoChar(&buf, 'N');
+                if (strncmp(p, ", ", 2) != 0 || !isdigit((unsigned char)p[2])) {
+                    break;
+                }
+                appendStringInfoString(&buf, ", ");
+                p += 2;
             }
         } else {
             appendStringInfoChar(&buf, *p++);
