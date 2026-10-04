@@ -94,9 +94,7 @@ chdb_vector_query_settings(PG_FUNCTION_ARGS) {
         CHDB_VECTOR_SETTING_RESCORING,
         vector_rescoring ? 1 : 0,
         CHDB_VECTOR_SETTING_FILTER,
-        vector_filter == FILTER_AUTO         ? "auto"
-        : vector_filter == FILTER_POSTFILTER ? "postfilter"
-                                             : "prefilter"
+        GetConfigOption(CHDB_VECTOR_GUC_FILTER, false, false)
     );
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
