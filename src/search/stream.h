@@ -2,7 +2,7 @@
 #define CHDB_SEARCH_STREAM_H
 
 /*
- * A SELECT streamed back from the worker and decoded row by row (scan.c),
+ * A SELECT streamed back from the worker and decoded row by row (stream.c),
  * for the index scan, the custom scan, the aggregate scan, the score's
  * counts and VACUUM. search.h has the rest of the access method's
  * interface.

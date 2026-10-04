@@ -300,7 +300,7 @@ A scan is one ClickHouse
 `SELECT ctid, xmin ... FROM idx_<oid>.t_<generation> WHERE ...` built from the
 scan keys (`select.c`, `query.c`, `textsearch.c`, `phrase.c`, `literal.c`; a
 `chdb.query` tree is `querytree.c`'s, rendered as one expression), streamed
-back as Native blocks and decoded row by row (`scan.c`). When the
+back as Native blocks and decoded row by row (`stream.c`). When the
 transaction has rows buffered or staged for the index, the builder ships the
 buffered ones to the staging table first and reads both tables as a
 `UNION ALL` of the same `SELECT`, each leg with its own `WHERE`, `ORDER BY`
