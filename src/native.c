@@ -1,21 +1,20 @@
 /*
- * The Native stream from chDB to Postgres: the block source a pgch_reader
- * decodes from, and the readers of a DESCRIBE and of a query's rows. The one
- * TU defining the clickhouse-c and pg-clickhouse-c implementations, both
- * halves: the encoder's header stays included for that though native_send.c
- * is what encodes.
+ * The Native stream between Postgres and chDB: the block source a pgch_reader
+ * decodes from, and the one TU defining the clickhouse-c and pg-clickhouse-c
+ * implementations, both halves, so the encoder's header is included here
+ * though nothing below encodes.
  *
  * Values cross as Datums in both directions: a pgch_writer fed from scan slots
- * on the way out (native_send.c), a pgch_reader over the helper's output
- * feeding an insert loop on the way in (native_recv.c). Nothing passes
- * through COPY's text escaping, so arrays, decimals and timestamps keep their
- * types instead of collapsing to String.
+ * on the way out (native_send.c), a pgch_reader over this source on the way
+ * in, feeding an insert loop (native_recv.c), a tuplestore (native_select.c)
+ * or a column list (native_describe.c). Nothing passes through COPY's text
+ * escaping, so arrays, decimals and timestamps keep their types instead of
+ * collapsing to String.
  */
 
 #include "postgres.h"
 
 #include "miscadmin.h"
-#include "utils/builtins.h"
 #include "utils/memutils.h"
 
 #define CHC_IMPLEMENTATION
@@ -26,8 +25,6 @@
 #include "pg-clickhouse-encode.h"
 
 #include "native.h"
-
-/* ---- chDB to Postgres ------------------------------------------------ */
 
 /*
  * Buffer small reads from helper. Read large chunks directly into destination,
@@ -126,65 +123,4 @@ chdb_native_reader_error(const char* error) {
         errmsg("chdb: error fetching chDB query result"),
         errdetail("%s", error)
     );
-}
-
-/*
- * Read one source column from each DESCRIBE row
- * describe_compact_output limits result to String name and type columns
- */
-List*
-chdb_native_describe(chdbChannel* helper) {
-    /* Keep reader buffers temporary and allocate returned columns in caller context */
-    MemoryContext streamcxt = AllocSetContextCreate(
-        CurrentMemoryContext, "chdb describe", ALLOCSET_SMALL_SIZES
-    );
-    MemoryContext oldcxt  = MemoryContextSwitchTo(streamcxt);
-    pgch_block_source src = chdb_native_source(helper);
-    List* columns         = NIL;
-    pgch_reader reader;
-
-    pgch_reader_init(&reader, &src);
-    if (reader.error) {
-        chdb_native_reader_error(reader.error);
-    }
-    if (pgch_reader_columns(&reader) != 2) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
-            errmsg(
-                "chdb: DESCRIBE returned %zu columns, expected 2",
-                pgch_reader_columns(&reader)
-            )
-        );
-    }
-
-    while (pgch_reader_next(&reader)) {
-        Datum values[2];
-        bool nulls[2];
-
-        pgch_reader_fill(&reader, NULL, values, nulls);
-        if (nulls[0] || nulls[1]) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
-                errmsg("chdb: DESCRIBE produced a column with no name or type")
-            );
-        }
-
-        MemoryContextSwitchTo(oldcxt);
-        chdbDescribedColumn* col = palloc(sizeof(*col));
-
-        col->name = TextDatumGetCString(values[0]);
-        col->type = TextDatumGetCString(values[1]);
-        columns   = lappend(columns, col);
-        MemoryContextSwitchTo(streamcxt);
-    }
-    if (reader.error) {
-        chdb_native_reader_error(reader.error);
-    }
-
-    MemoryContextSwitchTo(oldcxt);
-    MemoryContextDelete(streamcxt);
-
-    return columns;
 }
