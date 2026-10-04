@@ -1,5 +1,5 @@
 MODULE_big   = chdb_search
-OBJS         = ../channel.o ../helper_setup.o $(subst .c,.o, $(wildcard *.c))
+OBJS         = ../native.o ../channel.o ../helper_setup.o $(subst .c,.o, $(wildcard *.c))
 
 # engine.c only needs chdb.h for types; it reaches libchdb through dlsym.
 ifneq ($(LIBCHDB_DIR),)
