@@ -77,7 +77,6 @@ struct ChdbRowWriter {
 ChdbRowWriter*
 chdb_rowwriter_new(Relation index) {
     ChdbRowWriter* rw = palloc0(sizeof(*rw));
-    char* tuple       = psprintf("Tuple(%s)", chdb_search_structure(index));
     chc_type* type;
     chc_err err = {};
 
@@ -86,6 +85,8 @@ chdb_rowwriter_new(Relation index) {
         AllocSetContextCreate(rw->cxt, "chdb_search row", ALLOCSET_DEFAULT_SIZES);
     rw->natts = index->rd_att->natts;
     rw->cols  = chdb_search_columns(index);
+
+    char* tuple = psprintf("Tuple(%s)", chdb_search_structure(rw->cols, rw->natts));
 
     if (chc_type_parse(tuple, strlen(tuple), &pgch_alloc, &type, &err) != CHC_OK) {
         pgch_raise(&err, ERRCODE_INVALID_PARAMETER_VALUE, "structure: ", NULL);
@@ -103,6 +104,11 @@ chdb_rowwriter_new(Relation index) {
     /* Nullable arrays are ordinary in Postgres, ClickHouse has no NULL array. */
     pgch_writer_set_null_array(rw->w, PGCH_NULL_ARRAY_EMPTY);
     return rw;
+}
+
+char*
+chdb_rowwriter_column_list(ChdbRowWriter* rw) {
+    return chdb_search_column_list(rw->cols, rw->natts);
 }
 
 void

@@ -64,13 +64,12 @@ chdb_search_table_name(Relation index) {
 
 /* `ctid UInt64, xmin UInt32, name type, ...`, the Native block's schema. */
 char*
-chdb_search_structure(Relation index) {
-    ChdbColumn* cols = chdb_search_columns(index);
+chdb_search_structure(const ChdbColumn* cols, int natts) {
     StringInfoData buf;
 
     initStringInfo(&buf);
     appendStringInfoString(&buf, "ctid UInt64, xmin UInt32");
-    for (int i = 0; i < index->rd_att->natts; i++) {
+    for (int i = 0; i < natts; i++) {
         appendStringInfo(&buf, ", %s %s", cols[i].name, cols[i].type);
     }
     return buf.data;
@@ -103,7 +102,7 @@ chdb_search_create_sql(Relation index) {
             ", INDEX %s %s TYPE text(%s)",
             idxname,
             cols[i].name,
-            chdb_search_skip_index_args(index, i + 1, cols[i].name, cols[i].kind)
+            chdb_search_skip_index_args(index, i + 1, &cols[i])
         );
     }
     appendStringInfoString(&buf, ") ENGINE = MergeTree ORDER BY ctid");
@@ -118,13 +117,12 @@ chdb_search_create_sql(Relation index) {
 
 /* `(ctid, xmin, a, b)`, the columns a Native INSERT names, in block order. */
 char*
-chdb_search_column_list(Relation index) {
-    ChdbColumn* cols = chdb_search_columns(index);
+chdb_search_column_list(const ChdbColumn* cols, int natts) {
     StringInfoData buf;
 
     initStringInfo(&buf);
     appendStringInfoString(&buf, "(ctid, xmin");
-    for (int i = 0; i < index->rd_att->natts; i++) {
+    for (int i = 0; i < natts; i++) {
         appendStringInfo(&buf, ", %s", cols[i].name);
     }
     appendStringInfoChar(&buf, ')');

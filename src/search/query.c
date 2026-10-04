@@ -61,17 +61,21 @@ compare_operator(StrategyNumber strategy) {
 }
 
 bool
-chdb_search_append_quals(StringInfo buf, Relation index, ScanKey keys, int nkeys) {
-    ChdbColumn* cols = chdb_search_columns(index);
-
+chdb_search_append_quals(
+    StringInfo buf,
+    const ChdbColumn* cols,
+    int natts,
+    ScanKey keys,
+    int nkeys
+) {
     for (int i = 0; i < nkeys; i++) {
         ScanKey key = &keys[i];
-        ChdbColumn* col;
+        const ChdbColumn* col;
 
         if (key->sk_flags & SK_ISNULL) {
             return false;
         }
-        if (key->sk_attno < 1 || key->sk_attno > index->rd_att->natts) {
+        if (key->sk_attno < 1 || key->sk_attno > natts) {
             elog(ERROR, "chdb scan key on invalid column %d", key->sk_attno);
         }
         col = &cols[key->sk_attno - 1];
@@ -103,8 +107,8 @@ chdb_search_append_quals(StringInfo buf, Relation index, ScanKey keys, int nkeys
 }
 
 char*
-chdb_search_order_expr(Relation index, ScanKey orderby) {
-    ChdbColumn* col = &chdb_search_columns(index)[orderby->sk_attno - 1];
+chdb_search_order_expr(const ChdbColumn* cols, ScanKey orderby) {
+    const ChdbColumn* col = &cols[orderby->sk_attno - 1];
     const char* fn;
     StringInfoData buf;
     Oid argtype = OidIsValid(orderby->sk_subtype) ? orderby->sk_subtype : col->typid;
@@ -147,10 +151,13 @@ chdb_search_build_select(
     int64 limit
 ) {
     StringInfoData buf, where;
+    int natts = index->rd_att->natts;
+    /* Once per statement; VACUUM's unqualified SELECT needs none of them. */
+    ChdbColumn* cols = nkeys || norderbys ? chdb_search_columns(index) : NULL;
 
     initStringInfo(&buf);
     initStringInfo(&where);
-    if (!chdb_search_append_quals(&where, index, keys, nkeys)) {
+    if (!chdb_search_append_quals(&where, cols, natts, keys, nkeys)) {
         return NULL;
     }
 
@@ -158,13 +165,13 @@ chdb_search_build_select(
     for (int i = 0; i < norderbys; i++) {
         if (norderbys == 1) {
             appendStringInfo(
-                &buf, ", %s AS _distance", chdb_search_order_expr(index, &orderbys[i])
+                &buf, ", %s AS _distance", chdb_search_order_expr(cols, &orderbys[i])
             );
         } else {
             appendStringInfo(
                 &buf,
                 ", %s AS _distance%d",
-                chdb_search_order_expr(index, &orderbys[i]),
+                chdb_search_order_expr(cols, &orderbys[i]),
                 i + 1
             );
         }

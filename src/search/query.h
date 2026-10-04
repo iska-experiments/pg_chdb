@@ -58,12 +58,21 @@ chdb_search_build_select(
 );
 
 /*
- * The pieces, for builders that select other things. The WHERE part appends
- * `a AND b` without the keyword and returns false when a key is NULL. A
- * literal is rendered for a column of ClickHouse type matching `typid`.
+ * The pieces, for builders that select other things; `cols` is the index's
+ * column array from chdb_search_columns, computed once per statement. The
+ * WHERE part appends `a AND b` without the keyword and returns false when a
+ * key is NULL. A literal is rendered for a column of ClickHouse type matching
+ * `typid`.
  */
+struct ChdbColumn;
 extern bool
-chdb_search_append_quals(StringInfo buf, Relation index, ScanKey keys, int nkeys);
+chdb_search_append_quals(
+    StringInfo buf,
+    const struct ChdbColumn* cols,
+    int natts,
+    ScanKey keys,
+    int nkeys
+);
 extern void
 chdb_search_append_literal(StringInfo buf, Datum value, Oid typid);
 extern void
@@ -86,6 +95,6 @@ chdb_search_append_special(
     Oid typid
 );
 extern char*
-chdb_search_order_expr(Relation index, ScanKey orderby);
+chdb_search_order_expr(const struct ChdbColumn* cols, ScanKey orderby);
 
 #endif /* CHDB_SEARCH_QUERY_H */

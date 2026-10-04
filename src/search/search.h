@@ -106,12 +106,7 @@ extern PGDLLEXPORT Datum chdb_search_text_array_options(PG_FUNCTION_ARGS);
 
 /* ---- textindex.c ---- */
 extern char*
-chdb_search_skip_index_args(
-    Relation index,
-    int attno,
-    const char* col,
-    ChdbColumnKind kind
-);
+chdb_search_skip_index_args(Relation index, int attno, const ChdbColumn* column);
 extern bool
 chdb_search_wants_phrase_search(Relation index, const ChdbColumn* cols);
 
@@ -131,9 +126,9 @@ chdb_search_table_name(Relation index);
 extern char*
 chdb_search_create_sql(Relation index);
 extern char*
-chdb_search_structure(Relation index);
+chdb_search_structure(const ChdbColumn* cols, int natts);
 extern char*
-chdb_search_column_list(Relation index);
+chdb_search_column_list(const ChdbColumn* cols, int natts);
 extern void
 chdb_search_create_store(Relation index);
 extern void
@@ -186,6 +181,9 @@ typedef struct ChdbRowWriter ChdbRowWriter;
 
 extern ChdbRowWriter*
 chdb_rowwriter_new(Relation index);
+/* `(ctid, xmin, ...)` for the INSERT the writer's blocks go into. */
+extern char*
+chdb_rowwriter_column_list(ChdbRowWriter* w);
 extern void
 chdb_rowwriter_append(
     ChdbRowWriter* w,
