@@ -1,6 +1,6 @@
 -- The chdb index access method end to end: the searches below are answered by
 -- the database's chdb_search worker from the index's ClickHouse table. The
--- server needs libchdb on its library path or chdb_search.libchdb_path.
+-- server needs libchdb on its library path, for chdb_search_engine.
 \set VERBOSITY terse
 SET client_min_messages = warning;
 CREATE EXTENSION chdb_search;
