@@ -150,10 +150,12 @@ when `COMMIT` returns; abort drops the buffers. Each buffer keeps a mark per
 subtransaction level that has inserted (`marks.c`): `ROLLBACK TO` rewinds
 the writer to the level's mark, `RELEASE` merges it into its parent's. Past
 `chdb_search.flush_threshold` a transaction flushes into a staging table
-`t_<generation>_tx_<fxid>`, named by the full transaction id, which
-pre-commit copies into the table and drops (`staging.c`); rows staged inside
-a savepoint cannot be rewound, so the rollback of one excludes its
-transaction id, which the rows carry as `xmin`, from the copy.
+`t_<generation>_tx_<fxid>`, named by the full transaction id and created
+`AS` the table, whose parts pre-commit attaches to the table with `ALTER
+TABLE ... ATTACH PARTITION tuple() FROM` before dropping it (`staging.c`);
+rows staged inside a savepoint cannot be rewound, so the rollback of one
+excludes its transaction id, which the rows carry as `xmin`, and the table
+is then copied with that filter instead of attached.
 `ambuild` streams the heap in 8 MiB blocks through the same writer
 (`build.c`). A `REINDEX` or `TRUNCATE` in the same transaction discards the
 rows buffered for the old generation, or sets them aside inside a savepoint

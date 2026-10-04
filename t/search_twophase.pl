@@ -62,7 +62,8 @@ $node->safe_psql(postgres => "COMMIT PREPARED 'ins'");
 is search_ids($node, 'boots'), "2\n4", 'COMMIT PREPARED should make the row searchable';
 
 # A transaction past flush_threshold has staged rows in a table of its own,
-# which PREPARE merges into the index's table and drops, as COMMIT would.
+# whose parts PREPARE attaches to the index's table before dropping it, as
+# COMMIT would.
 my $staged = q{SET enable_seqscan = off; SELECT count(*) FROM docs WHERE body @@@ 'staged'};
 $offset = -s $node->logfile;
 $node->safe_psql(postgres => q{
@@ -72,8 +73,8 @@ $node->safe_psql(postgres => q{
     PREPARE TRANSACTION 'staged';
 });
 ok $node->log_contains(
-    qr/chdb_search exec: INSERT INTO idx_$oid\.t_\d+ SELECT \* FROM idx_$oid\.t_\d+_tx_\d+/,
-    $offset), 'PREPARE should merge the staging table';
+    qr/chdb_search exec: ALTER TABLE idx_$oid\.t_\d+ ATTACH PARTITION tuple\(\) FROM idx_$oid\.t_\d+_tx_\d+/,
+    $offset), 'PREPARE should attach the staging table';
 unlike store_tables($node, $oid), qr/_tx_/, 'PREPARE should drop the staging table';
 is $node->safe_psql(postgres => $staged), 0, 'The staged rows should wait for the commit';
 $node->safe_psql(postgres => "COMMIT PREPARED 'staged'");

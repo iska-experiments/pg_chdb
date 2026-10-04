@@ -242,7 +242,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 10 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 60 rows
@@ -263,7 +263,7 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "tit
 INSERT INTO docs (id, body) VALUES (11000, 'tail');
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 21 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 121 rows
@@ -291,7 +291,7 @@ INSERT INTO docs (id, body) VALUES (14000, 'sp');
 ROLLBACK TO s;
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 20 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 120 rows

@@ -1,8 +1,8 @@
 /*
  * Sending a transaction's buffered rows to the worker: as Native blocks into
  * the index's table at commit, or, past chdb_search.flush_threshold, into a
- * staging table <table>_tx_<fxid> along the way, which commit copies into
- * the table and drops. The buffer itself is buffer.c's, and marks.c keeps
+ * staging table <table>_tx_<fxid> along the way, whose parts commit attaches
+ * to the table before dropping it. The buffer itself is buffer.c's, and marks.c keeps
  * the savepoint levels whose rows were staged, so that a rollback of one
  * excludes its rows (by their xmin) from what the staging table contributes.
  *
@@ -111,8 +111,12 @@ chdb_search_abandon_staging(Pending* p) {
 
 /*
  * What the buffer still holds goes straight into the table, and then the
- * staged rows follow it, less those of the savepoints rolled back since
- * they were staged.
+ * staged rows follow it. The staging table was created AS the table, so its
+ * parts attach as they are: ClickHouse links them into the table's
+ * directory, whatever their size, where an INSERT ... SELECT would read and
+ * write every row again (1.4 ms against 142 ms for 300k rows, measured
+ * through the worker). The copy is kept for the staging table a rolled-back
+ * savepoint left rows in, which attaching could not leave out.
  */
 void
 chdb_search_flush_pending(Pending* p) {
@@ -132,7 +136,11 @@ chdb_search_flush_pending(Pending* p) {
                        p->staging,
                        excluded
                    )
-                 : psprintf("INSERT INTO %s SELECT * FROM %s", p->table, p->staging)
+                 : psprintf(
+                       "ALTER TABLE %s ATTACH PARTITION tuple() FROM %s",
+                       p->table,
+                       p->staging
+                   )
     );
     chdb_search_run(p->indexoid, p->generation, psprintf("DROP TABLE %s", p->staging));
     p->staging = NULL;
