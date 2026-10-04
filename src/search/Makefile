@@ -8,7 +8,7 @@ ifneq ($(CHDB_SEARCH_STUB),)
 $(info chdb_search: linking the stub worker client)
 endif
 CLIENT       = $(if $(CHDB_SEARCH_STUB),client_stub.c,client.c)
-OBJS         = ../native.o ../channel.o ../helper_setup.o ../spawn.o $(subst .c,.o, $(filter-out client.c client_stub.c,$(wildcard *.c)) $(CLIENT))
+OBJS         = ../native.o ../native_writer.o ../channel.o ../helper_setup.o ../spawn.o $(subst .c,.o, $(filter-out client.c client_stub.c,$(wildcard *.c)) $(CLIENT))
 
 include ../module.mk
 

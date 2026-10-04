@@ -1,5 +1,5 @@
 MODULE_big   = chdb_hook
-OBJS 		 = ../native.o ../helper.o ../helper_setup.o ../channel.o ../spawn.o $(subst .c,.o, $(wildcard *.c))
+OBJS 		 = ../native.o ../native_writer.o ../helper.o ../helper_setup.o ../channel.o ../spawn.o $(subst .c,.o, $(wildcard *.c))
 
 # Define CHDB_NO_FILE_SCHEME to disable the chdb_hook file:// scheme.
 ifneq ($(NO_FILE_SCHEME),)

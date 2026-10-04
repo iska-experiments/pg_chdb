@@ -21,6 +21,7 @@
 
 #include "pg-clickhouse-encode.h"
 
+#include "../native_writer.h"
 #include "search.h"
 
 /* Matches src/native.c: ClickHouse coalesces small blocks itself. */
@@ -73,33 +74,17 @@ struct ChdbRowWriter {
     ChdbColumn* cols;
 };
 
-/* Same parsing as writer_for in src/native.c: the structure names the columns. */
+/* The table's structure names the columns, as COPY's does (src/native.c). */
 ChdbRowWriter*
 chdb_rowwriter_new(Relation index) {
     ChdbRowWriter* rw = palloc0(sizeof(*rw));
-    chc_type* type;
-    chc_err err = {};
 
     rw->cxt = CurrentMemoryContext;
     rw->rowcxt =
         AllocSetContextCreate(rw->cxt, "chdb_search row", ALLOCSET_DEFAULT_SIZES);
     rw->natts = index->rd_att->natts;
     rw->cols  = chdb_search_columns(index);
-
-    char* tuple = psprintf("Tuple(%s)", chdb_search_structure(rw->cols, rw->natts));
-
-    if (chc_type_parse(tuple, strlen(tuple), &pgch_alloc, &type, &err) != CHC_OK) {
-        pgch_raise(&err, ERRCODE_INVALID_PARAMETER_VALUE, "structure: ", NULL);
-    }
-
-    size_t ncols   = chc_type_n_children(type);
-    pgch_col* cols = palloc0(ncols * sizeof(pgch_col));
-
-    for (size_t i = 0; i < ncols; i++) {
-        cols[i].name = chc_type_tuple_field_name(type, i, &cols[i].name_len);
-        cols[i].type = chc_type_child(type, i);
-    }
-    rw->w = pgch_writer_new(rw->cxt, cols, ncols);
+    rw->w = chdb_writer_for(rw->cxt, chdb_search_structure(rw->cols, rw->natts), NULL);
 
     /* Nullable arrays are ordinary in Postgres, ClickHouse has no NULL array. */
     pgch_writer_set_null_array(rw->w, PGCH_NULL_ARRAY_EMPTY);
