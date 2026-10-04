@@ -13,6 +13,7 @@
 #include "search.h"
 
 int chdb_search_flush_threshold_kb       = 64 * 1024;
+int chdb_search_max_buffer_kb            = 1024 * 1024;
 double chdb_search_vacuum_optimize_ratio = 0.2;
 bool chdb_search_mask_oids               = false;
 
@@ -64,10 +65,26 @@ chdb_search_am_init(void) {
         "chdb_search.flush_threshold",
         "Bytes of insert buffer per index above which a transaction stages rows in "
         "ClickHouse.",
-        NULL,
+        "Rows inserted inside a savepoint are not staged: their buffer grows until "
+        "COMMIT, up to chdb_search.max_buffer.",
         &chdb_search_flush_threshold_kb,
         64 * 1024,
         64,
+        MAX_KILOBYTES,
+        PGC_USERSET,
+        GUC_UNIT_KB,
+        NULL,
+        NULL,
+        NULL
+    );
+    DefineCustomIntVariable(
+        "chdb_search.max_buffer",
+        "Bytes of insert buffer per index above which an insert fails.",
+        "A ceiling for rows that cannot be staged early, so that a transaction gets "
+        "an error rather than the backend an OOM kill. Zero means no limit.",
+        &chdb_search_max_buffer_kb,
+        1024 * 1024,
+        0,
         MAX_KILOBYTES,
         PGC_USERSET,
         GUC_UNIT_KB,

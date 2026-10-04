@@ -25,6 +25,7 @@ typedef struct Pending {
     /* The subtransaction whose rebuild set these rows aside, else Invalid. */
     SubTransactionId superseded;
     bool poisoned; /* a savepoint rewind failed: rw is gone, COMMIT must error */
+    bool warned;   /* of growing past flush_threshold inside a savepoint */
 } Pending;
 
 /* ---- marks.c ---- */
