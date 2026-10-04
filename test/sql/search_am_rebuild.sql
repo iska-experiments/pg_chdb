@@ -132,6 +132,61 @@ ROLLBACK;
 RESET client_min_messages;
 
 ----------------------------------------------------------------------------
+-- The rest of an index's life: concurrent builds, expression columns, the
+-- metapage, options, and drops by transaction, cascade and partition
+----------------------------------------------------------------------------
+-- CREATE INDEX CONCURRENTLY builds the store, then validates the index
+-- against it and inserts what it finds missing, which depends on the
+-- client's answers, so those statements are not pinned; REINDEX INDEX
+-- CONCURRENTLY gives the index a new OID and drops the old store.
+CREATE INDEX CONCURRENTLY docs_cic ON docs USING chdb (body text_ops);
+SELECT indisvalid FROM pg_index WHERE indexrelid = 'docs_cic'::regclass;
+REINDEX INDEX CONCURRENTLY docs_cic;
+SELECT indisvalid FROM pg_index WHERE indexrelid = 'docs_cic'::regclass;
+SET client_min_messages = debug1;
+DROP INDEX docs_cic;
+\echo -- expression columns get distinct names; one named as the store names its own is refused
+CREATE INDEX docs_expr ON docs USING chdb ((lower(body)), (lower(title)));
+DROP INDEX docs_expr;
+RESET client_min_messages;
+CREATE FUNCTION ctid(text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT $1 $$;
+CREATE INDEX ON docs USING chdb ((ctid(body)));
+DROP FUNCTION ctid(text);
+\echo -- the metapage: the magic CHDS, version 1, a generation, the last flush
+SELECT to_hex(magic), version, generation <> '0', flushed_lsn > '0/0'
+  FROM chdb_search_metapage('docs_idx');
+SELECT * FROM chdb_search_metapage('docs_pkey');
+\echo -- the index option is set and reset in place, without a build
+SET client_min_messages = debug1;
+ALTER INDEX docs_idx SET (vacuum_optimize_ratio = 0.9);
+SELECT reloptions FROM pg_class WHERE relname = 'docs_idx';
+ALTER INDEX docs_idx RESET (vacuum_optimize_ratio);
+RESET client_min_messages;
+\echo -- an insert and a drop of one index in a transaction: the row reaches every store, then the dropped one goes
+CREATE INDEX docs_tmp ON docs USING chdb (title text_ops);
+SET client_min_messages = debug1;
+BEGIN;
+INSERT INTO docs (id) VALUES (30);
+DROP INDEX docs_tmp;
+COMMIT;
+RESET client_min_messages;
+\echo -- dropped with its schema
+CREATE SCHEMA s;
+CREATE TABLE s.t (b varchar(50));
+CREATE INDEX ON s.t USING chdb (b);
+SET client_min_messages = debug1;
+DROP SCHEMA s CASCADE;
+RESET client_min_messages;
+\echo -- one store per partition and none for the parent, each dropped with its table
+CREATE TABLE p (b varchar(50)) PARTITION BY LIST (b);
+CREATE TABLE p1 PARTITION OF p FOR VALUES IN ('x');
+CREATE TABLE p2 PARTITION OF p FOR VALUES IN ('y');
+SET client_min_messages = debug1;
+CREATE INDEX ON p USING chdb (b);
+DROP TABLE p;
+RESET client_min_messages;
+
+----------------------------------------------------------------------------
 -- DROP INDEX CONCURRENTLY drops the store once, after its last internal commit
 ----------------------------------------------------------------------------
 CREATE INDEX docs_cic ON docs USING chdb (body text_ops);

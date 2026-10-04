@@ -162,18 +162,15 @@ chdb_search_columns(Relation index) {
                 errdetail("The ClickHouse table uses \"ctid\" and \"xmin\" itself.")
             );
         }
+        /*
+         * ChooseIndexColumnNames gives every column a distinct name, lower
+         * and lower1 for two lower(...) expressions, so the store's columns
+         * cannot collide; the Assert says the table relies on that.
+         */
         for (int j = 0; j < i; j++) {
-            if (strcmp(NameStr(TupleDescAttr(index->rd_att, j)->attname), name) == 0) {
-                ereport(
-                    ERROR,
-                    errcode(ERRCODE_DUPLICATE_COLUMN),
-                    errmsg("chdb index has two columns named \"%s\"", name),
-                    errhint(
-                        "Give expression columns distinct names with a view or "
-                        "generated column."
-                    )
-                );
-            }
+            Assert(
+                strcmp(NameStr(TupleDescAttr(index->rd_att, j)->attname), name) != 0
+            );
         }
 
         cols[i].name = chdb_search_quote_ident(name);
