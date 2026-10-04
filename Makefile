@@ -147,19 +147,6 @@ uninstall: uninstall-$(patsubst chdb_%,%,$(1))
 EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc
 endef
 
-# The chdb_search extension: the search worker, its clients and the chdb index
-# access method. Pass CHDB_SEARCH_STUB=1 to link the per-backend fake in
-# src/search/client_stub.c instead of the worker client, for building and
-# testing the access method without a worker.
-$(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)))
-
-# Which client the module was linked with, rewritten only when that changes,
-# so switching CHDB_SEARCH_STUB relinks it.
-src/search/client.mode: FORCE
-	@echo '$(CHDB_SEARCH_STUB)' | cmp -s - $@ || echo '$(CHDB_SEARCH_STUB)' > $@
-.PHONY: FORCE
-FORCE:
-
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
 	git submodule update --init --recursive
@@ -183,11 +170,31 @@ uninstall: uninstall-$(1)
 EXTRA_CLEAN += $(2) $$(dir $(2))*.o
 endef
 
-# chdb_helper answers one COPY. The search worker forks chdb_search_engine to
-# run libchdb, so that a libchdb crash never takes the worker, and with it the
-# cluster, down.
+# chdb_helper answers one COPY.
 $(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
+
+# The chdb_search extension: the search worker, its clients and the chdb index
+# access method, with the chdb_search_engine the worker forks to run libchdb,
+# so that a libchdb crash never takes the worker, and with it the cluster,
+# down. Pass CHDB_SEARCH_STUB=1 to link the per-backend fake in
+# src/search/client_stub.c instead of the worker client, for building and
+# testing the access method without a worker. Both need PostgreSQL 17 or
+# later, as the control file says; an older server builds and tests the chdb
+# extension alone, and its TAP tests skip the search ones.
+ifeq ($(shell test $(VERSION_NUM) -ge 170000 && echo yes),yes)
+$(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)))
 $(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h))
+else
+TESTS := $(filter-out test/sql/search_%,$(TESTS))
+PROVE_TESTS := $(filter-out t/search_%,$(wildcard t/*.pl))
+endif
+
+# Which client the module was linked with, rewritten only when that changes,
+# so switching CHDB_SEARCH_STUB relinks it.
+src/search/client.mode: FORCE
+	@echo '$(CHDB_SEARCH_STUB)' | cmp -s - $@ || echo '$(CHDB_SEARCH_STUB)' > $@
+.PHONY: FORCE
+FORCE:
 
 # The search tests share the database's worker, extension and table names, so
 # they run one at a time after the others.
