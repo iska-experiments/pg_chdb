@@ -37,6 +37,7 @@
  *     INDEX "tags_idx" "tags" TYPE text(tokenizer = array,
  *       preprocessor = lowerUTF8("tags")))
  *     ENGINE = MergeTree ORDER BY ctid
+ *     SETTINGS fsync_after_insert = 1, fsync_part_directory = 1
  *   INSERT INTO idx_16401.t_7342 (ctid, xmin, "body", "tags", "author")
  *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'running shoes')
  *   DELETE FROM idx_16401.t_7342 WHERE ctid IN (4294967296, ...)
@@ -108,11 +109,21 @@ chdb_search_create_sql(Relation index) {
             chdb_search_skip_index_args(index, i + 1, &cols[i])
         );
     }
-    appendStringInfoString(&buf, ") ENGINE = MergeTree ORDER BY ctid");
+    /*
+     * A part is fsynced as it is written, so that the rows a flush sends are
+     * on disk before the COMMIT that follows it is acknowledged, as Postgres
+     * promises for its own data; ClickHouse's default leaves them to the
+     * kernel. One SETTINGS clause: ClickHouse rejects a second.
+     */
+    appendStringInfoString(
+        &buf,
+        ") ENGINE = MergeTree ORDER BY ctid "
+        "SETTINGS fsync_after_insert = 1, fsync_part_directory = 1"
+    );
     if (chdb_search_wants_phrase_search(index, cols)) {
         /* ClickHouse gates the index argument behind a MergeTree setting. */
         appendStringInfoString(
-            &buf, " SETTINGS allow_experimental_text_index_phrase_search = 1"
+            &buf, ", allow_experimental_text_index_phrase_search = 1"
         );
     }
     return buf.data;
