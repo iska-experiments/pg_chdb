@@ -17,6 +17,11 @@
  * rather than in ClickHouse's words. Queries pass through unchanged, so
  * callers name the table in full (see ddl.c). The framing is documented in
  * protocol.h.
+ *
+ * Every call returns or raises within chdb_search.worker_timeout when
+ * interrupts are held (a commit or abort callback), where a cancel could not
+ * end a wait for a worker that is busy or stopped; elsewhere waits are
+ * interruptible and unbounded.
  */
 
 #include "postgres.h"

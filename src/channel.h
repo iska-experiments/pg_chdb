@@ -13,7 +13,9 @@
  * The descriptors are nonblocking. Every wait is on the latch, so a cancel or
  * a shutdown, including a background worker's ShutdownRequestPending, gets through, and
  * the error pipe is drained whenever the data channel would block, since a full pipe
- * stalls the peer.
+ * stalls the peer. While interrupts are held, as they are in a transaction's
+ * commit and abort callbacks, nothing gets through, so a channel given a hold
+ * timeout fails instead once a call has waited that long.
  *
  * A channel is either plain, where end of stream is end of data, or chunked:
  * uint32 byte count and that many bytes, ended by a zero count. The chunked
@@ -40,6 +42,10 @@ struct chdbChannel {
     /* What went wrong, for the message when a read or write breaks. */
     const char* recv_what;
     const char* send_what;
+    const char* wait_what; /* a hold timeout spent */
+
+    /* Milliseconds a call may wait while interrupts are held; 0 for no bound. */
+    int hold_timeout_ms;
 
     /* Raises. `errnum` is zero for a peer that simply went away. */
     void (*fail)(chdbChannel* ch, const char* what, int errnum);

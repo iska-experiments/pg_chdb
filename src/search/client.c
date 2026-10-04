@@ -86,7 +86,8 @@ try_connect(void) {
     snprintf(
         addr.sun_path, sizeof(addr.sun_path), CHDB_SEARCH_SOCKET_FMT, MyDatabaseId
     );
-    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    /* Nonblocking, so that a full backlog is an EAGAIN to retry, not a hang. */
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd >= 0 && connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         int saved = errno;
 
@@ -108,7 +109,16 @@ chdb_search_connect(void) {
     conn->ch.chunked   = true;
     conn->ch.recv_what = "error receiving from the worker";
     conn->ch.send_what = "error sending to the worker";
+    conn->ch.wait_what = "timed out waiting for the worker";
     conn->ch.fail      = lost_worker;
+    /*
+     * The worker serves one request at a time, so a request can wait behind
+     * another backend's build or OPTIMIZE; inside a commit or abort callback
+     * (the store drops of drop.c) that wait cannot be cancelled, so it is
+     * bounded as the connect is. The drop then warns and the sweep removes
+     * the store later.
+     */
+    conn->ch.hold_timeout_ms = chdb_search_worker_timeout * 1000;
     chdb_channel_own(&conn->ch);
 
     for (;;) {
