@@ -24,7 +24,6 @@
 #include <string.h>
 
 #include "access/heapam.h"
-#include "access/htup_details.h"
 #include "access/table.h"
 #include "access/tableam.h"
 #include "access/tupconvert.h"
@@ -36,8 +35,6 @@
 #include "executor/nodeModifyTable.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
-#include "optimizer/optimizer.h"
-#include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -51,10 +48,7 @@
 #include "pg-clickhouse-encode.h"
 
 #include "native.h"
-
-/* Rows and bytes to buffer before a table_multi_insert, as copyfrom.c does. */
-#define CHDB_MAX_BUFFERED_TUPLES 1000
-#define CHDB_MAX_BUFFERED_BYTES (64 * 1024)
+#include "native_insert.h"
 
 /* ---- chDB to Postgres ------------------------------------------------ */
 
@@ -144,182 +138,6 @@ chdb_native_source(chdbChannel* helper) {
     return (pgch_block_source){ .ud         = s,
                                 .next_block = source_next,
                                 .error      = source_error };
-}
-
-/*
- * Rows on their way into the relation, buffered when the target allows it.
- * copyfrom.c splits this across CopyMultiInsertInfo and CopyMultiInsertBuffer,
- * one buffer per partition; a single relation needs one of each.
- */
-typedef struct nativeInsert {
-    EState* estate;
-    ResultRelInfo* target;
-    TransitionCaptureState* transition;
-    CommandId cid;
-    int ti_options;
-    BulkInsertState bistate;
-    bool buffered; /* target takes table_multi_insert */
-    int nused;
-    size_t bytes;
-    TupleTableSlot* slots[CHDB_MAX_BUFFERED_TUPLES];
-} nativeInsert;
-
-/* ExecInsertIndexTuples' argument order changed in PG 19. */
-static inline List*
-insert_index_tuples(ResultRelInfo* rri, TupleTableSlot* slot, EState* estate) {
-#if PG_VERSION_NUM >= 190000
-    return ExecInsertIndexTuples(rri, estate, 0, slot, NIL, NULL);
-#elif PG_VERSION_NUM >= 160000
-    return ExecInsertIndexTuples(rri, slot, estate, false, false, NULL, NIL, false);
-#else
-    return ExecInsertIndexTuples(rri, slot, estate, false, false, NULL, NIL);
-#endif
-}
-
-/* Index entries and AFTER ROW triggers for a tuple already in the table. */
-static void
-after_insert(nativeInsert* ins, ResultRelInfo* rri, TupleTableSlot* slot) {
-    List* recheck =
-        rri->ri_NumIndices > 0 ? insert_index_tuples(rri, slot, ins->estate) : NIL;
-
-    ExecARInsertTriggers(ins->estate, rri, slot, recheck, ins->transition);
-    list_free(recheck);
-}
-
-/* Writes the buffered rows out, as CopyMultiInsertBufferFlush does. */
-static void
-flush_buffer(nativeInsert* ins) {
-    if (!ins->nused) {
-        return;
-    }
-
-    /* table_multi_insert may leak, so give it a context that gets reset. */
-    MemoryContext oldcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(ins->estate));
-
-    table_multi_insert(
-        ins->target->ri_RelationDesc,
-        ins->slots,
-        ins->nused,
-        ins->cid,
-        ins->ti_options,
-        ins->bistate
-    );
-    MemoryContextSwitchTo(oldcxt);
-
-    for (int i = 0; i < ins->nused; i++) {
-        after_insert(ins, ins->target, ins->slots[i]);
-        ExecClearTuple(ins->slots[i]);
-    }
-
-    ins->nused = 0;
-    ins->bytes = 0;
-}
-
-/* Slot to build the next buffered row in. */
-static TupleTableSlot*
-buffer_slot(nativeInsert* ins) {
-    if (!ins->slots[ins->nused]) {
-        ins->slots[ins->nused] = table_slot_create(ins->target->ri_RelationDesc, NULL);
-    }
-
-    return ins->slots[ins->nused];
-}
-
-/* Stores the row `buffer_slot` handed out, flushing once the buffer is full. */
-static void
-buffer_store(nativeInsert* ins, TupleTableSlot* slot) {
-    ins->bytes += heap_compute_data_size(
-        slot->tts_tupleDescriptor, slot->tts_values, slot->tts_isnull
-    );
-
-    /* The values point into the per-row context, so the slot needs its own. */
-    ExecMaterializeSlot(slot);
-    ins->nused++;
-
-    if (ins->nused >= CHDB_MAX_BUFFERED_TUPLES ||
-        ins->bytes >= CHDB_MAX_BUFFERED_BYTES) {
-        flush_buffer(ins);
-    }
-}
-
-/*
- * One row into `rri`, the routed partition when there is one. False when an
- * FDW took the row and stored nothing, which counts as no row inserted.
- */
-static bool
-insert_row(nativeInsert* ins, ResultRelInfo* rri, TupleTableSlot* slot) {
-    if (rri->ri_FdwRoutine) {
-        slot = rri->ri_FdwRoutine->ExecForeignInsert(ins->estate, rri, slot, NULL);
-        if (!slot) {
-            return false; /* "do nothing" */
-        }
-
-        /* AFTER ROW triggers might reference the tableoid column. */
-        slot->tts_tableOid = RelationGetRelid(rri->ri_RelationDesc);
-        ExecARInsertTriggers(ins->estate, rri, slot, NIL, ins->transition);
-        return true;
-    }
-
-    table_tuple_insert(
-        rri->ri_RelationDesc, slot, ins->cid, ins->ti_options, ins->bistate
-    );
-    after_insert(ins, rri, slot);
-
-    return true;
-}
-
-/*
- * Defaults for the columns a COPY column list leaves out, which BeginCopyFrom
- * prepares in copyfrom.c.
- */
-typedef struct nativeDefaults {
-    int n;
-    int* dest; /* attribute offsets the defaults fill */
-    ExprState** exprs;
-} nativeDefaults;
-
-static nativeDefaults
-defaults_for(Relation rel, List* attnums) {
-    TupleDesc desc          = RelationGetDescr(rel);
-    nativeDefaults defaults = { .n     = 0,
-                                .dest  = palloc(desc->natts * sizeof(int)),
-                                .exprs = palloc(desc->natts * sizeof(ExprState*)) };
-
-    for (int attnum = 1; attnum <= desc->natts; attnum++) {
-        Form_pg_attribute attr = TupleDescAttr(desc, attnum - 1);
-
-        /* ExecComputeStoredGenerated computes a generated column instead. */
-        if (attr->attisdropped || attr->attgenerated ||
-            list_member_int(attnums, attnum)) {
-            continue;
-        }
-        Expr* expr = (Expr*)build_column_default(rel, attnum);
-        if (!expr) {
-            continue;
-        }
-
-        defaults.dest[defaults.n]    = attnum - 1;
-        defaults.exprs[defaults.n++] = ExecInitExpr(expression_planner(expr), NULL);
-    }
-
-    return defaults;
-}
-
-/* Evaluates the defaults into `slot`, per row so a volatile one varies. */
-static void
-fill_defaults(const nativeDefaults* defaults, EState* estate, TupleTableSlot* slot) {
-    if (!defaults->n) {
-        return;
-    }
-
-    ExprContext* econtext = GetPerTupleExprContext(estate);
-    MemoryContext oldcxt  = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-    for (int i = 0; i < defaults->n; i++) {
-        slot->tts_values[defaults->dest[i]] = ExecEvalExpr(
-            defaults->exprs[i], econtext, &slot->tts_isnull[defaults->dest[i]]
-        );
-    }
-    MemoryContextSwitchTo(oldcxt);
 }
 
 /* Reader errors carry the chDB message; the query text is the caller's. */
@@ -468,7 +286,7 @@ chdb_copy_receive(
 
     MemoryContextSwitchTo(oldcxt);
 
-    nativeDefaults defaults = defaults_for(rel, attnums);
+    chdbNativeDefaults defaults = chdb_native_defaults_for(rel, attnums);
 
     /* ---- from here on, copyfrom.c's CopyFrom ---- */
 
@@ -515,7 +333,7 @@ chdb_copy_receive(
     AfterTriggerBeginQuery();
 
     /* Partition routing wants to know whether transition tuples are captured. */
-    nativeInsert ins = {};
+    chdbNativeInsert ins = {};
 
     ins.transition = mtstate->mt_transition_capture =
         MakeTransitionCaptureState(rel->trigdesc, RelationGetRelid(rel), CMD_INSERT);
@@ -555,7 +373,7 @@ chdb_copy_receive(
         ResetPerTupleExprContext(estate);
         MemoryContextReset(rowcxt);
 
-        TupleTableSlot* slot = ins.buffered ? buffer_slot(&ins) : rootslot;
+        TupleTableSlot* slot = ins.buffered ? chdb_native_insert_slot(&ins) : rootslot;
         ExecClearTuple(slot);
         /* Attributes without a stream column, default or generator stay null. */
         memset(slot->tts_isnull, true, desc->natts * sizeof(bool));
@@ -576,7 +394,7 @@ chdb_copy_receive(
         }
         pgch_reader_fill_map(&reader, states, dest, slot->tts_values, slot->tts_isnull);
         MemoryContextSwitchTo(oldcxt);
-        fill_defaults(&defaults, estate, slot);
+        chdb_native_defaults_fill(&defaults, estate, slot);
         ExecStoreVirtualTuple(slot);
 
         /* Constraints may reference the tableoid column. */
@@ -642,8 +460,8 @@ chdb_copy_receive(
             }
 
             if (ins.buffered) {
-                buffer_store(&ins, slot);
-            } else if (!insert_row(&ins, rri, slot)) {
+                chdb_native_insert_store(&ins, slot);
+            } else if (!chdb_native_insert_row(&ins, rri, slot)) {
                 continue;
             }
         }
@@ -656,7 +474,7 @@ chdb_copy_receive(
         report_reader_error(reader.error);
     }
 
-    flush_buffer(&ins);
+    chdb_native_insert_flush(&ins);
     for (int i = 0; i < CHDB_MAX_BUFFERED_TUPLES && ins.slots[i]; i++) {
         ExecDropSingleTupleTableSlot(ins.slots[i]);
     }
