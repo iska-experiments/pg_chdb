@@ -13,7 +13,6 @@
 #include "access/htup_details.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_attribute.h"
-#include "catalog/pg_type_d.h"
 #include "fmgr.h"
 #include "parser/parse_coerce.h"
 #include "utils/builtins.h"
@@ -80,20 +79,23 @@ kind_of(Relation index, int i) {
  * its collation, and the scan does not recheck: under en_US `author >= 'a'`
  * finds 'ann' and 'Bob' by seqscan but only 'ann' through the index, and a
  * nondeterministic collation even breaks `=`. So a filterable text column
- * needs a bytewise collation, as btree's text_pattern_ops does.
+ * needs a bytewise collation, as btree's text_pattern_ops does. The index
+ * has the collation of every collatable column, so that is what is checked
+ * rather than a list of text types: a domain over text carries the one it
+ * was declared with, and varchar needs no case of its own.
  */
 static void
-check_text_collation(Relation index, int i, Oid typid) {
+check_collation(Relation index, int i) {
+    Oid collation = index->rd_indcollation[i];
     bool bytewise;
 
-    if (typid != TEXTOID && typid != VARCHAROID && typid != BPCHAROID &&
-        typid != NAMEOID) {
+    if (!OidIsValid(collation)) {
         return;
     }
 #if PG_VERSION_NUM >= 180000
-    bytewise = pg_newlocale_from_collation(index->rd_indcollation[i])->collate_is_c;
+    bytewise = pg_newlocale_from_collation(collation)->collate_is_c;
 #else
-    bytewise = lc_collate_is_c(index->rd_indcollation[i]);
+    bytewise = lc_collate_is_c(collation);
 #endif
     if (!bytewise) {
         ereport(
@@ -178,7 +180,7 @@ chdb_search_columns(Relation index) {
         cols[i].kind = kind_of(index, i);
         if (cols[i].kind == CHDB_COL_COLUMNAR) {
             check_operators(index, i, a->atttypid);
-            check_text_collation(index, i, a->atttypid);
+            check_collation(index, i);
         }
         cols[i].typid = a->atttypid;
         cols[i].type = pgch_ch_type_for(a->atttypid, a->atttypmod, a->attnotnull, NULL);
