@@ -9,6 +9,11 @@ development of the chdb extensions.
 *   `type_table.awk`: [Data Type Table](#data-type-table)
 *   `benchmark`: [Postgres Lake Copy Benchmark](benchmark/)
 
+The chdb_search and chdb_vector extensions, their worker and their design
+notes live in [pg_chdb_search](https://github.com/iska-experiments/pg_chdb_search),
+which builds against the transport pg_chdb installs (see "Building Against
+pg_chdb" in the top README).
+
 ## Data Type Table
 
 `type_table.awk` rewrites both data type tables in

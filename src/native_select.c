@@ -2,7 +2,7 @@
  * The rows of a chDB query, materialized for a set-returning function: the
  * Native blocks a chDB child streams, decoded into the Postgres types of the
  * caller's column definition list and put in a tuplestore for the executor
- * to hand on. chdb_query and chdb_search_query both end here.
+ * to hand on. chdb_query ends here, as may an extension's own query function.
  */
 
 #include "postgres.h"

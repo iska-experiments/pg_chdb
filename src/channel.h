@@ -7,10 +7,11 @@
 
 /*
  * A duplex byte channel to a process that runs chDB, with an optional pipe for
- * its error text. Two ways open one: helper.c forks chdb_helper for a COPY,
- * and the chdb_search client connects to the worker's socket. Past that, both
- * trade Native blocks the same way, so native.c takes a channel and neither
- * side carries its own copy of the waiting, interrupt and cleanup code.
+ * its error text. helper.c forks chdb_helper for a COPY on one; an extension
+ * built against pg_chdb may open one on a socket to a process of its own.
+ * Past that, all trade Native blocks the same way, so native.c takes a
+ * channel and no caller carries its own copy of the waiting, interrupt and
+ * cleanup code.
  *
  * The descriptors are nonblocking. Every wait is on the latch, so a cancel or
  * a shutdown gets through, a background worker's ShutdownRequestPending among
@@ -47,10 +48,10 @@ struct chdbChannel {
 
     /*
      * A second descriptor to watch while a call waits, -1 for none, and what
-     * to do when it is readable, which may raise. The chdb_search worker's
-     * engine makes requests of its own on another socket while the worker
-     * waits on it for a reply, and would wait forever for the answer unless
-     * the worker served them from inside its wait.
+     * to do when it is readable, which may raise. A chDB child that makes
+     * requests of its own on another socket while its parent waits on it for
+     * a reply would wait forever for the answer unless the parent served
+     * them from inside its wait.
      */
     int aside_fd;
     void (*aside)(chdbChannel* ch);
