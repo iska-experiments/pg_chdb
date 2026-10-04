@@ -9,7 +9,6 @@
 #include "postgres.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -129,45 +128,29 @@ report_helper(chdbHelper* h, const char* what) {
     );
 }
 
-/* Moves a descriptor clear of the standard ones the helper is about to take. */
-static int
-reserve_fd(int fd) {
-    if (fd > CHDB_SETUP_FD) {
-        return fd;
-    }
-    int high = fcntl(fd, F_DUPFD, 10);
-    close(fd);
-
-    return high;
-}
-
 /*
- * Everything between the fork and the exec runs in a process that still holds
- * the backend's Postgres state, so it may only _exit. The helper's own setup
- * is spawn.c's.
+ * Forks the helper with its ends on the descriptors it expects. The channel
+ * the query does not use must not reach the backend's own, so /dev/null
+ * stands in for it.
  */
 static void
-exec_helper(chdbHelper* h, const char* program, chdbHelperContext* ctx) {
-    char* const argv[] = { (char*)program, NULL };
-    int null           = open("/dev/null", O_RDWR);
+spawn_helper(chdbHelper* h, char* program, chdbHelperContext* ctx) {
+    char* const argv[] = { program, NULL };
+    bool insert        = ctx->cmd == CHDB_CMD_INSERT;
+    int fds[]          = {
+        insert ? h->data_peer : -1,
+        insert ? -1 : h->data_peer,
+        h->err_peer,
+        h->setup_peer,
+    };
 
-    h->data_peer  = reserve_fd(h->data_peer);
-    h->err_peer   = reserve_fd(h->err_peer);
-    h->setup_peer = reserve_fd(h->setup_peer);
-    null          = reserve_fd(null);
-
-    /* The channel the query does not use must not reach the backend's own. */
-    if (!chdb_spawn_place_fd(
-            ctx->cmd == CHDB_CMD_INSERT ? h->data_peer : null, STDIN_FILENO
-        ) ||
-        !chdb_spawn_place_fd(
-            ctx->cmd == CHDB_CMD_INSERT ? null : h->data_peer, STDOUT_FILENO
-        ) ||
-        !chdb_spawn_place_fd(h->err_peer, STDERR_FILENO) ||
-        !chdb_spawn_place_fd(h->setup_peer, CHDB_SETUP_FD)) {
-        _exit(126);
+    StaticAssertStmt(CHDB_SETUP_FD == 3, "the setup pipe follows stderr");
+    /* Postgres buffers would otherwise be flushed twice, once by each side. */
+    fflush(NULL);
+    h->pid = chdb_spawn(argv, fds, lengthof(fds));
+    if (h->pid < 0) {
+        ereport(ERROR, errcode_for_file_access(), errmsg("chdb: could not fork: %m"));
     }
-    chdb_spawn_exec(argv, MyProcPid);
 }
 
 /* Hands the helper its setup payload, then closes the channel it arrived on. */
@@ -249,10 +232,7 @@ chdb_helper_start(
     /* Registered first, so every descriptor below has an owner already. */
     chdb_channel_own(&h->ch);
 
-    char pkglib[MAXPGPATH];
-    get_pkglib_path(my_exec_path, pkglib);
-    char program[MAXPGPATH];
-    snprintf(program, sizeof(program), "%s/%s", pkglib, CHDB_HELPER_PROGRAM);
+    char* program = chdb_spawn_path(CHDB_HELPER_PROGRAM);
     if (access(program, X_OK) != 0) {
         ereport(
             ERROR,
@@ -275,15 +255,7 @@ chdb_helper_start(
     chdb_channel_prepare_fd(h->ch.err);
     chdb_channel_prepare_fd(h->setup);
 
-    /* Postgres buffers would otherwise be flushed twice, once by each side. */
-    fflush(NULL);
-    h->pid = fork();
-    if (h->pid < 0) {
-        ereport(ERROR, errcode_for_file_access(), errmsg("chdb: could not fork: %m"));
-    }
-    if (h->pid == 0) {
-        exec_helper(h, program, ctx);
-    }
+    spawn_helper(h, program, ctx);
     elog(DEBUG1, "chdb: chdb_helper pid %d", (int)h->pid);
 
     chdb_channel_close_fd(&h->data_peer);
