@@ -124,3 +124,12 @@ order we need them:
 
 Proposal 2 (read-only attach) is unchanged and still a request for
 discussion.
+
+7. Static archive completeness: the v26.9.0 `libchdb-static` archive omits
+   functions that only a static initializer registers (`lowerUTF8`,
+   `upperUTF8`, `caseFoldUTF8`, `hasPhrase`, base64, `normalizeUTF8*` and
+   about seventy more), so a program linked against it gets
+   `UNKNOWN_FUNCTION` where the shared library works. Force-reference them
+   in `programs/local/ForceFunctionReferences.cpp` or build the archive from
+   the full object set. Until then pg_chdb links the search engine against
+   the shared library even in static builds.
