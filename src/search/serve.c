@@ -40,11 +40,13 @@ chdb_search_listen(Oid dboid) {
     }
     strcpy(addr.sun_path, socket_path);
 
-    if (MakePGDirectory("pg_chdb") < 0 && errno != EEXIST) {
+    if (MakePGDirectory(CHDB_SEARCH_DIR) < 0 && errno != EEXIST) {
         ereport(
             FATAL,
             errcode_for_file_access(),
-            errmsg("chdb_search: could not create directory \"pg_chdb\": %m")
+            errmsg(
+                "chdb_search: could not create directory \"%s\": %m", CHDB_SEARCH_DIR
+            )
         );
     }
 

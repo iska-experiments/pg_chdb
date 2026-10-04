@@ -246,8 +246,10 @@ generation and LSN stored in `t`'s `SELECT max(lsn)` against the metapage
 on open; mismatch (crash between flush and commit, restore from backup,
 `pg_rewind`) marks the index invalid (`indisvalid = false`) and schedules a
 rebuild. `DROP INDEX` and `REINDEX` register the store directory for
-removal in an `XACT_EVENT_COMMIT` callback; the worker sweeps orphaned
-`idx_*` databases whose OID is not in `pg_class` at startup.
+removal in an `XACT_EVENT_COMMIT` callback; before it listens, the worker
+sweeps the `idx_*` databases whose OID is not a chdb index (`sweep.c`), and
+the `pg_chdb/<dboid>` directories of databases no longer in `pg_database`,
+which is how a drop made without the library loaded is cleaned up.
 
 Phase 1 (`pg_pages` disk, chdb-core PR): chdb-core gains
 

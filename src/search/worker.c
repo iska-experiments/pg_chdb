@@ -1,7 +1,8 @@
 /*
  * The chdb_search background worker's lifecycle: one per database, claiming
- * its registry slot, opening its socket, serving until told to stop. The chDB
- * store is held by the chdb_search_engine child it supervises. See protocol.h
+ * its registry slot, sweeping what drops left behind, opening its socket,
+ * serving until told to stop. The chDB store is held by the
+ * chdb_search_engine child it supervises. See protocol.h
  * for the framing and dev/design/chdb_search.md for why there is a worker at
  * all.
  */
@@ -10,6 +11,7 @@
 
 #include <signal.h>
 
+#include "access/xact.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
@@ -19,6 +21,7 @@
 #include "engine_proc.h"
 #include "registry.h"
 #include "serve.h"
+#include "sweep.h"
 #include "worker.h"
 
 /* PG 19 types pqsignal's handlers and names SIG_DFL in that type. */
@@ -70,6 +73,19 @@ chdb_search_worker_main(Datum arg) {
         proc_exit(0);
     }
     slot_claimed = true;
+
+    /* What drops without the library left behind goes before anything is served. */
+    PG_TRY();
+    { chdb_search_sweep(worker_dboid); }
+    PG_CATCH();
+    {
+        if (IsTransactionState()) {
+            AbortCurrentTransaction();
+        }
+        EmitErrorReport();
+        FlushErrorState();
+    }
+    PG_END_TRY();
 
     chdb_search_listen(worker_dboid);
     ereport(LOG, errmsg("chdb_search: worker for database %u listening", worker_dboid));
