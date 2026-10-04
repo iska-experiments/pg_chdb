@@ -11,6 +11,7 @@
 #include "postgres.h"
 
 #include "access/heapam.h"
+#include "commands/trigger.h"
 #include "executor/tuptable.h"
 #include "nodes/execnodes.h"
 #include "nodes/pg_list.h"
