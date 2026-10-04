@@ -162,12 +162,22 @@ append_vector(StringInfo buf, Datum value, Oid typid) {
 
 /*
  * ClickHouse's hasToken takes no array. The array tokenizer makes the needle
- * one token, so for arrays all, any and token agree and hasAllTokens serves.
+ * one token, so for arrays all, any and token agree and hasAllTokens serves;
+ * a phrase of elements has no meaning, and ClickHouse would reject it.
  */
 static const char*
 text_function(StrategyNumber strategy, ChdbColumnKind kind) {
-    if (kind == CHDB_COL_TEXT_ARRAY && strategy == CHDB_STRATEGY_HAS_TOKEN) {
-        return "hasAllTokens";
+    if (kind == CHDB_COL_TEXT_ARRAY) {
+        if (strategy == CHDB_STRATEGY_HAS_TOKEN) {
+            return "hasAllTokens";
+        }
+        if (strategy == CHDB_STRATEGY_HAS_PHRASE) {
+            ereport(
+                ERROR,
+                errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                errmsg("chdb indexes do not search text[] columns for phrases")
+            );
+        }
     }
     switch (strategy) {
     case CHDB_STRATEGY_HAS_ALL_TOKENS:

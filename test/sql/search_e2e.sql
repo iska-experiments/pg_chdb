@@ -199,6 +199,24 @@ SET enable_seqscan = off;
 DROP TABLE coll;
 
 ----------------------------------------------------------------------------
+-- text[]: elements compare in lower case through the index as by seqscan,
+-- and the needle is one token however many words it has
+----------------------------------------------------------------------------
+INSERT INTO prod VALUES (9, 'Paint', '{Red,Blue}', 1.00);
+SELECT id FROM prod WHERE tags @@@ 'BLUE';
+SELECT id FROM prod WHERE tags @@? 'blue';
+SELECT id FROM prod WHERE tags @@= 'BLUE';
+SELECT id FROM prod WHERE tags @@@ 'Red Blue';
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT id FROM prod WHERE tags @@@ 'BLUE';
+SELECT id FROM prod WHERE tags @@? 'blue';
+SELECT id FROM prod WHERE tags @@= 'BLUE';
+SELECT id FROM prod WHERE tags @@@ 'Red Blue';
+RESET enable_indexscan;
+SET enable_seqscan = off;
+
+----------------------------------------------------------------------------
 -- DROP INDEX drops the store at commit
 ----------------------------------------------------------------------------
 DROP INDEX prod_idx;
