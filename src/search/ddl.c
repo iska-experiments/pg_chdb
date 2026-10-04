@@ -37,10 +37,12 @@
  *     INDEX "tags_idx" "tags" TYPE text(tokenizer = array,
  *       preprocessor = lowerUTF8("tags")))
  *     ENGINE = MergeTree ORDER BY ctid
- *     SETTINGS fsync_after_insert = 1, fsync_part_directory = 1
+ *     SETTINGS fsync_after_insert = 1, fsync_part_directory = 1,
+ *       enable_block_number_column = 1, enable_block_offset_column = 1
  *   INSERT INTO idx_16401.t_7342 (ctid, xmin, "body", "tags", "author")
  *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'running shoes')
  *   DELETE FROM idx_16401.t_7342 WHERE ctid IN (4294967296, ...)
+ *     SETTINGS lightweight_delete_mode = 'lightweight_update_force'
  *   OPTIMIZE TABLE idx_16401.t_7342 FINAL
  *
  * An INSERT carries no FORMAT clause: the worker streams it as Native. Every
@@ -113,12 +115,17 @@ chdb_search_create_sql(Relation index) {
      * A part is fsynced as it is written, so that the rows a flush sends are
      * on disk before the COMMIT that follows it is acknowledged, as Postgres
      * promises for its own data; ClickHouse's default leaves them to the
-     * kernel. One SETTINGS clause: ClickHouse rejects a second.
+     * kernel. The block columns let VACUUM's DELETE patch parts in place
+     * (vacuum.c) instead of rewriting them with a mutation, which the Phase
+     * 1 disk does not allow; a store from before they were set takes them
+     * with ALTER TABLE ... MODIFY SETTING, no REINDEX. One SETTINGS clause:
+     * ClickHouse rejects a second.
      */
     appendStringInfoString(
         &buf,
         ") ENGINE = MergeTree ORDER BY ctid "
-        "SETTINGS fsync_after_insert = 1, fsync_part_directory = 1"
+        "SETTINGS fsync_after_insert = 1, fsync_part_directory = 1, "
+        "enable_block_number_column = 1, enable_block_offset_column = 1"
     );
     if (chdb_search_wants_phrase_search(index, cols)) {
         /* ClickHouse gates the index argument behind a MergeTree setting. */

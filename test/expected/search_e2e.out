@@ -350,7 +350,7 @@ SELECT ctid, body FROM pg_temp.store(:'tbl') WHERE body IN ('Walking boots', 'Ru
 SET client_min_messages = debug1;
 VACUUM prod;
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N
-DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (1,2)
+DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (1,2) SETTINGS lightweight_delete_mode = 'lightweight_update_force'
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 DEBUG:  chdb_search exec: OPTIMIZE TABLE idx_N.t_N FINAL
 SET client_min_messages = warning;
