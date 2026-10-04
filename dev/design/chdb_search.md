@@ -389,3 +389,27 @@ same-transaction visibility. Decided:
   worker opens the store read-only from pages with merges stopped. WAL cost
   is measured (WAL bytes per inserted row and per merge, directory store
   versus page store) before part-size and merge defaults are chosen.
+
+### Regex semantics and highlighting (2026-10-05)
+
+ClickHouse's `match` is RE2; Postgres's regex engine is not. The fallbacks
+for `@@/` and `chdb.regex` leaves, and any highlighting of regex matches,
+therefore agree with the index only approximately unless both sides use
+RE2. [ClickHouse/pg_re2](https://github.com/ClickHouse/pg_re2) (PGXN `re2`)
+provides exactly ClickHouse's RE2 functions in Postgres (`re2match`,
+`re2replaceregexpall`, `re2multimatchany`, ...). Decision: `chdb_search`
+does not hard-require it. At first use the fallback looks up
+`re2match(text, text)` in the catalog and, when present, evaluates regex
+predicates with it; `chdb_search.regex_engine = auto | re2 | postgres`
+(default `auto`) controls the choice, and `postgres` keeps today's
+approximation with a one-time NOTICE naming the difference. CI builds
+pg_re2 from source so the exact path is tested.
+
+Highlighting (`chdb.highlight(k, col, start_tag, end_tag)`,
+`chdb.snippet(k, col, max_chars)`) wraps matches in the original heap text
+on the Postgres side: token, phrase and slop leaves use positions ClickHouse
+returns as a computed scan column (`multiSearchAllPositionsCaseInsensitiveUTF8`
+over the needles expanded by the index tokenizer); regex and wildcard leaves
+use `re2replaceregexpall` when pg_re2 is present, Postgres regex otherwise.
+Outside a custom scan the functions still work with default-tokenizer
+semantics. Cost is proportional to rows returned after LIMIT.
