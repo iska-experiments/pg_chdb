@@ -18,7 +18,7 @@
 #include "pg-clickhouse-encode.h"
 #include "pg-clickhouse.h"
 
-/* GUCs, defined in am.c. */
+/* GUCs, defined in gucs.c. */
 extern int chdb_search_flush_threshold_kb;
 extern double chdb_search_vacuum_optimize_ratio;
 extern bool chdb_search_mask_oids;
@@ -41,10 +41,14 @@ typedef struct ChdbColumn {
     Oid typid; /* Postgres type of the index attribute */
 } ChdbColumn;
 
-/* ---- am.c ---- */
+/* ---- gucs.c ---- */
+/* GUCs, reloptions and transaction callbacks; run by _PG_init. */
+extern void
+chdb_search_am_init(void);
 extern void
 chdb_search_log_sql(const char* what, const char* sql);
 
+/* ---- validate.c ---- */
 extern bool
 chdb_search_validate(Oid opclassoid);
 
@@ -161,14 +165,9 @@ chdb_search_drop_statement_on_abort(Oid indexoid, const char* sql);
 extern void
 chdb_search_forget_statement(Oid indexoid, const char* sql);
 
-/* ---- native_io.c ---- */
+/* ---- scan.c ---- */
 #include "pg-clickhouse-decode.h"
 
-/* Native blocks read from the worker, for pgch_reader_init. */
-extern pgch_block_source
-chdb_search_block_source(chdbSearchConn* conn, MemoryContext cxt);
-
-/* ---- scan.c ---- */
 
 /*
  * A running `SELECT ctid[, distances]` against the worker. Column 0 decodes to

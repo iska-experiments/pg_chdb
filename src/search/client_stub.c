@@ -3,15 +3,21 @@
  * given CHDB_SEARCH_STUB=1. It lets the access method be built and tested
  * without a worker: requests are logged at DEBUG1 by kind (the AM itself logs
  * every generated statement, so the SQL is not repeated here), selects return
- * no blocks, inserted data is dropped.
+ * no blocks, inserted data is dropped. Streams through chdb_search_helper
+ * behave the same way.
  */
 
 #include "postgres.h"
 
+#include "../helper.h"
 #include "client.h"
 
 struct chdbSearchConn {
     bool open;
+};
+
+struct chdbHelper {
+    chdbSearchConn* conn;
 };
 
 chdbSearchConn*
@@ -63,4 +69,22 @@ chdb_search_finish(chdbSearchConn* conn) {
 void
 chdb_search_drop(chdbSearchConn* conn, Oid indexoid) {
     elog(DEBUG1, "chdb_search stub: drop");
+}
+
+chdbHelper*
+chdb_search_helper(chdbSearchConn* conn) {
+    chdbHelper* helper = palloc(sizeof(*helper));
+
+    helper->conn = conn;
+    return helper;
+}
+
+size_t
+chdb_helper_recv(chdbHelper* helper, void* buf, size_t len) {
+    return chdb_search_recv(helper->conn, buf, len);
+}
+
+void
+chdb_helper_write(chdbHelper* helper, const void* p, size_t len) {
+    chdb_search_send(helper->conn, p, len);
 }

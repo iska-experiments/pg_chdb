@@ -17,6 +17,7 @@
 #include "pgstat.h"
 #include "utils/memutils.h"
 
+#include "../native.h"
 #include "query.h"
 #include "search.h"
 
@@ -40,7 +41,7 @@ chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext 
     {
         chdb_search_select(s->conn, indexoid, sql);
 
-        pgch_block_source src = chdb_search_block_source(s->conn, cxt);
+        pgch_block_source src = chdb_native_source(chdb_search_helper(s->conn));
 
         pgch_reader_init(&s->reader, &src);
         if (s->reader.error) {
