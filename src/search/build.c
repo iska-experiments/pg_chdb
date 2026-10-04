@@ -80,6 +80,8 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
             ERROR, "index \"%s\" already contains data", RelationGetRelationName(index)
         );
     }
+    /* The scan below covers the transaction's own tuples, so nothing is lost. */
+    chdb_search_discard_pending(RelationGetRelid(index));
 
     /*
      * pg_upgrade restores the schema before any data is moved, so a build

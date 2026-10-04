@@ -21,6 +21,8 @@ typedef struct Pending {
     char* collist; /* (ctid, xmin, ...) for the INSERT */
     char* staging; /* <table>_tx_<xid>, set once rows have been staged */
     List* marks;   /* of Mark*, innermost last; private to buffer.c */
+    /* The subtransaction whose rebuild set these rows aside, else Invalid. */
+    SubTransactionId superseded;
 } Pending;
 
 /* ---- staging.c ---- */
@@ -30,5 +32,8 @@ chdb_search_stage_rows(Pending* p);
 /* Sends everything buffered and staged into the index's table, at commit. */
 extern void
 chdb_search_flush_pending(Pending* p);
+/* Drops the staging table now rather than at abort. */
+extern void
+chdb_search_drop_staging(Pending* p);
 
 #endif /* CHDB_SEARCH_BUFFER_H */

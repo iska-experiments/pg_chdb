@@ -131,6 +131,76 @@ RESET client_min_messages;
 -- client returns no table names, so the statement is checked by search_e2e.)
 VACUUM docs;
 ----------------------------------------------------------------------------
+-- A rebuild takes over the rows the transaction had buffered for the index
+----------------------------------------------------------------------------
+SET client_min_messages = debug1;
+\echo -- the build scan indexes the row, so COMMIT sends it to docs_title only
+-- the build scan indexes the row, so COMMIT sends it to docs_title only
+BEGIN;
+INSERT INTO docs (id, body) VALUES (9, 'running shoes');
+REINDEX INDEX docs_idx;
+DEBUG:  building index "docs_idx" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(body))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body)
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title)
+\echo -- TRUNCATE rebuilds both indexes: nothing is sent at COMMIT
+-- TRUNCATE rebuilds both indexes: nothing is sent at COMMIT
+BEGIN;
+INSERT INTO docs (id, body) VALUES (10, 'running shoes again');
+TRUNCATE docs;
+DEBUG:  building index "docs_pkey" on table "docs" serially
+DEBUG:  index "docs_pkey" can safely use deduplication
+DEBUG:  building index "docs_idx" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(body))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body)
+DEBUG:  building index "docs_title" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title)
+COMMIT;
+\echo -- a rebuild rolled back to a savepoint gives the rows back
+-- a rebuild rolled back to a savepoint gives the rows back
+BEGIN;
+INSERT INTO docs (id, body) VALUES (11, 'kept running');
+SAVEPOINT s;
+REINDEX INDEX docs_idx;
+DEBUG:  building index "docs_idx" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(body))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body)
+INSERT INTO docs (id, body) VALUES (12, 'rolled back with the rebuild');
+ROLLBACK TO s;
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body)
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title)
+\echo -- a released one keeps them
+-- a released one keeps them
+BEGIN;
+INSERT INTO docs (id, body) VALUES (13, 'taken by the rebuild');
+SAVEPOINT s;
+REINDEX INDEX docs_idx;
+DEBUG:  building index "docs_idx" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(body))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body)
+RELEASE s;
+INSERT INTO docs (id, body) VALUES (14, 'sent to the new table');
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title)
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body)
+\echo -- control: one insert per index
+-- control: one insert per index
+BEGIN;
+INSERT INTO docs (id, body) VALUES (15, 'control');
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body)
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title)
+RESET client_min_messages;
+----------------------------------------------------------------------------
 -- DROP INDEX drops the whole store at commit, a rolled-back one does not
 ----------------------------------------------------------------------------
 SET client_min_messages = debug1;

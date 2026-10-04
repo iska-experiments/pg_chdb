@@ -159,6 +159,23 @@ SET client_min_messages = warning;
 SELECT pg_temp.tables(:idx);
 SELECT count(*) FROM pg_temp.store(:'tbl2');
 
+-- A rebuild in the same transaction indexes the rows inserted before it once,
+-- unless it is rolled back to a savepoint, when the buffered rows are sent
+-- to the table the index kept.
+BEGIN;
+INSERT INTO prod VALUES (7, 'Rebuilt running shoes', '{sport}', 70.00);
+REINDEX INDEX prod_idx;
+COMMIT;
+BEGIN;
+INSERT INTO prod VALUES (8, 'Shoes kept through a rollback', '{sport}', 80.00);
+SAVEPOINT s;
+REINDEX INDEX prod_idx;
+ROLLBACK TO s;
+COMMIT;
+SELECT chdb_search_store_table('prod_idx') AS tbl \gset
+SELECT id FROM prod WHERE body @@@ 'shoes' ORDER BY id;
+SELECT body FROM pg_temp.store(:'tbl') WHERE body ~ 'Rebuilt|kept' ORDER BY body;
+
 -- The chdb extension's own functions still work in the same backend.
 SELECT * FROM chdb_query('SELECT 42') AS (answer int);
 
