@@ -132,6 +132,9 @@ uninstall: uninstall-$(patsubst chdb_%,%,$(1))
 EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc
 endef
 
+# The chdb_search extension: the search worker and its clients.
+$(eval $(call ext_module,chdb_search,$(OBJS),CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR)))
+
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
 	git submodule update --init --recursive
@@ -186,7 +189,7 @@ uninstall-libchdb:
 	rm -f $(DESTDIR)/usr/local/lib/libchdb.so
 
 .PHONY: format # Format .c and .h files to project standard in .clang-format.
-format: $(wildcard src/*.c src/*.h src/helper/*.c)
+format: $(wildcard src/*.c src/*.h src/helper/*.c src/search/*.c src/search/*.h)
 	@$(CLANG_FORMAT) --style=file:.clang-format -i $^
 
 .PHONY: type-table # Regenerate the data type tables of doc/chdb_hook.md.

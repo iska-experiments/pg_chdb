@@ -1,0 +1,68 @@
+/*
+ * Module entry point for chdb_search: the GUCs and the version function.
+ */
+
+#include "postgres.h"
+
+#include "fmgr.h"
+#include "miscadmin.h"
+#include "utils/builtins.h"
+#include "utils/guc.h"
+
+#include "../gucs.h"
+#include "../module.h"
+#include "worker.h"
+
+CHDB_MODULE_MAGIC("chdb_search");
+
+int chdb_max_memory  = 0;
+int chdb_max_threads = 0;
+int chdb_max_parsers = 0;
+
+char* chdb_search_libchdb_path = NULL;
+int chdb_search_worker_timeout = 30;
+
+void
+_PG_init(void);
+void
+_PG_init(void) {
+    if (IsBinaryUpgrade) {
+        return;
+    }
+
+    DefineCustomStringVariable(
+        "chdb_search.libchdb_path",
+        "Library the chdb_search worker loads chDB from.",
+        "Passed to dlopen, so a bare name is searched for like any shared library.",
+        &chdb_search_libchdb_path,
+        "libchdb.so",
+        PGC_SIGHUP,
+        0,
+        NULL,
+        NULL,
+        NULL
+    );
+    DefineCustomIntVariable(
+        "chdb_search.worker_timeout",
+        "Seconds to wait for the chdb_search worker to start.",
+        NULL,
+        &chdb_search_worker_timeout,
+        30,
+        1,
+        3600,
+        PGC_USERSET,
+        GUC_UNIT_S,
+        NULL,
+        NULL,
+        NULL
+    );
+
+    /* Last: reserving the prefix drops placeholders for GUCs not yet defined. */
+    CHDB_GUCS("chdb_search");
+}
+
+PG_FUNCTION_INFO_V1(chdb_search_version);
+Datum
+chdb_search_version(PG_FUNCTION_ARGS) {
+    PG_RETURN_TEXT_P(cstring_to_text(PGCHCB_VERSION));
+}

@@ -1,0 +1,7 @@
+# chdb_search extension
+comment = 'ClickHouse-backed search indexes, served by a per-database worker.'
+default_version = '0.1'
+module_pathname = '$libdir/chdb_search'
+relocatable = true
+superuser = true
+trusted = false
