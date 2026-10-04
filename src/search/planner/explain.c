@@ -1,5 +1,5 @@
 /*
- * EXPLAIN of the custom scan: the clauses the store applies, written as the
+ * EXPLAIN of the custom scans: the clauses the store applies, written as the
  * query wrote them, the scores it computes, the LIMIT it took, and the
  * ClickHouse statement itself, masked as the log masks it when
  * chdb_search.mask_oids is on. The statement needs the arguments' values,
@@ -63,12 +63,12 @@ deparse_outputs(List* outputs, List* context, bool useprefix) {
     return deparse_list(exprs, context, useprefix);
 }
 
-void
-chdb_planner_explain(CustomScanState* css, List* ancestors, ExplainState* es) {
-    ChdbScanState* st  = (ChdbScanState*)css;
+/* What was pushed: the clauses, the order, the scores and the LIMIT. */
+static void
+explain_pushed(ChdbScanState* st, List* ancestors, ExplainState* es) {
     ChdbScanSpec* spec = st->spec;
     List* context =
-        set_deparse_context_plan(es->deparse_cxt, css->ss.ps.plan, ancestors);
+        set_deparse_context_plan(es->deparse_cxt, st->css.ss.ps.plan, ancestors);
     bool useprefix = list_length(es->rtable) > 1 || es->verbose;
 
     if (spec->quals) {
@@ -89,9 +89,11 @@ chdb_planner_explain(CustomScanState* css, List* ancestors, ExplainState* es) {
     if (spec->limit >= 0) {
         ExplainPropertyInteger("Pushed Limit", NULL, spec->limit, es);
     }
-    if (!st->built && !st->exec_params) {
-        chdb_planner_build_sql(st, spec->limit);
-    }
+}
+
+/* The statement, once built, and under ANALYZE what the store returned. */
+static void
+explain_statement(ChdbScanState* st, ExplainState* es) {
     if (st->built) {
         ExplainPropertyText(
             "ClickHouse",
@@ -105,4 +107,15 @@ chdb_planner_explain(CustomScanState* css, List* ancestors, ExplainState* es) {
             ExplainPropertyInteger("Store Queries", NULL, st->store_queries, es);
         }
     }
+}
+
+void
+chdb_planner_explain(CustomScanState* css, List* ancestors, ExplainState* es) {
+    ChdbScanState* st = (ChdbScanState*)css;
+
+    explain_pushed(st, ancestors, es);
+    if (!st->built && !st->exec_params) {
+        chdb_planner_build_sql(st, st->spec->limit);
+    }
+    explain_statement(st, es);
 }

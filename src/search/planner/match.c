@@ -30,9 +30,8 @@ chdb_planner_strip(Node* node) {
     return node;
 }
 
-/* The index column `node` is a plain Var of, 1-based, or 0. */
-static AttrNumber
-index_column(RelOptInfo* rel, IndexOptInfo* index, Node* node) {
+AttrNumber
+chdb_planner_index_column(RelOptInfo* rel, IndexOptInfo* index, Node* node) {
     Var* var = (Var*)chdb_planner_strip(node);
 
     if (!var || !IsA(var, Var) || var->varno != rel->relid || var->varlevelsup != 0) {
@@ -162,9 +161,12 @@ chdb_planner_match_clause(
     if (list_length(args) != 2) {
         return false;
     }
-    if ((attno = index_column(rel, index, linitial(args)))) {
+    if ((attno = chdb_planner_index_column(rel, index, linitial(args)))) {
         argno = 1;
-    } else if (OidIsValid(opno) && (attno = index_column(rel, index, lsecond(args)))) {
+    } else if (
+        OidIsValid(opno) &&
+        (attno = chdb_planner_index_column(rel, index, lsecond(args)))
+    ) {
         /* `5 < price` is `price > 5` to the family. */
         argno = 0;
         opno  = get_commutator(opno);
@@ -225,7 +227,7 @@ chdb_planner_match_pathkey(
             list_length(op->args) != 2) {
             continue;
         }
-        attno = index_column(rel, index, linitial(op->args));
+        attno = chdb_planner_index_column(rel, index, linitial(op->args));
         if (!attno || !constant_for_scan(root, rel, lsecond(op->args))) {
             continue;
         }

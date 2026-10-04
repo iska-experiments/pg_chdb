@@ -29,17 +29,13 @@ any_null(ScanKey keys, int nkeys) {
     return false;
 }
 
-void
-chdb_planner_build_sql(ChdbScanState* st, int64 limit) {
+ScanKey
+chdb_planner_scan_keys(ChdbScanState* st) {
     ExprContext* econtext = st->css.ss.ps.ps_ExprContext;
     int nquals            = list_length(st->spec->quals);
     int norderbys         = list_length(st->spec->orderbys);
-    int noutputs          = list_length(st->spec->outputs);
     ScanKeyData* keys     = palloc0(sizeof(ScanKeyData) * (nquals + norderbys));
-    const char** scores   = palloc0(sizeof(char*) * noutputs);
     ListCell *lc, *la = list_head(st->args);
-    MemoryContext old;
-    ChdbColumn* cols;
     int i = 0;
 
     /* In the per-tuple memory, read before the next row resets it. */
@@ -56,10 +52,22 @@ chdb_planner_build_sql(ChdbScanState* st, int64 limit) {
         la                   = lnext(st->args, la);
         i++;
     }
-    old  = MemoryContextSwitchTo(st->cxt);
-    cols = nquals || norderbys ? chdb_search_columns(st->index) : NULL;
+    return keys;
+}
+
+void
+chdb_planner_build_sql(ChdbScanState* st, int64 limit) {
+    int nquals          = list_length(st->spec->quals);
+    int norderbys       = list_length(st->spec->orderbys);
+    int noutputs        = list_length(st->spec->outputs);
+    ScanKey keys        = chdb_planner_scan_keys(st);
+    const char** scores = palloc0(sizeof(char*) * noutputs);
+    MemoryContext old   = MemoryContextSwitchTo(st->cxt);
+    ChdbColumn* cols    = nquals || norderbys ? chdb_search_columns(st->index) : NULL;
+    ListCell* lc;
+    int i = 0;
+
     /* No statement with a NULL key: nothing to count for either. */
-    i = 0;
     for (lc = list_head(st->spec->outputs); lc && !any_null(keys, nquals);
          lc = lnext(st->spec->outputs, lc)) {
         scores[i++] = chdb_search_score_expr(

@@ -49,6 +49,33 @@ is_chdb_index(IndexOptInfo* index) {
 }
 
 /*
+ * An unavailable store in skip mode gets no path, as the index gets no
+ * usable one; in error mode the scan raises, as the index scan would.
+ */
+bool
+chdb_planner_usable_index(IndexOptInfo* index) {
+    bool unavailable = false;
+
+    if (!is_chdb_index(index)) {
+        return false;
+    }
+    if (chdb_search_unavailable_index == CHDB_UNAVAILABLE_SKIP) {
+        Relation rel_index = index_open(index->indexoid, NoLock);
+
+        unavailable = chdb_search_store_unavailable(rel_index);
+        index_close(rel_index, NoLock);
+    }
+    return !unavailable;
+}
+
+/* A plain heap table, so that its tuples fit the scan's slot. */
+bool
+chdb_planner_eligible_rel(RelOptInfo* rel, RangeTblEntry* rte) {
+    return rel->reloptkind == RELOPT_BASEREL && rte->rtekind == RTE_RELATION &&
+           rel->indexlist != NIL && get_rel_relam(rte->relid) == HEAP_TABLE_AM_OID;
+}
+
+/*
  * Whether the LIMIT would cut a filtered vector search short. ClickHouse's
  * HNSW index finds the LIMIT nearest rows first and applies the WHERE to
  * those, unless chdb_vector.filter_strategy says prefilter, so a filtered
@@ -102,12 +129,8 @@ by_column(const ListCell* a, const ListCell* b) {
            ((const ChdbPushed*)lfirst(b))->attno;
 }
 
-/*
- * Sorts the clauses of `rel` into the ones the store applies and the ones
- * the scan applies itself; true when any is a text search.
- */
-static bool
-collect_quals(PlannerInfo* root, RelOptInfo* rel, ChdbPath* p) {
+bool
+chdb_planner_collect_quals(PlannerInfo* root, RelOptInfo* rel, ChdbPath* p) {
     bool search = false;
     ListCell* lc;
 
@@ -188,7 +211,7 @@ add_scan_path(PlannerInfo* root, RelOptInfo* rel, IndexOptInfo* index) {
     p->index         = index;
     p->spec.indexoid = index->indexoid;
     p->spec.limit    = -1;
-    search           = collect_quals(root, rel, p);
+    search           = chdb_planner_collect_quals(root, rel, p);
     /* A score is of the text searches, so there must be one to score. */
     if (search) {
         p->spec.outputs = chdb_planner_collect_scores(root, rel, index);
@@ -228,32 +251,13 @@ rel_pathlist_hook(PlannerInfo* root, RelOptInfo* rel, Index rti, RangeTblEntry* 
     if (prev_hook) {
         prev_hook(root, rel, rti, rte);
     }
-    /*
-     * A plain heap table, so that its tuples fit the scan's slot. An
-     * unavailable store in skip mode gets no path, as the index gets no
-     * usable one; in error mode the scan raises, as the index scan would.
-     */
-    if (!chdb_search_enable_custom_scan || rel->reloptkind != RELOPT_BASEREL ||
-        rte->rtekind != RTE_RELATION || rel->indexlist == NIL ||
-        get_rel_relam(rte->relid) != HEAP_TABLE_AM_OID) {
+    if (!chdb_search_enable_custom_scan || !chdb_planner_eligible_rel(rel, rte)) {
         return;
     }
     foreach (lc, rel->indexlist) {
-        IndexOptInfo* index = lfirst(lc);
-
-        if (!is_chdb_index(index)) {
-            continue;
+        if (chdb_planner_usable_index(lfirst(lc))) {
+            add_scan_path(root, rel, lfirst(lc));
         }
-        if (chdb_search_unavailable_index == CHDB_UNAVAILABLE_SKIP) {
-            Relation rel_index = index_open(index->indexoid, NoLock);
-            bool unavailable   = chdb_search_store_unavailable(rel_index);
-
-            index_close(rel_index, NoLock);
-            if (unavailable) {
-                continue;
-            }
-        }
-        add_scan_path(root, rel, index);
     }
 }
 

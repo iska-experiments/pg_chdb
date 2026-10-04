@@ -71,6 +71,9 @@ typedef struct ChdbScanSpec {
 /* Through the no-op relabelings the planner wraps binary-coercible types in. */
 extern Node*
 chdb_planner_strip(Node* node);
+/* The index column `node` is a plain Var of, 1-based, or 0. */
+extern AttrNumber
+chdb_planner_index_column(RelOptInfo* rel, IndexOptInfo* index, Node* node);
 
 /*
  * Whether `rinfo` is a predicate ClickHouse can apply on a column of
@@ -132,6 +135,20 @@ typedef struct ChdbPath {
     List* local; /* RestrictInfo, the clauses the scan applies itself */
 } ChdbPath;
 
+/* Whether the hook plans scans of `rel`: a plain heap table with an index. */
+extern bool
+chdb_planner_eligible_rel(RelOptInfo* rel, RangeTblEntry* rte);
+/* Whether `index` is a chdb index whose store a scan may use now. */
+extern bool
+chdb_planner_usable_index(IndexOptInfo* index);
+/*
+ * Sorts the clauses of `rel` into spec.quals, the ones the store applies, by
+ * index column, and `local`, the ones the scan applies itself; true when
+ * any pushed one is a text search.
+ */
+extern bool
+chdb_planner_collect_quals(PlannerInfo* root, RelOptInfo* rel, ChdbPath* p);
+
 /* ---- cost.c ---- */
 
 extern void
@@ -140,9 +157,30 @@ chdb_planner_cost(PlannerInfo* root, RelOptInfo* rel, ChdbPath* path);
 /* ---- plan.c: the CustomScan and its private data ---- */
 
 extern const CustomPathMethods chdb_planner_path_methods;
+/*
+ * A CustomScan of `p` with the parts every chdb scan has: the target list,
+ * the quals, the pushed clauses in custom_exprs and the spec's numbers in
+ * custom_private. The caller sets what differs.
+ */
+extern CustomScan*
+chdb_planner_make_scan(
+    PlannerInfo* root,
+    ChdbPath* p,
+    List* tlist,
+    List* qual,
+    List* custom_plans
+);
+extern List*
+chdb_planner_pack_int(List* list, int64 value);
+/* The next Integer of custom_private. */
+extern int
+chdb_planner_unpack_int(ListCell** lc, List* list);
 /* The spec a plan carries, with the clauses from its custom_exprs. */
 extern ChdbScanSpec*
 chdb_planner_unpack(const CustomScan* cscan);
+/* The same, leaving *lc at what custom_private holds after the spec. */
+extern ChdbScanSpec*
+chdb_planner_unpack_at(const CustomScan* cscan, ListCell** lc);
 
 /* ---- sql.c, exec.c, explain.c ---- */
 
@@ -176,9 +214,21 @@ typedef struct ChdbScanState {
     BlockNumber heap_nblocks;
 } ChdbScanState;
 
+/* ExprStates for the pushed arguments, quals then orderbys, and the recheck. */
+extern void
+chdb_planner_init_args(ChdbScanState* st);
+/*
+ * The pushed expressions as scan keys, quals then orderbys, their arguments
+ * evaluated in the per-tuple memory: render them before the next row.
+ */
+extern ScanKey
+chdb_planner_scan_keys(ChdbScanState* st);
 /* Builds the statement from the evaluated arguments; for EXPLAIN too. */
 extern void
 chdb_planner_build_sql(ChdbScanState* st, int64 limit);
+/* Forgets the statement and its rows; the arguments may change on a rescan. */
+extern void
+chdb_planner_reset(ChdbScanState* st);
 
 struct ExplainState;
 extern void

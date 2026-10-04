@@ -64,12 +64,30 @@ exec_param_walker(Node* node, void* context) {
     return expression_tree_walker(node, exec_param_walker, context);
 }
 
+void
+chdb_planner_init_args(ChdbScanState* st) {
+    PlanState* ps = &st->css.ss.ps;
+    List* clauses = NIL;
+    ListCell* lc;
+
+    foreach (lc, list_concat_copy(st->spec->quals, st->spec->orderbys)) {
+        ChdbPushed* p = lfirst(lc);
+        Expr* arg     = chdb_pushed_arg(p);
+
+        st->args = lappend(st->args, ExecInitExpr(arg, ps));
+        st->exec_params |= exec_param_walker((Node*)arg, NULL);
+    }
+    /* The predicates only: an order-by's distance is no boolean. */
+    foreach (lc, st->spec->quals) {
+        clauses = lappend(clauses, ((ChdbPushed*)lfirst(lc))->clause);
+    }
+    st->recheck = ExecInitQual(clauses, ps);
+}
+
 static void
 begin_scan(CustomScanState* css, EState* estate, int eflags) {
     ChdbScanState* st = (ChdbScanState*)css;
     Relation heap     = css->ss.ss_currentRelation;
-    List* clauses     = NIL;
-    ListCell* lc;
 
     if (table_slot_callbacks(heap) != &TTSOpsBufferHeapTuple) {
         elog(ERROR, "chdb custom scan on a relation that is not a heap table");
@@ -79,18 +97,7 @@ begin_scan(CustomScanState* css, EState* estate, int eflags) {
         estate->es_query_cxt, "chdb_search custom scan", ALLOCSET_DEFAULT_SIZES
     );
     st->asked = -1;
-    foreach (lc, list_concat_copy(st->spec->quals, st->spec->orderbys)) {
-        ChdbPushed* p = lfirst(lc);
-        Expr* arg     = chdb_pushed_arg(p);
-
-        st->args = lappend(st->args, ExecInitExpr(arg, &css->ss.ps));
-        st->exec_params |= exec_param_walker((Node*)arg, NULL);
-    }
-    /* The predicates only: an order-by's distance is no boolean. */
-    foreach (lc, st->spec->quals) {
-        clauses = lappend(clauses, ((ChdbPushed*)lfirst(lc))->clause);
-    }
-    st->recheck = ExecInitQual(clauses, &css->ss.ps);
+    chdb_planner_init_args(st);
     if (st->spec->outputs) {
         List* tlist = ((CustomScan*)css->ss.ps.plan)->custom_scan_tlist;
 
@@ -272,9 +279,8 @@ exec_scan(CustomScanState* css) {
     return ExecScan(&css->ss, next_tuple, recheck);
 }
 
-/* Forgets the statement and its rows; the arguments may change on a rescan. */
-static void
-reset(ChdbScanState* st) {
+void
+chdb_planner_reset(ChdbScanState* st) {
     if (st->stream) {
         chdb_search_stream_close(st->stream);
         st->stream = NULL;
@@ -296,7 +302,7 @@ reset(ChdbScanState* st) {
 
 static void
 rescan(CustomScanState* css) {
-    reset((ChdbScanState*)css);
+    chdb_planner_reset((ChdbScanState*)css);
     ExecScanReScan(&css->ss);
 }
 
@@ -304,7 +310,7 @@ static void
 end_scan(CustomScanState* css) {
     ChdbScanState* st = (ChdbScanState*)css;
 
-    reset(st);
+    chdb_planner_reset(st);
     if (st->fetch) {
         table_index_fetch_end(st->fetch);
     }
