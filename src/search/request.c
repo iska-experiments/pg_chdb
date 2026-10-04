@@ -1,7 +1,6 @@
 /*
  * Reading one request of protocol.h: a frame read whole, then decoded in
- * memory with the setup payload decoders of src/setup.h, so the worker never
- * walks the layout itself.
+ * memory by protocol.h, so the worker never walks the layout itself.
  */
 
 #include "postgres.h"
@@ -10,7 +9,7 @@
 #include "request.h"
 
 int
-request_recv(int fd, request* req) {
+request_recv(int fd, chdbSearchRequest* req) {
     uint32_t len;
     int rc = frame_recv(fd, &len, sizeof(len));
 
@@ -22,13 +21,9 @@ request_recv(int fd, request* req) {
     }
 
     char* frame = palloc(len);
-    if (frame_recv(fd, frame, len) != 1) {
-        return -1;
-    }
 
-    chdbSetupCursor cur = { .at = frame, .end = frame + len };
-    if (!chdb_setup_take(&cur, &req->index, sizeof(req->index)) ||
-        !chdb_setup_parse_head(&cur, &req->ctx, &req->query, &req->nparams)) {
+    if (frame_recv(fd, frame, len) != 1 ||
+        !chdb_search_decode_request(frame, len, req)) {
         return -1;
     }
 
