@@ -59,11 +59,33 @@ Vector operators are usable only in `ORDER BY ... LIMIT`.
 
 ## Settings
 
-| Setting | Default | ClickHouse setting |
-|---|---|---|
-| `chdb_vector.hnsw_candidate_list_size` | 256 | `hnsw_candidate_list_size_for_search` |
-| `chdb_vector.rescoring` | off | `vector_search_with_rescoring` |
-| `chdb_vector.filter_strategy` | auto | `vector_search_filter_strategy` (`auto`, `postfilter`, `prefilter`) |
+Each setting is a ClickHouse query setting of the vector search, sent with
+every search; any role may set them.
+
+### `chdb_vector.hnsw_candidate_list_size`
+
+```sql
+SET chdb_vector.hnsw_candidate_list_size = 512;
+```
+
+The number of candidates an HNSW search examines, ClickHouse's
+`hnsw_candidate_list_size_for_search`: higher is slower and more accurate.
+From `1` to `100000`; defaults to `256`.
+
+### `chdb_vector.rescoring`
+
+Whether the candidates are rescored by their exact distances, computed from
+the stored vectors, ClickHouse's `vector_search_with_rescoring`; without it
+the distances the index returns order the rows. Defaults to `off`. A
+`dotProduct` search rescores whatever this says; see below.
+
+### `chdb_vector.filter_strategy`
+
+How a `WHERE` predicate combines with the HNSW search, ClickHouse's
+`vector_search_filter_strategy`: `postfilter` searches the index first and
+filters its candidates, `prefilter` filters first and searches the rows that
+pass by brute force, and `auto` leaves the choice to ClickHouse. Defaults to
+`auto`.
 
 ### `chdb.vector_query_settings`
 
