@@ -70,8 +70,10 @@ sub check_query {
 
 A node for the chdb_search tests: the extension, whose schema chdb is on the
 search path, and a table docs with a chdb index docs_idx on its body, logging
-at DEBUG1 so that the statements the index sends to its worker show. Lines
-for postgresql.conf follow the name.
+at DEBUG1 so that the statements the index sends to its worker show. A hash
+reference after the name passes parameters to init, as { allows_streaming =>
+1 } does for a node to be backed up or replicated; lines for postgresql.conf
+follow.
 The worker needs libchdb on the server's library path; with the stub client
 (make CHDB_SEARCH_STUB=1, which the tests see in the environment) there is no
 worker, and tests of what the store holds skip.
@@ -80,8 +82,9 @@ worker, and tests of what the store holds skip.
 
 sub search_node {
     my ($name, @conf) = @_;
+    my %init = ref $conf[0] eq 'HASH' ? %{ shift @conf } : ();
     my $node = PostgreSQL::Test::Cluster->new($name);
-    $node->init;
+    $node->init(%init);
     $node->append_conf('postgresql.conf',
         join "\n", 'log_min_messages = debug1', "search_path = 'public, chdb'",
         @conf, '');
