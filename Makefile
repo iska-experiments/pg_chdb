@@ -19,10 +19,10 @@ DOCS         = $(wildcard doc/*.md)
 CHDB_SEARCH_STUB ?= $(if $(wildcard src/search/client.c),,1)
 export CHDB_SEARCH_STUB
 # The stub worker client has no store, so the tests of the worker and of
-# searches end to end run only with the worker; the search_stub tests, whose
-# rows the stub's GUCs supply, run only with the stub.
+# searches end to end, by text and by vector, run only with the worker; the
+# search_stub tests, whose rows the stub's GUCs supply, run only with the stub.
 TESTS        ?= $(if $(CHDB_SEARCH_STUB),$(filter-out test/sql/search_worker.sql \
-                test/sql/search_e2e.sql,$(wildcard test/sql/*.sql)), \
+                test/sql/search_e2e.sql test/sql/vector_opclass.sql,$(wildcard test/sql/*.sql)), \
                 $(filter-out test/sql/search_stub%.sql,$(wildcard test/sql/*.sql)))
 REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
 # UTF8: the search predicates lowercase by Unicode, and the tests say so in
@@ -179,8 +179,13 @@ $(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h
 # headers to build, only pgvector installed to CREATE EXTENSION.
 $(eval $(call ext_module,chdb_vector,src/version.h,))
 else
-TESTS := $(filter-out test/sql/search_%,$(TESTS))
+TESTS := $(filter-out test/sql/search_% test/sql/vector_%,$(TESTS))
 PROVE_TESTS := $(filter-out t/search_%,$(wildcard t/*.pl))
+endif
+
+# The vector tests need pgvector in the server; a cluster without it skips them.
+ifeq ($(wildcard $(datadir)/extension/vector.control),)
+TESTS := $(filter-out test/sql/vector_%,$(TESTS))
 endif
 
 # Which client the module was linked with, rewritten only when that changes,
@@ -190,11 +195,11 @@ src/search/client.mode: FORCE
 .PHONY: FORCE
 FORCE:
 
-# The search tests share the database's worker, extension and table names, so
-# they run one at a time after the others.
+# The search and vector tests share the database's worker, extension and
+# table names, so they run one at a time after the others.
 .PHONY: test/schedule$(MAX_CONCURRENT_TESTS)
-test/schedule$(MAX_CONCURRENT_TESTS): schedule = $(patsubst test/sql/%.sql,%,$(filter-out test/sql/search_%,$(TESTS)))
-test/schedule$(MAX_CONCURRENT_TESTS): serial = $(patsubst test/sql/%.sql,%,$(filter test/sql/search_%,$(TESTS)))
+test/schedule$(MAX_CONCURRENT_TESTS): schedule = $(patsubst test/sql/%.sql,%,$(filter-out test/sql/search_% test/sql/vector_%,$(TESTS)))
+test/schedule$(MAX_CONCURRENT_TESTS): serial = $(patsubst test/sql/%.sql,%,$(filter test/sql/search_% test/sql/vector_%,$(TESTS)))
 test/schedule$(MAX_CONCURRENT_TESTS):
 ifneq ($(MAX_CONCURRENT_TESTS),)
 	@perl -E 'say "test: ", join " ", splice @ARGV, 0, $(MAX_CONCURRENT_TESTS) while @ARGV' $(schedule) > $@

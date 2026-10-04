@@ -1,0 +1,235 @@
+-- chdb_vector's operator classes through the chdb index access method, end to
+-- end: a vector column is an Array(Float32) column with an HNSW skip index in
+-- the index's ClickHouse table, and an ORDER BY on one of its distance
+-- operators is answered by the database's worker, nearest first. The stub
+-- client returns the ctids its GUC names, so this runs with the worker only,
+-- like search_e2e; vector_support covers the functions with either client.
+\set VERBOSITY terse
+CREATE EXTENSION vector;
+CREATE EXTENSION chdb_search;
+CREATE EXTENSION chdb_vector;
+SET search_path = public, chdb;
+SET chdb_search.mask_oids = on;
+-- The classes: one ORDER BY operator each, and the two support functions the
+-- access method tells them by (function 1 is its options function).
+SELECT opcname, amvalidate(c.oid), amopstrategy, amoppurpose, amopopr::regoperator
+  FROM pg_opclass c JOIN pg_am a ON a.oid = c.opcmethod
+  JOIN pg_amop o ON o.amopfamily = c.opcfamily
+ WHERE a.amname = 'chdb' AND opcname LIKE 'vector\_%' ORDER BY 1;
+      opcname      | amvalidate | amopstrategy | amoppurpose |      amopopr       
+-------------------+------------+--------------+-------------+--------------------
+ vector_cosine_ops | t          |            2 | o           | <=>(vector,vector)
+ vector_ip_ops     | t          |            3 | o           | <#>(vector,vector)
+ vector_l2_ops     | t          |            1 | o           | <->(vector,vector)
+(3 rows)
+
+SELECT amprocnum, amproc::regprocedure
+  FROM pg_amproc p JOIN pg_opclass c ON c.opcfamily = p.amprocfamily
+ WHERE opcname = 'vector_cosine_ops' AND c.opcmethod = (SELECT oid FROM pg_am WHERE amname = 'chdb')
+ ORDER BY 1;
+ amprocnum |             amproc              
+-----------+---------------------------------
+         2 | vector_distance_name(smallint)
+         3 | vector_query_settings(smallint)
+(2 rows)
+
+CREATE TABLE items (id int PRIMARY KEY, body text, embedding vector(3));
+INSERT INTO items VALUES
+    (1, 'running shoes', '[1,0,0]'),
+    (2, 'sandals', '[0,1,0]'),
+    (3, 'running socks', '[0.9,0.1,0]'),
+    (4, 'boots', '[0,0,1]');
+-- The table: Array(Float32) under a vector_similarity index built with the
+-- class's function and the column's dimension.
+SET client_min_messages = debug1;
+CREATE INDEX items_idx ON items USING chdb (body, embedding vector_cosine_ops);
+DEBUG:  building index "items_idx" on table "items" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), "embedding" Array(Float32), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body")), INDEX "embedding_idx" "embedding" TYPE vector_similarity('hnsw', 'cosineDistance', 3)) ENGINE = MergeTree ORDER BY ctid SETTINGS fsync_after_insert = 1, fsync_part_directory = 1, enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "embedding") -- 4 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+RESET client_min_messages;
+-- A column without a dimension cannot be indexed, and a NULL vector cannot
+-- be stored: ClickHouse wants every array at the index's dimension.
+CREATE TABLE nodims (embedding vector);
+CREATE INDEX ON nodims USING chdb (embedding vector_cosine_ops);
+ERROR:  a vector column of a chdb index needs a dimension
+DROP TABLE nodims;
+INSERT INTO items VALUES (5, 'no embedding', NULL);
+ERROR:  a NULL vector cannot be stored in a chdb index
+----------------------------------------------------------------------------
+-- Nearest first through the index
+----------------------------------------------------------------------------
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Limit
+   ->  Index Scan using items_idx on items
+         Order By: (embedding <=> '[1,0,0]'::vector)
+(3 rows)
+
+-- The statement: the distance as _distance, the function itself as the sort
+-- key, as many rows as the index serves, and chdb_vector's settings.
+SET client_min_messages = debug1;
+SELECT id, embedding <=> '[1,0,0]' AS distance FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+ id |       distance       
+----+----------------------
+  1 |                    0
+  3 | 0.006116251198662548
+  2 |                    1
+(3 rows)
+
+RESET client_min_messages;
+-- The same rows by sequential scan.
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT id, embedding <=> '[1,0,0]' AS distance FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
+ id |       distance       
+----+----------------------
+  1 |                    0
+  3 | 0.006116251198662548
+  2 |                    1
+(3 rows)
+
+RESET enable_indexscan;
+SET enable_seqscan = off;
+-- A hybrid query: the text predicate filters in ClickHouse, the distance
+-- orders what passes.
+EXPLAIN (COSTS OFF) SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,1,0]' LIMIT 2;
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Limit
+   ->  Index Scan using items_idx on items
+         Index Cond: (body @@@ 'running'::text)
+         Order By: (embedding <=> '[0,1,0]'::vector)
+(4 rows)
+
+SET client_min_messages = debug1;
+SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,1,0]' LIMIT 2;
+DEBUG:  chdb_search select: SELECT ctid, cosineDistance("embedding", [0,1,0]) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY cosineDistance("embedding", [0,1,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+ id 
+----
+  3
+  1
+(2 rows)
+
+RESET client_min_messages;
+-- The settings follow the GUCs.
+SET chdb_vector.hnsw_candidate_list_size = 64;
+SET chdb_vector.filter_strategy = prefilter;
+SET client_min_messages = debug1;
+SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,1,0]' LIMIT 1;
+DEBUG:  chdb_search select: SELECT ctid, cosineDistance("embedding", [0,1,0]) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY cosineDistance("embedding", [0,1,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 64, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'prefilter'
+ id 
+----
+  3
+(1 row)
+
+RESET client_min_messages;
+RESET chdb_vector.hnsw_candidate_list_size;
+RESET chdb_vector.filter_strategy;
+-- Several order-bys, or a NULL argument from a generic plan, are no search
+-- the index serves: they sort every row, as in search_am_scan.
+SET client_min_messages = debug1;
+SELECT id FROM items ORDER BY embedding <=> '[0,0,1]', embedding <=> '[1,0,0]' LIMIT 2;
+DEBUG:  chdb_search select: SELECT ctid, cosineDistance("embedding", [0,0,1]) AS _distance1, cosineDistance("embedding", [1,0,0]) AS _distance2 FROM idx_N.t_N ORDER BY _distance1, _distance2
+ id 
+----
+  4
+  1
+(2 rows)
+
+SET plan_cache_mode = force_generic_plan;
+PREPARE near(vector) AS SELECT id FROM items ORDER BY embedding <=> $1 LIMIT 2;
+EXECUTE near(NULL);
+DEBUG:  chdb_search select: SELECT ctid, CAST(NULL AS Nullable(Float64)) AS _distance FROM idx_N.t_N ORDER BY _distance
+ id 
+----
+  1
+  2
+(2 rows)
+
+EXECUTE near('[0,0,1]');
+DEBUG:  chdb_search select: SELECT ctid, cosineDistance("embedding", [0,0,1]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [0,0,1]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+ id 
+----
+  4
+  1
+(2 rows)
+
+RESET plan_cache_mode;
+RESET client_min_messages;
+----------------------------------------------------------------------------
+-- dotProduct is a similarity: sorted descending, rescored, negated for <#>
+----------------------------------------------------------------------------
+CREATE INDEX items_ip ON items USING chdb (embedding vector_ip_ops);
+SET client_min_messages = debug1;
+SELECT id, embedding <#> '[0.9,0.1,0]' AS distance FROM items ORDER BY embedding <#> '[0.9,0.1,0]' LIMIT 3;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT ctid, -dotProduct("embedding", [0.9,0.1,0]) AS _distance FROM idx_N.t_N ORDER BY dotProduct("embedding", [0.9,0.1,0]) DESC LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 1, vector_search_filter_strategy = 'auto'
+ id |       distance       
+----+----------------------
+  1 |  -0.8999999761581421
+  3 |  -0.8199999332427979
+  2 | -0.10000000149011612
+(3 rows)
+
+RESET client_min_messages;
+DROP INDEX items_ip;
+CREATE INDEX items_l2 ON items USING chdb (embedding vector_l2_ops);
+SET client_min_messages = debug1;
+SELECT id, embedding <-> '[0,0,1]' AS distance FROM items ORDER BY embedding <-> '[0,0,1]' LIMIT 2;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT ctid, L2Distance("embedding", [0,0,1]) AS _distance FROM idx_N.t_N ORDER BY L2Distance("embedding", [0,0,1]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+ id |      distance      
+----+--------------------
+  4 |                  0
+  3 | 1.3490737315813386
+(2 rows)
+
+RESET client_min_messages;
+DROP INDEX items_l2;
+----------------------------------------------------------------------------
+-- The scan asks for as many rows as max_limit_for_vector_search_queries
+-- lets the index return, and gets no more
+----------------------------------------------------------------------------
+SELECT chdb_search_exec('SET max_limit_for_vector_search_queries = 2');
+ chdb_search_exec 
+------------------
+ 
+(1 row)
+
+SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
+ id 
+----
+  1
+  3
+(2 rows)
+
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
+ id 
+----
+  1
+  3
+  2
+(3 rows)
+
+RESET enable_indexscan;
+SET enable_seqscan = off;
+DROP TABLE items;
+DROP EXTENSION chdb_vector;
+DROP EXTENSION chdb_search;
+DROP EXTENSION vector;
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it; the setting above goes with its engine.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;
