@@ -1,0 +1,474 @@
+-- Tests of the chdb index access method against the stub worker client
+-- (make CHDB_SEARCH_STUB=1): every statement the access method generates is
+-- logged at DEBUG1, and the stub accepts it and returns no rows.
+\set VERBOSITY terse
+CREATE EXTENSION chdb_search;
+SET chdb_search.mask_oids = on;
+SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
+ ?column? 
+----------
+ t
+(1 row)
+
+----------------------------------------------------------------------------
+-- Predicates: the Postgres fallback of the default tokenizer
+----------------------------------------------------------------------------
+SELECT chdb.has_all_tokens('The Quick brown fox', 'quick FOX'),
+       chdb.has_all_tokens('The Quick brown fox', 'quick cat'),
+       chdb.has_all_tokens('The Quick brown fox', ''),
+       chdb.has_any_tokens('The Quick brown fox', 'cat FOX'),
+       chdb.has_any_tokens('The Quick brown fox', 'cat dog'),
+       chdb.has_token('snake_case-name', 'case'),
+       chdb.has_token('snake_case-name', 'cas'),
+       chdb.has_phrase('a quick brown fox', 'Quick, Brown'),
+       chdb.has_phrase('a quick brown fox', 'brown quick');
+ has_all_tokens | has_all_tokens | has_all_tokens | has_any_tokens | has_any_tokens | has_token | has_token | has_phrase | has_phrase 
+----------------+----------------+----------------+----------------+----------------+-----------+-----------+------------+------------
+ t              | f              | f              | t              | f              | t         | f         | t          | f
+(1 row)
+
+SELECT chdb.has_token('x', 'two tokens');
+ERROR:  has_token needs a needle that is a single token
+SELECT 'Wörter und Zahlen 42' @@@ 'wörter 42',
+       'one two' @@? 'three two',
+       'one two' @@~ 'one two',
+       'one two' @@= 'two',
+       ARRAY['Red', 'Blue'] @@@ 'red',
+       ARRAY['Red', 'Blue'] @@? 'green',
+       ARRAY['Red', 'Blue'] @@= 'BLUE',
+       chdb.has_all_tokens(ARRAY['New York'], 'new york');
+ ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | has_all_tokens 
+----------+----------+----------+----------+----------+----------+----------+----------------
+ t        | t        | t        | t        | t        | f        | t        | t
+(1 row)
+
+----------------------------------------------------------------------------
+-- Operator classes validate
+----------------------------------------------------------------------------
+SELECT opcname, amvalidate(oid)
+  FROM pg_opclass
+ WHERE opcmethod = (SELECT oid FROM pg_am WHERE amname = 'chdb')
+ ORDER BY opcname;
+    opcname     | amvalidate 
+----------------+------------
+ columnar_ops   | t
+ text_array_ops | t
+ text_ops       | t
+(3 rows)
+
+SELECT opcname, opcdefault, opcintype::regtype
+  FROM pg_opclass
+ WHERE opcmethod = (SELECT oid FROM pg_am WHERE amname = 'chdb')
+ ORDER BY opcname;
+    opcname     | opcdefault | opcintype  
+----------------+------------+------------
+ columnar_ops   | t          | anyelement
+ text_array_ops | f          | text[]
+ text_ops       | t          | text
+(3 rows)
+
+----------------------------------------------------------------------------
+-- CREATE INDEX and its options
+----------------------------------------------------------------------------
+CREATE TABLE docs (
+    id int PRIMARY KEY,
+    body text,
+    title text,
+    tags text[],
+    author text,
+    price numeric(10, 2),
+    seen timestamptz,
+    flag bool
+);
+INSERT INTO docs VALUES
+    (1, 'Running shoes for runners', 'Shoes', '{sport,shoes}', 'ann', 49.90, '2026-01-02 03:04:05+00', true),
+    (2, 'Walking boots', 'Boots', '{outdoor}', 'bob', 89.00, '2026-02-03 00:00:00+00', false);
+SET client_min_messages = debug1;
+CREATE INDEX docs_idx ON docs USING chdb (
+    body text_ops (tokenizer = 'ngrams', ngram_size = 2, support_phrase_search = true),
+    title text_ops,
+    tags text_array_ops,
+    author columnar_ops,
+    price,
+    seen,
+    flag columnar_ops
+) WITH (vacuum_optimize_ratio = 0.5);
+DEBUG:  building index "docs_idx" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), title Nullable(String), tags Array(Nullable(String)), author Nullable(String), price Nullable(Decimal(10,2)), seen Nullable(DateTime64(6, 'UTC')), flag Nullable(Bool), INDEX body_idx body TYPE text(tokenizer = ngrams(2), preprocessor = lowerUTF8(body), support_phrase_search = 1), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title)), INDEX tags_idx tags TYPE text(tokenizer = array)) ENGINE = MergeTree ORDER BY ctid SETTINGS allow_experimental_text_index_phrase_search = 1
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+RESET client_min_messages;
+\d docs_idx
+                Index "public.docs_idx"
+ Column |           Type           | Key? | Definition 
+--------+--------------------------+------+------------
+ body   | text                     | yes  | body
+ title  | text                     | yes  | title
+ tags   | text[]                   | yes  | tags
+ author | text                     | yes  | author
+ price  | numeric(10,2)            | yes  | price
+ seen   | timestamp with time zone | yes  | seen
+ flag   | boolean                  | yes  | flag
+chdb, for table "public.docs"
+
+SELECT reloptions FROM pg_class WHERE relname = 'docs_idx';
+         reloptions          
+-----------------------------
+ {vacuum_optimize_ratio=0.5}
+(1 row)
+
+SET client_min_messages = debug1;
+CREATE INDEX docs_title ON docs USING chdb (
+    title text_ops (tokenizer = 'splitByString', tokenizer_arg = ' ,', preprocessor = 'caseFoldUTF8')
+);
+DEBUG:  building index "docs_title" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8(title))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+CREATE INDEX docs_regexp ON docs USING chdb (
+    title text_ops (tokenizer = 'splitByRegexp', tokenizer_arg = '\s+''x', preprocessor = 'none')
+);
+DEBUG:  building index "docs_regexp" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByRegexp('\\s+\'x'))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+CREATE INDEX docs_icu ON docs USING chdb (title text_ops (tokenizer = 'icu', tokenizer_arg = 'en'));
+DEBUG:  building index "docs_icu" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = icu('en'), preprocessor = lowerUTF8(title))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+CREATE INDEX docs_html ON docs USING chdb (body text_ops (preprocessor = 'extractTextFromHTML'));
+DEBUG:  building index "docs_html" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = extractTextFromHTML(body))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+RESET client_min_messages;
+DROP INDEX docs_regexp, docs_icu, docs_html;
+-- Rejected options.
+CREATE INDEX ON docs USING chdb (body text_ops (tokenizer = 'bogus'));
+ERROR:  invalid tokenizer "bogus" for a chdb index
+CREATE INDEX ON docs USING chdb (body text_ops (tokenizer = 'x); DROP TABLE docs; --'));
+ERROR:  invalid tokenizer "x); DROP TABLE docs; --" for a chdb index
+CREATE INDEX ON docs USING chdb (body text_ops (preprocessor = 'upper'));
+ERROR:  invalid preprocessor "upper" for a chdb index
+CREATE INDEX ON docs USING chdb (body text_ops (ngram_size = 3));
+ERROR:  ngram_size requires tokenizer = 'ngrams'
+CREATE INDEX ON docs USING chdb (body text_ops (ngram_size = 9, tokenizer = 'ngrams'));
+ERROR:  value 9 out of bounds for option "ngram_size"
+CREATE INDEX ON docs USING chdb (body text_ops (tokenizer = 'icu'));
+ERROR:  tokenizer 'icu' requires tokenizer_arg
+CREATE INDEX ON docs USING chdb (body text_ops (tokenizer = 'array', tokenizer_arg = 'x'));
+ERROR:  tokenizer_arg applies only to icu, splitByRegexp and splitByString
+CREATE INDEX ON docs USING chdb (tags text_array_ops (tokenizer = 'array'));
+ERROR:  unrecognized parameter "tokenizer"
+CREATE INDEX ON docs USING chdb (id columnar_ops (foo = 1));
+ERROR:  unrecognized parameter "foo"
+CREATE INDEX ON docs USING chdb (body) WITH (nonsense = 1);
+ERROR:  unrecognized parameter "nonsense"
+CREATE INDEX ON docs USING chdb (body) WITH (vacuum_optimize_ratio = 2);
+ERROR:  value 2 out of bounds for option "vacuum_optimize_ratio"
+CREATE INDEX ON docs USING chdb (id text_ops);
+ERROR:  operator class "text_ops" does not accept data type integer
+CREATE INDEX ON docs USING chdb (body) INCLUDE (title);
+ERROR:  access method "chdb" does not support included columns
+CREATE UNIQUE INDEX ON docs USING chdb (body);
+ERROR:  access method "chdb" does not support unique indexes
+-- raw_preprocessor needs a superuser.
+SET client_min_messages = debug1;
+CREATE INDEX docs_raw ON docs USING chdb (
+    body text_ops (raw_preprocessor = 'lowerUTF8(replaceAll(body, ''-'', '' ''))')
+);
+DEBUG:  building index "docs_raw" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, body Nullable(String), INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(replaceAll(body, '-', ' ')))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+RESET client_min_messages;
+DROP INDEX docs_raw;
+CREATE ROLE chdb_search_user NOSUPERUSER;
+GRANT CREATE ON SCHEMA public TO chdb_search_user;
+SET ROLE chdb_search_user;
+CREATE TABLE user_docs (body text);
+CREATE INDEX ON user_docs USING chdb (body text_ops (raw_preprocessor = 'lower(body)'));
+ERROR:  only superusers can set raw_preprocessor
+CREATE INDEX user_docs_idx ON user_docs USING chdb (body text_ops (tokenizer = 'splitByString'));
+RESET ROLE;
+DROP TABLE user_docs;
+REVOKE CREATE ON SCHEMA public FROM chdb_search_user;
+DROP ROLE chdb_search_user;
+----------------------------------------------------------------------------
+-- Planning: a chdb index scan, or a bitmap scan when forced
+----------------------------------------------------------------------------
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
+                   QUERY PLAN                   
+------------------------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: (body @@@ 'running shoes'::text)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@? 'running shoes' AND title @@= 'shoes';
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: ((body @@? 'running shoes'::text) AND (title @@= 'shoes'::text))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@~ 'running shoes';
+                   QUERY PLAN                   
+------------------------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: (body @@~ 'running shoes'::text)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE tags @@@ 'sport';
+               QUERY PLAN               
+----------------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: (tags @@@ 'sport'::text)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE author = 'ann' AND price >= 10 AND flag;
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: ((author = 'ann'::text) AND (price >= '10'::numeric) AND (flag = true))
+(2 rows)
+
+SET enable_indexscan = off;
+SET enable_bitmapscan = on;
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
+                      QUERY PLAN                      
+------------------------------------------------------
+ Bitmap Heap Scan on docs
+   Recheck Cond: (body @@@ 'running shoes'::text)
+   ->  Bitmap Index Scan on docs_idx
+         Index Cond: (body @@@ 'running shoes'::text)
+(4 rows)
+
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+----------------------------------------------------------------------------
+-- Generated SELECTs, with escaping of the search string
+----------------------------------------------------------------------------
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+SET client_min_messages = debug1;
+SELECT id FROM docs WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasAllTokens(body, 'running shoes')
+DEBUG:  chdb_search stub: select
+ id 
+----
+(0 rows)
+
+SELECT id FROM docs WHERE body @@? 'it''s a \back\slash';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasAnyTokens(body, 'it\'s a \\back\\slash')
+DEBUG:  chdb_search stub: select
+ id 
+----
+(0 rows)
+
+SELECT id FROM docs WHERE title @@= 'Shoes' AND tags @@@ 'sport' AND author >= 'a' AND price < 50.50;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasToken(title, 'Shoes') AND hasAllTokens(tags, 'sport') AND author >= 'a' AND price < toDecimal256('50.50', 2)
+DEBUG:  chdb_search stub: select
+ id 
+----
+(0 rows)
+
+SELECT id FROM docs WHERE seen > '2026-01-01 00:00:00+00' AND flag = false;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE seen > fromUnixTimestamp64Micro(1767225600000000, 'UTC') AND flag = false
+DEBUG:  chdb_search stub: select
+ id 
+----
+(0 rows)
+
+SELECT id FROM docs WHERE body @@@ NULL;
+ id 
+----
+(0 rows)
+
+RESET client_min_messages;
+SET enable_indexscan = off;
+SET enable_bitmapscan = on;
+SET client_min_messages = debug1;
+SELECT id FROM docs WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasAllTokens(body, 'running shoes')
+DEBUG:  chdb_search stub: select
+ id 
+----
+(0 rows)
+
+RESET client_min_messages;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+----------------------------------------------------------------------------
+-- Writes: buffered, flushed at COMMIT, dropped at ROLLBACK
+----------------------------------------------------------------------------
+SET client_min_messages = debug1;
+BEGIN;
+INSERT INTO docs VALUES (3, 'committed row', 'T', '{a}', 'cy', 1, now(), true);
+\echo -- nothing is sent before COMMIT
+-- nothing is sent before COMMIT
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+\echo -- rolled back
+-- rolled back
+BEGIN;
+INSERT INTO docs VALUES (4, 'rolled back row', 'T', '{a}', 'dee', 1, now(), true);
+ROLLBACK;
+\echo -- savepoints
+-- savepoints
+BEGIN;
+INSERT INTO docs VALUES (5, 'kept', 'T', '{a}', 'eve', 1, now(), true);
+SAVEPOINT s1;
+INSERT INTO docs VALUES (6, 'dropped by rollback to', 'T', '{a}', 'fay', 1, now(), true);
+ROLLBACK TO s1;
+SAVEPOINT s2;
+INSERT INTO docs VALUES (7, 'released', 'T', '{a}', 'gus', 1, now(), true);
+RELEASE s2;
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+\echo -- update and delete
+-- update and delete
+UPDATE docs SET body = 'changed' WHERE id = 1;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+DELETE FROM docs WHERE id = 2;
+\echo -- rows with NULLs
+-- rows with NULLs
+INSERT INTO docs (id) VALUES (8);
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, body, title, tags, author, price, seen, flag) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+\echo -- a failing statement
+-- a failing statement
+INSERT INTO docs VALUES (1, 'duplicate key');
+ERROR:  duplicate key value violates unique constraint "docs_pkey"
+RESET client_min_messages;
+----------------------------------------------------------------------------
+-- VACUUM
+----------------------------------------------------------------------------
+SET client_min_messages = debug1;
+VACUUM docs;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t
+DEBUG:  chdb_search stub: select
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t
+DEBUG:  chdb_search stub: select
+RESET client_min_messages;
+----------------------------------------------------------------------------
+-- REINDEX, TRUNCATE, DROP INDEX, DROP TABLE
+----------------------------------------------------------------------------
+SET client_min_messages = debug1;
+REINDEX INDEX docs_title;
+DEBUG:  building index "docs_title" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8(title))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: send block
+DEBUG:  chdb_search stub: finish
+-- (TRUNCATE rebuilds the indexes too; its core DEBUG lines carry OIDs.)
+RESET client_min_messages;
+TRUNCATE docs;
+SET client_min_messages = debug1;
+BEGIN;
+DROP INDEX docs_title;
+ROLLBACK;
+DROP INDEX docs_title;
+DEBUG:  chdb_search drop: idx_N
+DEBUG:  chdb_search stub: drop
+\echo -- a rolled-back CREATE INDEX drops its store
+-- a rolled-back CREATE INDEX drops its store
+BEGIN;
+CREATE INDEX docs_rolled ON docs USING chdb (title text_ops);
+DEBUG:  building index "docs_rolled" on table "docs" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t (ctid UInt64, xmin UInt32, title Nullable(String), INDEX title_idx title TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(title))) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search stub: exec
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t (ctid, xmin, title) FORMAT Native
+DEBUG:  chdb_search stub: insert
+DEBUG:  chdb_search stub: finish
+ROLLBACK;
+DEBUG:  chdb_search drop: idx_N
+DEBUG:  chdb_search stub: drop
+DROP TABLE docs;
+DEBUG:  chdb_search drop: idx_N
+DEBUG:  chdb_search stub: drop
+RESET client_min_messages;
+DROP EXTENSION chdb_search;

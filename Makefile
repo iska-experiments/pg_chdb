@@ -12,7 +12,9 @@ MAX_CONCURRENT_TESTS ?=
 
 DATA         = $(sort $(wildcard sql/$(EXTENSION)--*.sql) sql/$(EXTENSION)--$(EXTVERSION).sql)
 DOCS         = $(wildcard doc/*.md)
-TESTS        ?= $(wildcard test/sql/*.sql)
+# search_* tests need the access method built with the stub worker client.
+TESTS        ?= $(filter-out test/sql/search_%.sql,$(wildcard test/sql/*.sql)) \
+                $(if $(CHDB_SEARCH_STUB),$(wildcard test/sql/search_*.sql))
 REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
 REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION) $(if $(MAX_CONCURRENT_TESTS),--max-concurrent-tests $(MAX_CONCURRENT_TESTS))
 MODULE_big   = $(EXTENSION)

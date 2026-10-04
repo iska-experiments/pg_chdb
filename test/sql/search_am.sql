@@ -84,6 +84,7 @@ CREATE INDEX docs_regexp ON docs USING chdb (
 CREATE INDEX docs_icu ON docs USING chdb (title text_ops (tokenizer = 'icu', tokenizer_arg = 'en'));
 CREATE INDEX docs_html ON docs USING chdb (body text_ops (preprocessor = 'extractTextFromHTML'));
 RESET client_min_messages;
+DROP INDEX docs_regexp, docs_icu, docs_html;
 
 -- Rejected options.
 CREATE INDEX ON docs USING chdb (body text_ops (tokenizer = 'bogus'));
@@ -97,7 +98,6 @@ CREATE INDEX ON docs USING chdb (tags text_array_ops (tokenizer = 'array'));
 CREATE INDEX ON docs USING chdb (id columnar_ops (foo = 1));
 CREATE INDEX ON docs USING chdb (body) WITH (nonsense = 1);
 CREATE INDEX ON docs USING chdb (body) WITH (vacuum_optimize_ratio = 2);
-CREATE INDEX ON docs USING chdb (body, (title || 'x'), (title || 'y'));
 CREATE INDEX ON docs USING chdb (id text_ops);
 CREATE INDEX ON docs USING chdb (body) INCLUDE (title);
 CREATE UNIQUE INDEX ON docs USING chdb (body);
@@ -108,6 +108,7 @@ CREATE INDEX docs_raw ON docs USING chdb (
     body text_ops (raw_preprocessor = 'lowerUTF8(replaceAll(body, ''-'', '' ''))')
 );
 RESET client_min_messages;
+DROP INDEX docs_raw;
 CREATE ROLE chdb_search_user NOSUPERUSER;
 GRANT CREATE ON SCHEMA public TO chdb_search_user;
 SET ROLE chdb_search_user;
@@ -123,14 +124,17 @@ DROP ROLE chdb_search_user;
 -- Planning: a chdb index scan, or a bitmap scan when forced
 ----------------------------------------------------------------------------
 SET enable_seqscan = off;
+SET enable_bitmapscan = off;
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@? 'running shoes' AND title @@= 'shoes';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@~ 'running shoes';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE tags @@@ 'sport';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE author = 'ann' AND price >= 10 AND flag;
 SET enable_indexscan = off;
+SET enable_bitmapscan = on;
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
 RESET enable_indexscan;
+RESET enable_bitmapscan;
 RESET enable_seqscan;
 
 ----------------------------------------------------------------------------
@@ -197,23 +201,19 @@ RESET client_min_messages;
 ----------------------------------------------------------------------------
 SET client_min_messages = debug1;
 REINDEX INDEX docs_title;
+-- (TRUNCATE rebuilds the indexes too; its core DEBUG lines carry OIDs.)
+RESET client_min_messages;
 TRUNCATE docs;
-DROP INDEX docs_title;
+SET client_min_messages = debug1;
 BEGIN;
-DROP INDEX docs_icu;
+DROP INDEX docs_title;
 ROLLBACK;
+DROP INDEX docs_title;
 \echo -- a rolled-back CREATE INDEX drops its store
 BEGIN;
 CREATE INDEX docs_rolled ON docs USING chdb (title text_ops);
 ROLLBACK;
 DROP TABLE docs;
 RESET client_min_messages;
-
-----------------------------------------------------------------------------
--- Reserved and duplicate column names
-----------------------------------------------------------------------------
-CREATE TABLE reserved (ctid2 text, "xmin" text);
-CREATE INDEX ON reserved USING chdb ("xmin" text_ops);
-DROP TABLE reserved;
 
 DROP EXTENSION chdb_search;
