@@ -257,7 +257,10 @@ chdb_search_skip_index_args(
 
     initStringInfo(&buf);
     if (kind == CHDB_COL_TEXT_ARRAY) {
-        appendStringInfoString(&buf, "tokenizer = array");
+        /* Elements compare in lower case, as chdb.has_token(text[], text) does. */
+        appendStringInfo(
+            &buf, "tokenizer = array, preprocessor = %s(%s)", DEFAULT_PREPROCESSOR, col
+        );
         return buf.data;
     }
 
