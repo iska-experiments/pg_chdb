@@ -126,6 +126,36 @@ RESET enable_seqscan;
 RESET client_min_messages;
 DROP TABLE kw;
 
+-- A column's kind comes from its class's options support function, not the
+-- family's name: a class without text options, as another extension might
+-- declare, stores a plain column, and its operators are still rendered by
+-- strategy number (text searches are 1..4, comparisons 11..15).
+CREATE OPERATOR CLASS my_text FOR TYPE text USING chdb AS
+    OPERATOR 1 @@@ (text, text),
+    FUNCTION 1 (text) chdb_search_no_options(internal);
+SELECT amvalidate(oid) FROM pg_opclass WHERE opcname = 'my_text';
+CREATE TABLE mine (body text COLLATE "C");
+SET client_min_messages = debug1;
+CREATE INDEX mine_idx ON mine USING chdb (body my_text);
+SET enable_seqscan = off;
+\o /dev/null
+SELECT body FROM mine WHERE body @@@ 'running shoes';
+\o
+RESET enable_seqscan;
+RESET client_min_messages;
+DROP TABLE mine;
+DROP OPERATOR CLASS my_text USING chdb;
+-- Renaming a family does not change how its indexes are searched.
+ALTER OPERATOR FAMILY text_ops USING chdb RENAME TO text_ops_v2;
+SET client_min_messages = debug1;
+SET enable_seqscan = off;
+\o /dev/null
+SELECT id FROM docs WHERE body @@@ 'running shoes';
+\o
+RESET enable_seqscan;
+RESET client_min_messages;
+ALTER OPERATOR FAMILY text_ops_v2 USING chdb RENAME TO text_ops;
+
 -- A text column filtered through the index needs a bytewise collation:
 -- ClickHouse compares strings bytewise and the scan does not recheck. Only
 -- C and POSIX count as bytewise, as for btree's text_pattern_ops, so the

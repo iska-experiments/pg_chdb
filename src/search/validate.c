@@ -30,10 +30,12 @@
 #include "search.h"
 
 /*
- * Validates an operator class: strategies 1..5, boolean search operators,
- * float8 ordering operators, and at most the options support function. The
- * columnar_ops class is declared for anyelement, its operators of concrete
- * types live in its family, so only the family is checked for contents.
+ * Validates an operator class: the options support function, which decides
+ * the kind of the family's columns (see ddl.c), boolean search operators
+ * with the strategies of that kind (1..4 for text, 1..3 for text arrays,
+ * 11..15 for comparisons), and float8 ordering operators. The columnar_ops
+ * class is declared for anyelement, its operators of concrete types live in
+ * its family, so only the family is checked for contents.
  */
 bool
 chdb_search_validate(Oid opclassoid) {
@@ -57,10 +59,18 @@ chdb_search_validate(Oid opclassoid) {
     oprlist  = SearchSysCacheList1(AMOPSTRATEGY, ObjectIdGetDatum(opfamilyoid));
     proclist = SearchSysCacheList1(AMPROCNUM, ObjectIdGetDatum(opfamilyoid));
 
+    /* The class's own support function names the kind; any other one will do. */
+    ChdbColumnKind kind = CHDB_COL_COLUMNAR;
+    bool own_kind       = false;
+
     for (int i = 0; i < proclist->n_members; i++) {
         Form_pg_amproc procform =
             (Form_pg_amproc)GETSTRUCT(&proclist->members[i]->tuple);
 
+        if (procform->amprocnum == 1 && !own_kind) {
+            kind     = chdb_search_proc_kind(procform->amproc);
+            own_kind = procform->amproclefttype == opcintype;
+        }
         if (procform->amprocnum != 1) {
             ereport(
                 INFO,
@@ -95,17 +105,47 @@ chdb_search_validate(Oid opclassoid) {
     for (int i = 0; i < oprlist->n_members; i++) {
         Form_pg_amop oprform = (Form_pg_amop)GETSTRUCT(&oprlist->members[i]->tuple);
         bool ordering        = oprform->amoppurpose == AMOP_ORDER;
+        int strategy         = oprform->amopstrategy;
+        int lo = 1, hi = CHDB_ORDER_L1;
 
-        if (oprform->amopstrategy < 1 || oprform->amopstrategy > 5) {
+        if (!ordering && kind == CHDB_COL_COLUMNAR) {
+            lo = CHDB_STRATEGY_EQ;
+            hi = CHDB_STRATEGY_GE;
+        } else if (!ordering) {
+            hi = kind == CHDB_COL_TEXT ? CHDB_STRATEGY_HAS_PHRASE
+                                       : CHDB_STRATEGY_HAS_TOKEN;
+        }
+        if (strategy < lo || strategy > hi) {
+            ereport(
+                INFO,
+                errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+                strategy <= CHDB_STRATEGY_HAS_PHRASE && kind == CHDB_COL_COLUMNAR
+                    ? errmsg(
+                          "chdb opfamily %s contains text search operator %s without "
+                          "text options as support function 1",
+                          opfamilyname,
+                          format_operator(oprform->amopopr)
+                      )
+                    : errmsg(
+                          "chdb opfamily %s contains operator %s with invalid strategy "
+                          "number %d",
+                          opfamilyname,
+                          format_operator(oprform->amopopr),
+                          strategy
+                      )
+            );
+            result = false;
+        }
+        if (!ordering && kind != CHDB_COL_COLUMNAR &&
+            oprform->amoprighttype != TEXTOID) {
             ereport(
                 INFO,
                 errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
                 errmsg(
-                    "chdb opfamily %s contains operator %s with invalid strategy "
-                    "number %d",
+                    "chdb opfamily %s contains text search operator %s whose right "
+                    "type is not text",
                     opfamilyname,
-                    format_operator(oprform->amopopr),
-                    oprform->amopstrategy
+                    format_operator(oprform->amopopr)
                 )
             );
             result = false;
