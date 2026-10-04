@@ -19,8 +19,8 @@
 #include "utils/relcache.h"
 
 /* Commands, continuing the numbering of src/setup.h. */
-#define CHDB_CMD_EXEC 'E'   /* run a statement, no result rows */
-#define CHDB_CMD_DROP 'X'   /* drop the index's chDB database */
+#define CHDB_CMD_EXEC 'E' /* run a statement, no result rows */
+#define CHDB_CMD_DROP 'X' /* drop the index's chDB database */
 
 typedef struct chdbSearchConn chdbSearchConn;
 
