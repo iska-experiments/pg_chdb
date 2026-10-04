@@ -1,0 +1,167 @@
+-- The chdb_search custom scan over chdb_vector's operator classes: an ORDER
+-- BY a distance operator with a LIMIT is one HNSW search in ClickHouse that
+-- asks for as many rows as the LIMIT, with the text predicate beside it.
+-- Needs the worker, like vector_opclass.
+\set VERBOSITY terse
+CREATE EXTENSION vector;
+CREATE EXTENSION chdb_search;
+CREATE EXTENSION chdb_vector;
+SET search_path = public, chdb;
+SET chdb_search.mask_oids = on;
+CREATE TABLE items (id int PRIMARY KEY, body text, embedding vector(3));
+INSERT INTO items VALUES
+    (1, 'running shoes', '[1,0,0]'),
+    (2, 'sandals', '[0,1,0]'),
+    (3, 'running socks', '[0.9,0.1,0]'),
+    (4, 'boots', '[0,0,1]'),
+    (5, 'running boots', '[0.8,0,0.2]');
+CREATE INDEX items_idx ON items USING chdb (body, embedding vector_cosine_ops);
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+-- As search_planner's: the plan, and the rows each plan returned that the
+-- other did not.
+CREATE FUNCTION pg_temp.check(q text, OUT custom_scan bool, OUT only_custom bigint, OUT only_seqscan bigint)
+LANGUAGE plpgsql AS $$
+DECLARE line text;
+BEGIN
+    custom_scan := false;
+    SET LOCAL enable_seqscan = off;
+    SET LOCAL enable_indexscan = off;
+    FOR line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP
+        custom_scan := custom_scan OR line LIKE '%Custom Scan (chdb_search)%';
+    END LOOP;
+    EXECUTE format('CREATE TEMP TABLE custom_rows ON COMMIT DROP AS %s', q);
+    SET LOCAL enable_seqscan = on;
+    SET LOCAL chdb_search.enable_custom_scan = off;
+    EXECUTE format('CREATE TEMP TABLE seqscan_rows ON COMMIT DROP AS %s', q);
+    SELECT count(*) INTO only_custom FROM (TABLE custom_rows EXCEPT ALL TABLE seqscan_rows) d;
+    SELECT count(*) INTO only_seqscan FROM (TABLE seqscan_rows EXCEPT ALL TABLE custom_rows) d;
+END $$;
+-- As search_planner's: EXPLAIN as Postgres 18 prints it.
+CREATE FUNCTION pg_temp.explain(q text, actual bool DEFAULT false) RETURNS SETOF text
+LANGUAGE plpgsql AS $$
+DECLARE line text;
+BEGIN
+    FOR line IN EXECUTE 'EXPLAIN (COSTS OFF' || CASE WHEN actual
+        THEN ', ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF' ELSE '' END || ') ' || q LOOP
+        line := regexp_replace(line, 'rows=(\d+) loops', 'rows=\1.00 loops', 'g');
+        RETURN NEXT replace(line, 'InitPlan expr_', 'InitPlan ');
+    END LOOP;
+END $$;
+----------------------------------------------------------------------------
+-- Nearest first, the LIMIT in the statement
+----------------------------------------------------------------------------
+EXPLAIN (COSTS OFF) SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
+                                                                                                                                      QUERY PLAN                                                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on items
+         Pushed Order By: (embedding <=> '[1,0,0]'::vector)
+         Pushed Limit: 3
+         ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT 3 SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+(5 rows)
+
+SELECT id, embedding <=> '[1,0,0]' AS distance FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
+ id |       distance       
+----+----------------------
+  1 |                    0
+  3 | 0.006116251198662548
+  5 |  0.02985753301900307
+(3 rows)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+-- A hybrid query: the text predicate filters in ClickHouse, the distance
+-- orders what passes, and the LIMIT counts the result.
+EXPLAIN (COSTS OFF) SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,0,1]' LIMIT 2;
+                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on items
+         Pushed Cond: (body @@@ 'running'::text)
+         Pushed Order By: (embedding <=> '[0,0,1]'::vector)
+         ClickHouse: SELECT ctid, cosineDistance("embedding", [0,0,1]) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY cosineDistance("embedding", [0,0,1]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+(5 rows)
+
+SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,0,1]' LIMIT 2;
+ id 
+----
+  5
+  1
+(2 rows)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,0,1]' LIMIT 2$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+-- Without a LIMIT the search asks for as many rows as the index serves, as
+-- an index scan does; with a filter kept here the LIMIT stays here too.
+EXPLAIN (COSTS OFF) SELECT id FROM items ORDER BY embedding <=> '[1,0,0]';
+                                                                                                                                                           QUERY PLAN                                                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search) on items
+   Pushed Order By: (embedding <=> '[1,0,0]'::vector)
+   ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT id FROM items WHERE id > 1 ORDER BY embedding <=> '[1,0,0]' LIMIT 2;
+                                                                                                                                                              QUERY PLAN                                                                                                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (chdb_search) on items
+         Filter: (id > 1)
+         Pushed Order By: (embedding <=> '[1,0,0]'::vector)
+         ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+(5 rows)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM items WHERE id > 1 ORDER BY embedding <=> '[1,0,0]' LIMIT 2$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+-- The nearest row deleted: the store still has it, the LIMIT is still met.
+DELETE FROM items WHERE id = 1;
+SELECT * FROM pg_temp.explain($$SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 2$$, true);
+                                                                                                                                       explain                                                                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=2.00 loops=1)
+   ->  Custom Scan (chdb_search) on items (actual rows=2.00 loops=1)
+         Pushed Order By: (embedding <=> '[1,0,0]'::vector)
+         Pushed Limit: 2
+         ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT 4 SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+         Store Rows: 5
+         Store Queries: 2
+(7 rows)
+
+SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 2;
+ id 
+----
+  3
+  5
+(2 rows)
+
+SELECT * FROM pg_temp.check($$SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 2$$);
+ custom_scan | only_custom | only_seqscan 
+-------------+-------------+--------------
+ t           |           0 |            0
+(1 row)
+
+DROP TABLE items;
+DROP EXTENSION chdb_vector;
+DROP EXTENSION chdb_search;
+DROP EXTENSION vector;
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;

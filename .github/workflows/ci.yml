@@ -154,7 +154,7 @@ jobs:
         run: |
           make -j $(nproc) CHDB_SEARCH_STUB=1
           sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install CHDB_SEARCH_STUB=1
-          make installcheck CHDB_SEARCH_STUB=1 TESTS="$(ls test/sql/search_*.sql | grep -v -e search_worker -e search_e2e)"
+          make installcheck CHDB_SEARCH_STUB=1 TESTS="$(ls test/sql/search_*.sql | grep -v -e search_worker -e search_e2e -e search_planner)"
       - name: Show Stub Diffs
         if: failure() && steps.test-stub.outcome == 'failure'
         run: find . -name regression.diffs -exec cat {} +
