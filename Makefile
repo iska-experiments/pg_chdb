@@ -112,7 +112,7 @@ $(HOOK_MODULE): $(wildcard src/hook/*.c src/hook/*.h) $(OBJS)
 install-hook: $(HOOK_MODULE)
 	$(INSTALL_SHLIB) $< '$(DESTDIR)$(pkglibdir)/'
 uninstall-hook:
-	rm -f $(DESTDIR)$(pkglibdir)/$(HOOK_MODULE)
+	rm -f $(DESTDIR)$(pkglibdir)/$(notdir $(HOOK_MODULE))
 install: install-hook
 uninstall: uninstall-hook
 
