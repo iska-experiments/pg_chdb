@@ -34,15 +34,8 @@ sub search {
         "$pre SET enable_seqscan = off; SELECT id FROM docs WHERE body @@@ 'boots' ORDER BY id");
 }
 
-# The stderr of a statement, '' when it succeeds.
-sub stderr_of {
-    my ($out, $err) = ('', '');
-    $node->psql(postgres => shift, stdout => \$out, stderr => \$err);
-    return $err;
-}
-
 sub search_fails {
-    return stderr_of("SET enable_seqscan = off; SELECT id FROM docs WHERE body @@@ 'boots'");
+    return stderr_of($node, "SET enable_seqscan = off; SELECT id FROM docs WHERE body @@@ 'boots'");
 }
 
 # Swaps the store directory for another copy while the server is down.
@@ -85,13 +78,13 @@ is $node->safe_psql(postgres =>
 # the flush on both sides and pass the stale store as current. In error mode
 # the commit is refused; in skip mode it keeps its rows from the store and
 # moves the index on.
-like stderr_of("INSERT INTO docs VALUES (4, 'Climbing boots')"),
+like stderr_of($node, "INSERT INTO docs VALUES (4, 'Climbing boots')"),
     qr/ERROR:\s+chdb index "docs_idx" is not available on this server/,
     'A commit into a stale store should be refused';
 is $node->safe_psql(postgres => 'SELECT count(*) FROM docs WHERE id = 4'), 0,
     'The refused commit should leave no row';
 my $offset = -s $node->logfile;
-is stderr_of("$skip INSERT INTO docs VALUES (4, 'Climbing boots')"), '',
+is stderr_of($node, "$skip INSERT INTO docs VALUES (4, 'Climbing boots')"), '',
     'Skip mode should commit without the store';
 is $node->safe_psql(postgres => 'SELECT count(*) FROM docs WHERE id = 4'), 1,
     'The skipped commit should keep its row';
@@ -109,7 +102,7 @@ like search_fails(), qr/DETAIL:\s+The store was last flushed at .*, the index at
 # VACUUM will not delete from a store it cannot trust either. (It asks the
 # index only when the heap has a dead tuple to remove.)
 $node->safe_psql(postgres => 'DELETE FROM docs WHERE id = 1');
-like stderr_of('VACUUM docs'), qr/chdb index "docs_idx" is not available on this server/,
+like stderr_of($node, 'VACUUM docs'), qr/chdb index "docs_idx" is not available on this server/,
     'VACUUM should refuse the stale store';
 
 # REINDEX rebuilds the store from the heap, with the rows of the skipped commit.

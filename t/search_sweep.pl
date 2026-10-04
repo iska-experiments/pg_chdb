@@ -32,19 +32,6 @@ sub has_store {
     });
 }
 
-# Stops the worker of database $db, so that the next request starts a new one.
-sub stop_worker {
-    my $db = shift;
-    $node->safe_psql(postgres => qq{
-        SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-         WHERE backend_type = 'chdb_search worker' AND datname = '$db'
-    });
-    $node->poll_query_until(postgres => qq{
-        SELECT count(*) = 0 FROM pg_stat_activity
-         WHERE backend_type = 'chdb_search worker' AND datname = '$db'
-    }) or die "the worker of $db did not stop";
-}
-
 # A chdb index in database $db, whose worker's directory then exists; the
 # worker is stopped, so that the database can be dropped.
 sub make_store {
@@ -59,7 +46,7 @@ sub make_store {
     my $dboid = $node->safe_psql(postgres =>
         "SELECT oid FROM pg_database WHERE datname = '$db'");
     ok -d "$pg_chdb/$dboid", "$db should have a store directory";
-    stop_worker($db);
+    stop_worker($node, $db);
     return $dboid;
 }
 
@@ -78,13 +65,13 @@ ORPHAN_STORE: {
     # the index, so a store whose OID cannot be share-locked is kept.
     my $holder = $node->background_psql('postgres');
     $holder->query_safe('BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE');
-    stop_worker('postgres');
+    stop_worker($node, 'postgres');
     is has_store($oid), 1, 'A store whose OID is locked should be kept';
     $holder->query_safe('COMMIT');
     $holder->quit;
 
     my $offset = -s $node->logfile;
-    stop_worker('postgres');
+    stop_worker($node, 'postgres');
     is has_store($oid), 0, 'The restarted worker should sweep the store';
     ok $node->log_contains(qr/chdb_search: swept orphan store idx_$oid\b/, $offset),
         'Should log the sweep';
@@ -111,7 +98,7 @@ MISSED_DROP: {
 
     # The worker's next start sweeps it before serving anything.
     $offset = -s $node->logfile;
-    stop_worker('postgres');
+    stop_worker($node, 'postgres');
     is has_store($oid), 0, 'The restarted worker should sweep the store';
     ok $node->log_contains(qr/chdb_search: swept orphan store idx_$oid\b/, $offset),
         'Should log the sweep';
@@ -130,7 +117,7 @@ DROPPED_DATABASE: {
     close $sock;
 
     my $offset = -s $node->logfile;
-    stop_worker('postgres');
+    stop_worker($node, 'postgres');
     has_store(0);
     ok !-e "$pg_chdb/$dboid", 'The next worker to start should remove the directory';
     ok !-e "$pg_chdb/$dboid.sock", 'The socket should be gone too';

@@ -23,15 +23,6 @@ END { $node->stop if $node }
 
 my $oid = $node->safe_psql(postgres => "SELECT 'docs_idx'::regclass::oid");
 
-# The store's tables, read through the worker.
-sub tables {
-    return $node->safe_psql(postgres => qq{
-        SELECT * FROM chdb_search_query(
-            'SELECT name FROM system.tables WHERE database = ''idx_$oid'' ORDER BY name'
-        ) AS (name text)
-    });
-}
-
 my $victim = $node->background_psql('postgres');
 my $pid = $victim->query_safe('SELECT pg_backend_pid()');
 $victim->query_safe(q{
@@ -39,7 +30,7 @@ $victim->query_safe(q{
     INSERT INTO docs (id, body)
     SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
 });
-like tables(), qr/^t_\d+_tx_\d+$/m, 'The transaction should have staged its rows';
+like store_tables($node, $oid), qr/^t_\d+_tx_\d+$/m, 'The transaction should have staged its rows';
 
 # An uncommitted transaction's WAL need not have reached disk yet. Without
 # it the crash loses the transaction's xid too, which then reads as still to
@@ -52,7 +43,7 @@ my $offset = -s $node->logfile;
 is kill('KILL', $pid), 1, 'Should kill the backend';
 $node->wait_for_log(qr/database system is ready to accept connections/, $offset);
 eval { $victim->quit };
-like tables(), qr/^t_\d+_tx_\d+$/m, 'The staging table should survive the crash';
+like store_tables($node, $oid), qr/^t_\d+_tx_\d+$/m, 'The staging table should survive the crash';
 is $node->safe_psql(postgres => 'SELECT count(*) FROM docs WHERE id > 1000'), 0,
     'The rows should not';
 
@@ -62,7 +53,7 @@ $node->safe_psql(postgres => 'VACUUM docs');
 ok $node->log_contains(
     qr/chdb_search exec: DROP TABLE IF EXISTS idx_$oid\.t_\d+_tx_\d+/, $offset),
     'VACUUM should drop the staging table';
-unlike tables(), qr/_tx_/, 'The staging table should be gone';
-like tables(), qr/^t_\d+$/m, 'The index table should stay';
+unlike store_tables($node, $oid), qr/_tx_/, 'The staging table should be gone';
+like store_tables($node, $oid), qr/^t_\d+$/m, 'The index table should stay';
 
 done_testing;

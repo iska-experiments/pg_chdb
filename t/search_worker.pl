@@ -33,13 +33,6 @@ sub search {
     return $err || $out;
 }
 
-# The stderr of a statement, '' when it succeeds.
-sub stderr_of {
-    my ($out, $err) = ('', '');
-    $node->psql(postgres => shift, stdout => \$out, stderr => \$err);
-    return $err;
-}
-
 sub engine_pid {
     return $node->safe_psql(postgres => 'SELECT chdb_search_engine_pid()');
 }
@@ -114,11 +107,11 @@ $node->safe_psql(doomed => q{
     CREATE INDEX ON t USING chdb (body);
 });
 ok worker_pid($node, 'doomed'), 'Should have a worker for the second database';
-like stderr_of('DROP DATABASE doomed'),
+like stderr_of($node, 'DROP DATABASE doomed'),
     qr/database "doomed" is being accessed by other users/,
     'DROP DATABASE should count the worker as a session';
 my $offset = -s $node->logfile;
-is stderr_of('DROP DATABASE doomed WITH (FORCE)'), '',
+is stderr_of($node, 'DROP DATABASE doomed WITH (FORCE)'), '',
     'DROP DATABASE WITH (FORCE) should drop a database with a running worker';
 ok $node->wait_for_log(qr/worker for database \d+ shutting down/, $offset),
     'The worker should have shut down cleanly';

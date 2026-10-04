@@ -7,7 +7,10 @@ use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
 
-our @EXPORT = qw(server_log check_log check_query search_node worker_pid);
+our @EXPORT = qw(
+    server_log check_log check_query search_node worker_pid stop_worker
+    stderr_of store_tables
+);
 
 =begin server_log
 
@@ -105,6 +108,51 @@ sub worker_pid {
         WHERE backend_type = 'chdb_search worker' AND datname = current_database()};
     $node->poll_query_until($db, "SELECT EXISTS (SELECT $worker)") or return '';
     return $node->safe_psql($db => "SELECT pid $worker");
+}
+
+=head2 stop_worker
+
+Stops the chdb_search worker of database $db, which removes its socket, and
+waits for it to be gone; the next request starts a new one.
+
+=cut
+
+sub stop_worker {
+    my ($node, $db) = @_;
+    my $worker = qq{FROM pg_stat_activity
+        WHERE backend_type = 'chdb_search worker' AND datname = '$db'};
+    $node->safe_psql(postgres => "SELECT pg_terminate_backend(pid) $worker");
+    $node->poll_query_until(postgres => "SELECT count(*) = 0 $worker")
+        or die "the worker of $db did not stop";
+}
+
+=head2 stderr_of
+
+The stderr of a statement run in the node's postgres database, '' when it
+succeeds.
+
+=cut
+
+sub stderr_of {
+    my ($node, $sql) = @_;
+    my ($out, $err) = ('', '');
+    $node->psql(postgres => $sql, stdout => \$out, stderr => \$err);
+    return $err;
+}
+
+=head2 store_tables
+
+The tables of index $oid's store, one name per line, read through the worker.
+
+=cut
+
+sub store_tables {
+    my ($node, $oid) = @_;
+    return $node->safe_psql(postgres => qq{
+        SELECT * FROM chdb_search_query(
+            'SELECT name FROM system.tables WHERE database = ''idx_$oid'' ORDER BY name'
+        ) AS (name text)
+    });
 }
 
 1;
