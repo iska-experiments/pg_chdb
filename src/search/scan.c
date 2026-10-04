@@ -7,13 +7,19 @@
  * false: ClickHouse has already applied the quals, and the heap fetch still
  * decides visibility, so rows of dead or rolled-back tuples that linger in the
  * store until VACUUM are harmless.
+ *
+ * There is no amgetbitmap. A TIDBitmap past work_mem, or ANDed with a lossy
+ * sibling, makes the bitmap heap scan recheck the quals with the Postgres
+ * fallbacks of ops.c, which know the default tokenizer only, so every match
+ * of an ngrams, splitByString, icu or extractTextFromHTML column on a lossy
+ * page would be dropped. A bitmap scan would buy nothing anyway: the scan
+ * streams the whole TID set either way. (pgvector ships none either.)
  */
 
 #include "postgres.h"
 
 #include "access/relscan.h"
 #include "catalog/pg_type_d.h"
-#include "nodes/tidbitmap.h"
 #include "pgstat.h"
 #include "utils/memutils.h"
 
@@ -251,22 +257,6 @@ chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir) {
     }
     scan->xs_recheckorderby = false;
     return true;
-}
-
-int64
-chdb_search_amgetbitmap(IndexScanDesc scan, TIDBitmap* tbm) {
-    ScanOpaque* so = scan->opaque;
-    ItemPointerData tid;
-    int64 n = 0;
-
-    if (!so->started) {
-        start(scan);
-    }
-    while (so->stream && chdb_search_stream_next(so->stream, &tid)) {
-        tbm_add_tuples(tbm, &tid, 1, false);
-        n++;
-    }
-    return n;
 }
 
 void

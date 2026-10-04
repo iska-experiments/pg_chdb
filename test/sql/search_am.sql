@@ -175,46 +175,35 @@ RESET chdb_search.unavailable_index;
 RESET enable_seqscan;
 
 ----------------------------------------------------------------------------
--- Planning: a chdb index scan, or a bitmap scan when forced
+-- Planning: a chdb index scan, and never a bitmap scan
 ----------------------------------------------------------------------------
 SET enable_seqscan = off;
-SET enable_bitmapscan = off;
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@? 'running shoes' AND title @@= 'shoes';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@~ 'running shoes';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE tags @@@ 'sport';
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE author = 'ann' AND price >= 10 AND flag;
+-- The access method has no amgetbitmap: a lossy bitmap's recheck would run
+-- the Postgres fallbacks, which know the default tokenizer only. With the
+-- sequential and index scans both disabled a bitmap path would win, yet the
+-- planner still has only the heap. 18 marks that plan `Disabled: true` where
+-- 17 adds disable_cost; the wrapper drops the line so both read the same.
+CREATE FUNCTION pg_temp.plan_lines(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$
+DECLARE line text;
+BEGIN
+    FOR line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP
+        IF line !~ '^\s*Disabled: ' THEN RETURN NEXT line; END IF;
+    END LOOP;
+END $$;
 SET enable_indexscan = off;
 SET enable_bitmapscan = on;
-EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
+SELECT * FROM pg_temp.plan_lines($$SELECT id FROM docs WHERE body @@@ 'running shoes'$$);
 RESET enable_indexscan;
 RESET enable_bitmapscan;
 RESET enable_seqscan;
 
-----------------------------------------------------------------------------
--- Generated SELECTs, with escaping of the search string
-----------------------------------------------------------------------------
-SET enable_seqscan = off;
-SET enable_bitmapscan = off;
-SET client_min_messages = debug1;
-\o /dev/null
-SELECT id FROM docs WHERE body @@@ 'running shoes';
-SELECT id FROM docs WHERE body @@? 'it''s a \back\slash';
-SELECT id FROM docs WHERE title @@= 'Shoes' AND tags @@@ 'sport' AND author >= 'a' AND price < 50.50;
-SELECT id FROM docs WHERE seen > '2026-01-01 00:00:00+00' AND flag = false;
-SELECT id FROM docs WHERE body @@@ NULL;
-RESET client_min_messages;
-SET enable_indexscan = off;
-SET enable_bitmapscan = on;
-SET client_min_messages = debug1;
-SELECT id FROM docs WHERE body @@@ 'running shoes';
-\o
-RESET client_min_messages;
-RESET enable_indexscan;
-RESET enable_bitmapscan;
-RESET enable_seqscan;
-
--- Writes are in search_am_writes, rebuilds and drops in search_am_rebuild.
+-- The statements scans generate are in search_am_scan, writes in
+-- search_am_writes, rebuilds and drops in search_am_rebuild.
 
 ----------------------------------------------------------------------------
 -- A session that first loads the library inside a DROP misses the drop

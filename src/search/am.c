@@ -128,7 +128,7 @@ chdb_search_handler(PG_FUNCTION_ARGS) {
     am->ambeginscan            = chdb_search_ambeginscan;
     am->amrescan               = chdb_search_amrescan;
     am->amgettuple             = chdb_search_amgettuple;
-    am->amgetbitmap            = chdb_search_amgetbitmap;
+    am->amgetbitmap            = NULL; /* see scan.c */
     am->amendscan              = chdb_search_amendscan;
     am->ammarkpos              = NULL;
     am->amrestrpos             = NULL;
