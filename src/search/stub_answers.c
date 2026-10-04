@@ -174,28 +174,31 @@ encode_count(int64 n, void** out) {
     return take_block(w, cxt, old, out);
 }
 
+/* How many ctids the GUC names: the store's count() of its rows. */
+static int64
+count_ctids(void) {
+    int64 n = *chdb_search_stub_ctids ? 1 : 0;
+
+    for (const char* p = chdb_search_stub_ctids; (p = strchr(p, ',')); p++) {
+        n++;
+    }
+    return n;
+}
+
 /*
- * The count a statement gets: of the ctids for a plain count(), else the
- * frequency the GUC gives the token the WHERE names, `['tok']`, or zero.
+ * The count a statement gets: the frequency the GUC gives the one token a
+ * score's WHERE names as an array, `['tok']`, or zero for a token not
+ * listed; else the ctids' number, as the aggregate scan's count(*) gets
+ * however the WHERE filters the rows.
  */
 static int64
 count_for(const char* sql) {
     const char* where = strstr(sql, " WHERE ");
-    const char* tok;
-    const char* end;
+    const char* tok   = where ? strstr(where, "['") : NULL;
+    const char* end   = tok ? strstr(tok + 2, "']") : NULL;
 
-    if (!where) {
-        int64 n = *chdb_search_stub_ctids ? 1 : 0;
-
-        for (const char* p = chdb_search_stub_ctids; (p = strchr(p, ',')); p++) {
-            n++;
-        }
-        return n;
-    }
-    tok = strstr(where, "['");
-    end = tok ? strstr(tok + 2, "']") : NULL;
     if (!end) {
-        return 0;
+        return count_ctids();
     }
     tok += 2;
     for (const char* p = chdb_search_stub_frequencies; *p;) {

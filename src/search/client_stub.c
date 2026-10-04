@@ -12,7 +12,8 @@
  *                                 one Float32 per ` AS _score`; 'garbage'
  *                                 returns bytes that are not a Native block;
  *                                 empty, the default, returns no block at
- *                                 all. A plain count() is their number.
+ *                                 all. A count(), as the aggregate scan sends
+ *                                 for count(*), is their number.
  *   chdb_search_stub.fail         reading the answer fails, as a lost worker
  *                                 would
  *   chdb_search_stub.meta         what the store says of the index's
@@ -25,7 +26,9 @@
  *                                 comma-separated
  *   chdb_search_stub.frequencies  `token:n` pairs, comma-separated: the
  *                                 count() of the rows with a token, as the
- *                                 score asks it (score.c); zero for the rest
+ *                                 score asks it (score.c), which is the one
+ *                                 count() not answered from the ctids; zero
+ *                                 for a token not listed
  *
  * The answers themselves are encoded in stub_answers.c. The AM logs every
  * statement it generates at DEBUG1; nothing is logged here.
