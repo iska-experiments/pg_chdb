@@ -1,5 +1,5 @@
-chdb_vector 0.1
-===============
+chdb_vector 0.1.0
+=================
 
 ## Synopsis
 
@@ -19,8 +19,13 @@ chdb_vector 0.1
 
 ## Description
 
-`chdb_vector` adds [pgvector] `vector` support to the `chdb` index access
-method. A `vector(n)` column becomes an `Array(Float32)` column in ClickHouse
+chdb_vector adds [pgvector] `vector` columns to the `chdb` index access
+method of [chdb_search], so that one index answers a text predicate and a
+nearest-neighbour order in one ClickHouse query. It requires both
+extensions, and chdb_search does not require it: the vector operator
+classes live here so that chdb_search has no pgvector dependency.
+
+A `vector(n)` column becomes an `Array(Float32)` column in ClickHouse
 with a `vector_similarity('hnsw', <function>, n)` skip index. The column must
 have a dimension: `vector` without a typmod cannot be indexed. Values are
 encoded through pgvector's `vector::real[]` cast; a NULL vector cannot be
@@ -32,18 +37,21 @@ ClickHouse's HNSW index serves, `ORDER BY <function>(col, q) LIMIT n`, with
 index returns: as a pgvector scan returns at most `hnsw.ef_search` rows, a
 `LIMIT` above that gets those rows only. The settings below go with it.
 
-## Operator classes
+## Operator Classes
 
-| Class | Operator | ClickHouse | Order |
-|---|---|---|---|
-| `vector_l2_ops` | `<->` | `L2Distance` | ASC |
-| `vector_cosine_ops` | `<=>` | `cosineDistance` | ASC |
-| `vector_ip_ops` | `<#>` | `dotProduct` | DESC |
+| Class               | Operator | ClickHouse       | Order  |
+| ------------------- | -------- | ---------------- | ------ |
+| `vector_l2_ops`     | `<->`    | `L2Distance`     | `ASC`  |
+| `vector_cosine_ops` | `<=>`    | `cosineDistance` | `ASC`  |
+| `vector_ip_ops`     | `<#>`    | `dotProduct`     | `DESC` |
 
-Each class has one ORDER BY operator and two support functions:
+Each class has one `ORDER BY` operator and two support functions:
 `chdb.vector_distance_name(int2)`, which maps its strategy number to the
-ClickHouse function, and `chdb.vector_query_settings(int2)` below. Vector
-operators are usable only in `ORDER BY ... LIMIT`.
+ClickHouse function, and `chdb.vector_query_settings(int2)` below. That is
+how the access method recognizes a vector operator class: it reads the
+class's support function 2 from the catalogs and calls it with the strategy
+of the class's one ordering operator, and never links against chdb_vector.
+Vector operators are usable only in `ORDER BY ... LIMIT`.
 
 ## Settings
 
@@ -78,4 +86,15 @@ returns, `1 - dot`, which the descending sort inverts.
 *   A vector column indexed by `chdb` cannot hold NULL.
 *   Only `vector` is supported, not `halfvec`, `bit` or `sparsevec`.
 
+## Authors
+
+*   [David E. Wheeler](https://justatheory.com/)
+*   [serprex](https://github.com/serprex)
+
+## Copyright
+
+Copyright (c) 2026, ClickHouse
+
   [pgvector]: https://github.com/pgvector/pgvector
+    "Open-source vector similarity search for Postgres"
+  [chdb_search]: ./chdb_search.md "chdb_search Docs"
