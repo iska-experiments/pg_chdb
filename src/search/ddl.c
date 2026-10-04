@@ -28,14 +28,17 @@
  *   CREATE DATABASE IF NOT EXISTS idx_16401
  *   CREATE TABLE idx_16401.t (ctid UInt64, xmin UInt32, body Nullable(String),
  *     tags Array(Nullable(String)), author Nullable(String),
- *     INDEX body_idx body TYPE text(tokenizer = ngrams(3), preprocessor =
- * lowerUTF8(body)), INDEX tags_idx tags TYPE text(tokenizer = array)) ENGINE =
- * MergeTree ORDER BY ctid INSERT INTO idx_16401.t (ctid, xmin, body, tags, author)
- * FORMAT Native SELECT ctid FROM idx_16401.t WHERE hasAllTokens(body, 'running shoes')
+ *     INDEX body_idx body TYPE text(tokenizer = ngrams(3),
+ *       preprocessor = lowerUTF8(body)),
+ *     INDEX tags_idx tags TYPE text(tokenizer = array))
+ *     ENGINE = MergeTree ORDER BY ctid
+ *   INSERT INTO idx_16401.t (ctid, xmin, body, tags, author)
+ *   SELECT ctid FROM idx_16401.t WHERE hasAllTokens(body, 'running shoes')
  *   DELETE FROM idx_16401.t WHERE ctid IN (4294967296, ...)
  *   OPTIMIZE TABLE idx_16401.t FINAL
  *
- * Every statement is logged with elog(DEBUG1) before it is sent.
+ * An INSERT carries no FORMAT clause: the worker streams it as Native. Every
+ * statement is logged with elog(DEBUG1) before it is sent.
  */
 
 #include "postgres.h"
