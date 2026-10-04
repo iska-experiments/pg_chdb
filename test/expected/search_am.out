@@ -4,10 +4,14 @@
 -- found through the index are discarded here and checked by search_e2e.
 \set VERBOSITY terse
 -- The extension installs into schema chdb, which it creates or, as here,
--- finds already in use, and which DROP EXTENSION then leaves alone.
+-- finds already in use, and which DROP EXTENSION then leaves alone. (The
+-- schema may already exist from an earlier test in the same database; the
+-- notice for that is beside the point and silenced.)
+SET client_min_messages = warning;
 CREATE SCHEMA IF NOT EXISTS chdb;
 CREATE TABLE chdb.user_table (x int);
 CREATE EXTENSION chdb_search;
+RESET client_min_messages;
 SELECT extnamespace::regnamespace FROM pg_extension WHERE extname = 'chdb_search';
  extnamespace 
 --------------
