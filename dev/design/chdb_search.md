@@ -249,13 +249,65 @@ Then recovery and physical replication come from Postgres WAL, the
 generation check becomes a sanity check, and the local directory holds only
 chDB's own `tmp/` and `metadata/`, which are rebuilt from pages on start.
 
+## Backups and replication
+
+The index must behave like any other Postgres index under WAL-G backups,
+point-in-time recovery, streaming replication, `pg_rewind` and logical
+replication. The two storage phases differ, and the guarantees are explicit.
+
+| Property | Phase 0 (directory under PGDATA) | Phase 1 (parts in index pages) |
+|---|---|---|
+| Base backup + PITR | Heap restored to the target; store is a copy from backup time, so the index is **stale and must be rebuilt** | Consistent at the target LSN, no rebuild |
+| WAL-G delta backups | Store files have no page LSNs, so every delta copies the whole store | Standard pages, delta works |
+| Streaming standby | No store on the standby; the index is **unusable** until promotion and rebuild | Standby worker opens the store read-only from pages and serves searches |
+| `pg_rewind` | Store copied wholesale, then treated as stale | Rewound with the other relation files |
+| Logical replication | Works: the subscriber maintains its own index through `aminsert` | Same |
+| Replay requirements | None | None: generic WAL (`RM_GENERIC`) is replayed by core, no custom rmgr, no `shared_preload_libraries` |
+
+Fail-safe rule for both phases: a scan never returns rows from a store it
+cannot prove current. At scan start the AM compares the metapage generation
+and last-flushed LSN with what the store reports (`SELECT max(lsn)` on a
+one-row `meta` table in the store, written with every flush). On mismatch,
+on a missing store, or on a standby in Phase 0, behaviour follows
+`chdb_search.unavailable_index = error | skip`: `error` raises
+"chdb index is not available on this server, REINDEX to rebuild", `skip`
+makes `amcostestimate` return `disable_cost` so the planner uses another
+path. The default is `error`, because a silent fallback to a sequential
+scan hides a broken index. REINDEX always rebuilds the store from the heap.
+
+Phase 1 standby reads: the standby's worker opens the index pages
+read-only. The ClickHouse table definition is regenerated from the Postgres
+index definition (the same `ddl.c` code that created it), the parts are
+discovered by listing the page directory as a `plain_rewritable` disk does,
+and the engine runs with `SYSTEM STOP MERGES` and a read-only disk so it
+never writes. Promotion switches the worker to read-write without a
+rebuild.
+
+Write amplification: MergeTree merges rewrite parts, and in Phase 1 every
+rewritten byte is a generic WAL full-page image. Keep parts few and large
+(`min_bytes_for_wide_part`, merge settings on the store table), materialize
+skip indexes once after bulk loads rather than on every merge
+(`materialize_skip_indexes_on_merge = 0` plus `MATERIALIZE INDEX`), and
+document the expected WAL volume per inserted row in `doc/chdb_search.md`.
+
+Two-phase commit: the buffer flushes at `XACT_EVENT_PRE_PREPARE` as it does
+at pre-commit. `ROLLBACK PREPARED` then leaves rows in the store whose heap
+tuples are dead; the visibility recheck hides them and VACUUM removes them.
+
+Tests (`t/replication.pl`, `t/backup.pl`): base backup with WAL archiving
+restored to a PITR target; a streaming standby queried through the index
+(Phase 0 asserts the fail-safe error, Phase 1 asserts rows); a logical
+subscription whose subscriber builds its own index; and WAL-G itself with
+`WALG_FILE_PREFIX` pointing at a local directory (`backup-push`,
+`wal-push`, `backup-fetch`), skipped when the binary is absent.
+
 ## GUCs
 
 `chdb_search.max_memory`, `max_threads` (worker settings, via `CHDB_GUCS`),
 `chdb_search.flush_threshold`, `chdb_search.vacuum_optimize_ratio` (0.2),
 `chdb_search.enable_custom_scan`, `enable_aggregate_pushdown`,
 `chdb_search.hnsw_candidate_list_size` (256), `chdb_search.vector_rescoring`
-(off), `chdb_search.worker_timeout` (30s).
+(off), `chdb_search.worker_timeout` (30s), `chdb_search.unavailable_index` (`error`).
 
 ## Sub-projects and ownership
 
@@ -267,6 +319,7 @@ chDB's own `tmp/` and `metadata/`, which are rebuilt from pages on start.
 | D | pg_chdb `search-planner` | CustomScan, `chdb.score()`, aggregate pushdown | C's query builder |
 | E | pg_chdb `chdb-vector` | `chdb_vector` extension, opclasses, cast | C |
 | F | pg_chdb `search-tests` | pg_regress + TAP tests, docs in `doc/chdb_search.md` | C |
+| H | pg_chdb `replication-tests` | PITR, standby, logical replication and WAL-G TAP tests; Phase 0 fail-safe in the AM | C, F |
 
 Each lands as a draft PR of small commits. B exposes `client.h` first so C
 can compile against it with a stub worker.
