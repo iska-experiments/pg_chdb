@@ -169,6 +169,21 @@ RETURNS text[]
 AS 'MODULE_PATHNAME', 'chdb_search_tokens'
 LANGUAGE C STRICT;
 
+-- The relevance score of a row to the query's text searches, computed by
+-- the custom scan in ClickHouse: the argument is any column of the indexed
+-- table and only binds the call to it; the second form restricts the score
+-- to one indexed text column. Postgres never evaluates it: outside a custom
+-- scan it raises. Stable, so the planner leaves it to the scan.
+CREATE FUNCTION chdb.score(anyelement)
+RETURNS real
+AS 'MODULE_PATHNAME', 'chdb_search_score'
+LANGUAGE C STABLE PARALLEL SAFE;
+
+CREATE FUNCTION chdb.score(anyelement, text)
+RETURNS real
+AS 'MODULE_PATHNAME', 'chdb_search_score'
+LANGUAGE C STABLE PARALLEL SAFE;
+
 ----------------------------------------------------------------------------
 -- Operators. The estimators say "selective" and leave the rest to the index.
 ----------------------------------------------------------------------------
