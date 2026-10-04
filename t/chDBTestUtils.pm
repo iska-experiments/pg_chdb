@@ -9,7 +9,7 @@ use Test::More;
 
 our @EXPORT = qw(
     server_log check_log check_query search_node worker_pid stop_worker
-    stderr_of store_tables
+    stderr_of store_tables search_ids check_unavailable
 );
 
 =begin server_log
@@ -156,6 +156,48 @@ sub store_tables {
             'SELECT name FROM system.tables WHERE database = ''idx_$oid'' ORDER BY name'
         ) AS (name text)
     });
+}
+
+=head2 search_ids
+
+The ids of the docs whose body has every token of $needle, one per line,
+found through the index: sequential scans are disabled, so the answer is
+the store's, filtered by the heap for visibility.
+
+=cut
+
+sub search_ids {
+    my ($node, $needle) = @_;
+    return $node->safe_psql(postgres => qq{
+        SET enable_seqscan = off;
+        SELECT id FROM docs WHERE body @@@ '$needle' ORDER BY id
+    });
+}
+
+=head2 check_unavailable
+
+Asserts that the node refuses docs_idx as chdb_search.unavailable_index
+says: in error mode a search through the index fails naming the index, with
+a DETAIL matching $detail and a HINT matching $hint; in skip mode the
+planner takes a sequential scan, and the search answers $expect, the ids of
+the rows with the token boots, from the heap.
+
+=cut
+
+sub check_unavailable {
+    my ($node, $expect, $detail, $hint) = @_;
+    local $Test::Builder::Level = $Test::Builder::Level + 1;
+    my $search = "SELECT id FROM docs WHERE body @@@ 'boots'";
+    my $skip   = 'SET chdb_search.unavailable_index = skip;';
+    my $err    = stderr_of($node, "SET enable_seqscan = off; $search");
+    like $err, qr/ERROR:\s+chdb index "docs_idx" is not available on this server/,
+        'The index should be refused';
+    like $err, qr/DETAIL:\s+$detail/, 'Should say why';
+    like $err, qr/HINT:\s+$hint/, 'Should say what to do';
+    like $node->safe_psql(postgres => "$skip EXPLAIN (COSTS OFF) $search"),
+        qr/Seq Scan/, 'Skip mode should plan without the index';
+    is $node->safe_psql(postgres => "$skip $search ORDER BY id"), $expect,
+        'Skip mode should answer from the heap';
 }
 
 1;
