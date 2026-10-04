@@ -16,6 +16,11 @@ PG_CONFIG   ?= pg_config
 TAP_TESTS   ?= 1
 OBJS         = $(subst .c,.o, $(wildcard src/*.c))
 
+# One jobserver sized to the machine's processors reaches every sub-make, so a
+# bare make builds with every core; a -j on the command line still wins.
+NPROC       ?= $(shell nproc --all 2>/dev/null || sysctl -n hw.ncpu)
+MAKEFLAGS   += -j$(NPROC)
+
 # Determine the OS and architecture.
 OS         ?= $(shell uname -s | tr A-Z a-z)
 ARCH        = $(shell uname -m)
@@ -57,7 +62,7 @@ include $(PGXS)
 
 # Set default prove flags.
 ifeq ($(PROVE_FLAGS),)
-PROVE_FLAGS = -fwvj $(if $(MAX_CONCURRENT_TESTS),$(MAX_CONCURRENT_TESTS),$(shell nproc))
+PROVE_FLAGS = -fwvj $(if $(MAX_CONCURRENT_TESTS),$(MAX_CONCURRENT_TESTS),$(NPROC))
 endif
 
 # Build against, install, uninstall a local copy of libchdb.
