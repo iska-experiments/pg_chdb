@@ -21,6 +21,13 @@ DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N
 DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (2) SETTINGS lightweight_delete_mode = 'lightweight_update_force'
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 RESET client_min_messages;
+-- The catalog gets the index's one page and the rows the store holds live.
+SELECT relpages, reltuples FROM pg_class WHERE relname = 'docs_idx';
+ relpages | reltuples 
+----------+-----------
+        1 |         3
+(1 row)
+
 -- Past the index's ratio, the parts are merged after the delete.
 ALTER INDEX docs_idx SET (vacuum_optimize_ratio = 0.1);
 DELETE FROM docs WHERE id = 1;
@@ -44,7 +51,10 @@ DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx
 RESET client_min_messages;
 RESET chdb_search.vacuum_optimize_ratio;
 -- A store the fail-safe check refuses (see search_stub_scan) is not deleted
--- from either: VACUUM raises, or in skip mode leaves the store alone.
+-- from either: VACUUM raises, or in skip mode leaves the store alone, and
+-- the catalog's figures for it as they were rather than counting a store it
+-- did not read.
+SELECT reltuples AS before FROM pg_class WHERE relname = 'docs_idx' \gset
 SET chdb_search_stub.ctids = '3,4';
 DELETE FROM docs WHERE id = 3;
 SET chdb_search_stub.meta = '1';
@@ -56,6 +66,12 @@ VACUUM docs;
 DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 RESET client_min_messages;
+SELECT relpages, reltuples = :before AS kept FROM pg_class WHERE relname = 'docs_idx';
+ relpages | kept 
+----------+------
+        1 | t
+(1 row)
+
 RESET chdb_search.unavailable_index;
 RESET chdb_search_stub.meta;
 RESET chdb_search_stub.ctids;
