@@ -19,6 +19,7 @@ $$($(1)_SO): $$(wildcard $$(dir $$($(1)_SO))*.c $$(dir $$($(1)_SO))*.h $$(dir $$
 sql/$(1)--$$($(1)_VERSION).sql: sql/$(1).sql $(4)
 	cat $$^ > $$@
 install-$(patsubst chdb_%,%,$(1)): $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
+	$$(MKDIR_P) '$$(DESTDIR)$$(pkglibdir)'
 	$$(INSTALL_SHLIB) $$< '$$(DESTDIR)$$(pkglibdir)/'
 	$$(MKDIR_P) '$$(DESTDIR)$$(datadir)/extension'
 	$$(INSTALL_DATA) $(1).control sql/$(1)--$$($(1)_VERSION).sql '$$(DESTDIR)$$(datadir)/extension/'
@@ -41,6 +42,7 @@ define libchdb_program
 $(2): $$(wildcard $$(dir $(2))*.c $$(dir $(2))*.h) $(3)
 	@$$(MAKE) -C $$(dir $$@) all LIBCHDB_DIR=$(or $(4),$$(LIBCHDB_DIR)) LIBCHDB_BUILD=$$(LIBCHDB_BUILD)
 install-$(1): $(2)
+	$$(MKDIR_P) '$$(DESTDIR)$$(pkglibdir)'
 	@to=$$(DESTDIR)$$(pkglibdir)/$$(notdir $(2)); \
 	  $$(INSTALL_PROGRAM) $$< $$$$to.new && mv -f $$$$to.new $$$$to
 uninstall-$(1):
