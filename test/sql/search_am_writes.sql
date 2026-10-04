@@ -156,9 +156,42 @@ RESET chdb_search.max_buffer;
 RESET chdb_search.flush_threshold;
 
 ----------------------------------------------------------------------------
--- VACUUM (what it deletes depends on the store's rows; see search_e2e)
+-- Staging: past the threshold a transaction's rows go to <table>_tx_<xid>
+----------------------------------------------------------------------------
+SET chdb_search.flush_threshold = '64kB';
+SET client_min_messages = debug1;
+BEGIN;
+INSERT INTO docs (id, body) SELECT 10000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
+INSERT INTO docs (id, body) VALUES (11000, 'tail');
+COMMIT;
+\echo -- a rollback drops the staging table, once
+BEGIN;
+INSERT INTO docs (id, body) SELECT 12000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
+ROLLBACK;
+\echo -- staged rows survive a savepoint rolled back after them
+BEGIN;
+INSERT INTO docs (id, body) SELECT 13000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
+SAVEPOINT s;
+INSERT INTO docs (id, body) VALUES (14000, 'sp');
+ROLLBACK TO s;
+COMMIT;
+\echo -- two indexes over the threshold: one staging table each
+BEGIN;
+INSERT INTO docs (id, body, title)
+SELECT 15000 + i, repeat('word ', 250), repeat('title ', 200) FROM generate_series(1, 120) i;
+ROLLBACK;
+RESET client_min_messages;
+RESET chdb_search.flush_threshold;
+
+----------------------------------------------------------------------------
+-- VACUUM: what it deletes depends on the store's rows (see search_e2e); it
+-- also looks for tables of other generations and of finished transactions
 ----------------------------------------------------------------------------
 VACUUM docs;
+-- (Nothing is dead now, so only the sweep's statements show.)
+SET client_min_messages = debug1;
+VACUUM docs;
+RESET client_min_messages;
 
 DROP TABLE docs;
 DROP EXTENSION chdb_search;

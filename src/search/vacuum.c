@@ -4,15 +4,19 @@
  * DELETE. amvacuumcleanup runs OPTIMIZE ... FINAL when enough rows died to be
  * worth rewriting parts: lightweight deletes only mask rows until a merge.
  * It also sweeps the tables of other generations, which a rebuild leaves
- * behind (see ddl.c).
+ * behind (see ddl.c), and the staging tables of transactions that are over
+ * (see staging.c).
  */
 
 #include "postgres.h"
 
 #include <stdlib.h>
 
+#include "access/transam.h"
+#include "access/xact.h"
 #include "catalog/pg_type_d.h"
 #include "commands/vacuum.h"
+#include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 
@@ -97,10 +101,59 @@ chdb_search_ambulkdelete(
 }
 
 /*
- * Drops the tables of every generation but the metapage's: the old one after
- * a committed rebuild, the new one after a rolled-back rebuild whose abort
- * callback never ran (a crashed backend). Names are read in full before any
- * drop, as one connection cannot stream and run statements at once.
+ * Parses t_<generation> or t_<generation>_tx_<fxid>, the latter with a
+ * non-zero fxid. Anything else in the database is not ours to drop.
+ */
+static bool
+parse_table_name(const char* name, uint64* generation, uint64* fxid) {
+    char* end;
+
+    *fxid = 0;
+    if (strncmp(name, "t_", 2) != 0) {
+        return false;
+    }
+    *generation = strtoull(name + 2, &end, 10);
+    if (end == name + 2) {
+        return false;
+    }
+    if (*end == '\0') {
+        return true;
+    }
+    if (strncmp(end, "_tx_", 4) != 0) {
+        return false;
+    }
+    *fxid = strtoull(end + 4, &end, 10);
+    return *end == '\0' && *fxid != 0;
+}
+
+/*
+ * A staging table is stale once its transaction is over. The backend's own
+ * transaction is not; one of an earlier epoch is, whatever its xid; a very
+ * new xid reads as in progress, which errs on the side of keeping.
+ */
+static bool
+staging_is_stale(uint64 fxid) {
+    FullTransactionId v    = FullTransactionIdFromU64(fxid);
+    FullTransactionId mine = GetTopFullTransactionIdIfAny();
+
+    if (FullTransactionIdIsValid(mine) && FullTransactionIdEquals(mine, v)) {
+        return false;
+    }
+    if (EpochFromFullTransactionId(v) !=
+        EpochFromFullTransactionId(ReadNextFullTransactionId())) {
+        return true;
+    }
+    return !TransactionIdIsInProgress(XidFromFullTransactionId(v));
+}
+
+/*
+ * Drops the tables of every generation but the metapage's, which a rebuild
+ * left behind: the old one after a committed rebuild, the new one after a
+ * rolled-back rebuild whose abort callback never ran (a crashed backend).
+ * Also drops the staging tables of transactions that are over, which the
+ * same crash left. Names are read in full before any drop, as one
+ * connection cannot stream and run statements at once, and a drop that
+ * fails warns rather than failing the VACUUM.
  */
 static void
 sweep_tables(Relation index) {
@@ -117,7 +170,7 @@ sweep_tables(Relation index) {
         oid,
         psprintf(
             "SELECT name FROM system.tables WHERE database = 'idx_%u' "
-            "AND name LIKE 't\\\\_%%' AND name NOT LIKE '%%\\\\_tx\\\\_%%'",
+            "AND name LIKE 't\\\\_%%'",
             oid
         ),
         (Oid[]){ TEXTOID },
@@ -127,17 +180,17 @@ sweep_tables(Relation index) {
 
     while (chdb_search_stream_next(s, NULL)) {
         char* name = TextDatumGetCString(s->vals[0]);
-        char* end;
-        uint64 found = strtoull(name + 2, &end, 10);
+        uint64 found, fxid;
 
-        if (*end == '\0' && found != generation) {
+        if (parse_table_name(name, &found, &fxid) &&
+            (fxid ? staging_is_stale(fxid) : found != generation)) {
             stale = lappend(stale, pstrdup(name));
         }
     }
     chdb_search_stream_close(s);
 
     foreach (lc, stale) {
-        chdb_search_run(
+        chdb_search_try_run(
             oid, psprintf("DROP TABLE IF EXISTS idx_%u.%s", oid, (char*)lfirst(lc))
         );
     }
