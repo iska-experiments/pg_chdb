@@ -9,7 +9,7 @@ use Test::More;
 
 our @EXPORT = qw(
     server_log check_log check_query search_node worker_pid stop_worker
-    stderr_of store_tables search_ids check_unavailable
+    stderr_of store_tables search_ids check_unavailable pitr_rows check_restored
 );
 
 =begin server_log
@@ -198,6 +198,56 @@ sub check_unavailable {
         qr/Seq Scan/, 'Skip mode should plan without the index';
     is $node->safe_psql(postgres => "$skip $search ORDER BY id"), $expect,
         'Skip mode should answer from the heap';
+}
+
+=head2 pitr_rows
+
+Commits a row on an archiving primary after its backup, names a restore
+point, commits another, and waits for the WAL holding them to be archived,
+returning the restore point's name. A restore to the point has the first
+row and not the second, and an index whose store is the backup's copy has
+a flush in its metapage that the store never saw.
+
+=cut
+
+sub pitr_rows {
+    my $primary = shift;
+    $primary->safe_psql(postgres => "INSERT INTO docs VALUES (3, 'Hiking boots')");
+    $primary->safe_psql(postgres => "SELECT pg_create_restore_point('before_more')");
+    $primary->safe_psql(postgres => "INSERT INTO docs VALUES (4, 'Climbing boots')");
+
+    my $wal = $primary->safe_psql(postgres => 'SELECT pg_walfile_name(pg_switch_wal())');
+    $primary->poll_query_until(postgres =>
+        "SELECT last_archived_wal >= '$wal' FROM pg_stat_archiver")
+        or die "WAL up to $wal was not archived";
+    return 'before_more';
+}
+
+=head2 check_restored
+
+Asserts what a node restored to pitr_rows' restore point shows: the heap
+has the row committed before the point and not the one after, the index
+refuses the store copied with the backup, which is a flush behind the
+metapage, and REINDEX rebuilds it from the heap, after which searches match
+the heap and the index takes new rows.
+
+=cut
+
+sub check_restored {
+    my $node = shift;
+    local $Test::Builder::Level = $Test::Builder::Level + 1;
+    is $node->safe_psql(postgres => 'SELECT id FROM docs ORDER BY id'), "1\n2\n3",
+        'The heap should be at the restore point';
+    check_unavailable($node, "2\n3",
+        qr/The store was last flushed at [0-9A-F]+\/[0-9A-F]+, the index at/,
+        qr/REINDEX INDEX "docs_idx" rebuilds its store\./);
+    $node->safe_psql(postgres => 'REINDEX INDEX docs_idx');
+    is search_ids($node, 'boots'), "2\n3", 'REINDEX should rebuild the store from the heap';
+    is search_ids($node, 'hiking'), 3,
+        'The row committed before the restore point should be in the rebuilt store';
+    is search_ids($node, 'climbing'), '', 'The row committed after it should not';
+    $node->safe_psql(postgres => "INSERT INTO docs VALUES (5, 'Riding boots')");
+    is search_ids($node, 'boots'), "2\n3\n5", 'The rebuilt index should take new rows';
 }
 
 1;
