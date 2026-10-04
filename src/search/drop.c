@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "access/xact.h"
+#include "catalog/dependency.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_class.h"
 #include "commands/defrem.h"
@@ -33,6 +34,15 @@ typedef struct Deferred {
 
 static List* deferred                             = NIL; /* in TopTransactionContext */
 static object_access_hook_type prev_object_access = NULL;
+
+/*
+ * Indexes under DROP INDEX CONCURRENTLY, in TopMemoryContext: the hook fires
+ * before index_drop's internal commits, and the store must outlive them.
+ * The index is still indisready after the first, so a writer that opened it
+ * flushes to it at its own commit, and a cancelled WaitForLockers leaves it
+ * cataloged. The drop is deferred at the commit that finds the index gone.
+ */
+static List* concurrent = NIL;
 
 static void
 defer(Oid indexoid, const char* sql, bool at_commit) {
@@ -135,6 +145,21 @@ pre_prepare(void) {
     }
 }
 
+/* Defers the drop of each concurrently dropped index the catalog no longer has. */
+static void
+settle_concurrent(void) {
+    ListCell* lc;
+
+    foreach (lc, concurrent) {
+        Oid indexoid = lfirst_oid(lc);
+
+        if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(indexoid))) {
+            defer(indexoid, NULL, true);
+            concurrent = foreach_delete_current(concurrent, lc);
+        }
+    }
+}
+
 static void
 xact_callback(XactEvent event, void* arg) {
     ListCell* lc;
@@ -142,6 +167,9 @@ xact_callback(XactEvent event, void* arg) {
     switch (event) {
     case XACT_EVENT_PRE_PREPARE:
         pre_prepare();
+        break;
+    case XACT_EVENT_PRE_COMMIT:
+        settle_concurrent();
         break;
     case XACT_EVENT_COMMIT:
     case XACT_EVENT_ABORT:
@@ -153,6 +181,10 @@ xact_callback(XactEvent event, void* arg) {
             }
         }
         deferred = NIL;
+        if (event == XACT_EVENT_ABORT) {
+            list_free(concurrent);
+            concurrent = NIL;
+        }
         break;
     case XACT_EVENT_PREPARE:
     case XACT_EVENT_PARALLEL_COMMIT:
@@ -222,7 +254,15 @@ object_access(
                         cls->relam == get_am_oid("chdb", true);
 
     ReleaseSysCache(tup);
-    if (ours) {
+    if (!ours) {
+        return;
+    }
+    if (((ObjectAccessDrop*)arg)->dropflags & PERFORM_DELETION_CONCURRENTLY) {
+        MemoryContext old = MemoryContextSwitchTo(TopMemoryContext);
+
+        concurrent = list_append_unique_oid(concurrent, objectId);
+        MemoryContextSwitchTo(old);
+    } else {
         defer(objectId, NULL, true);
     }
 }
