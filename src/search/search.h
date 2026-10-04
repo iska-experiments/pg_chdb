@@ -135,32 +135,6 @@ chdb_search_skip_index_args(const ChdbColumn* column);
 extern bool
 chdb_search_wants_phrase_search(const ChdbColumn* cols, int natts);
 
-/* ---- score.c ---- */
-/* chdb.score(): a placeholder that raises wherever Postgres evaluates it. */
-extern PGDLLEXPORT Datum chdb_search_score(PG_FUNCTION_ARGS);
-/* Whether `funcid` is chdb.score(), told by the C function behind it. */
-extern bool
-chdb_search_is_score(Oid funcid);
-/* The counts the score asked of the store, kept for a statement. */
-typedef struct ChdbScoreCache ChdbScoreCache;
-extern ChdbScoreCache*
-chdb_search_score_cache(MemoryContext cxt);
-/*
- * The ClickHouse expression of chdb.score() over the text searches among
- * `keys`, on index column `only` or on every text column when it is zero:
- * the sum over their needles' tokens of idf(token) times whether the column
- * has it, tokenized and counted through the store, asked once per cache.
- */
-extern char*
-chdb_search_score_expr(
-    Relation index,
-    const ChdbColumn* cols,
-    ScanKey keys,
-    int nkeys,
-    AttrNumber only,
-    ChdbScoreCache* cache
-);
-
 /* ---- columns.c ---- */
 /* `"<name>"`, with quotes and backslashes escaped, whatever the name. */
 extern char*

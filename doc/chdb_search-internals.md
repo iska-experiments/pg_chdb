@@ -227,7 +227,8 @@ virtual scan tuple the scan fills from the heap row and the stream. The
 store computes the score as a sum over the needles' tokens of
 `log((N - df + 0.5) / (df + 0.5) + 1) * hasAllTokens(col, [token])`, with
 the needles tokenized through `tokens()` by the column's own tokenizer
-(`textindex.c`) and the counts asked of the text index once per statement;
+(`textindex.c`) and the counts asked of the text index once per statement
+(`counts.c`);
 the match in the SELECT list names the tokenizer and applies the
 preprocessor itself, as ClickHouse applies the index's only on the index
 path. A scoring query gets no other path, since every other one would

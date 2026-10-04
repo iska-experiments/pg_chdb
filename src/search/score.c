@@ -11,7 +11,7 @@
  *
  * with N the store table's row count and df(t) the rows whose column has
  * t, each a tiny query the text index answers alone, asked once per
- * statement. The needle of each pushed text search is tokenized through
+ * statement (counts.c). The needle of each pushed text search is tokenized through
  * the store with the column's own tokenizer and preprocessor, so that the
  * tokens are the index's; the match in the SELECT list, which ClickHouse
  * evaluates without the index, names the tokenizer and applies the
@@ -22,17 +22,12 @@
 
 #include "postgres.h"
 
-#include "catalog/pg_type_d.h"
 #include "fmgr.h"
-#include "utils/array.h"
-#include "utils/builtins.h"
-#include "utils/datum.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
 
 #include "query.h"
+#include "score.h"
 #include "search.h"
-#include "stream.h"
 
 /* The placeholder: anywhere Postgres evaluates it is outside a custom scan. */
 PG_FUNCTION_INFO_V1(chdb_search_score);
@@ -60,188 +55,11 @@ chdb_search_is_score(Oid funcid) {
     return finfo.fn_addr == chdb_search_score;
 }
 
-/* ---- the counts, kept for a statement ---- */
-
-typedef struct Needle {
+/* A (column, token) term of the expression. */
+typedef struct Term {
     AttrNumber attno;
-    char* needle;
-    List* tokens; /* char*, as the store tokenized it */
-} Needle;
-
-typedef struct Count {
-    AttrNumber attno;
-    char* token;
-    int64 df;
-} Count;
-
-struct ChdbScoreCache {
-    MemoryContext cxt;
-    int64 rows; /* N, negative until asked */
-    List* needles;
-    List* counts;
-};
-
-ChdbScoreCache*
-chdb_search_score_cache(MemoryContext cxt) {
-    ChdbScoreCache* cache = MemoryContextAllocZero(cxt, sizeof(*cache));
-
-    cache->cxt  = cxt;
-    cache->rows = -1;
-    return cache;
-}
-
-/*
- * Runs `sql`, a query of one row and one column of type `typid`, in a
- * context of its own, and returns the value copied into the cache's.
- */
-static Datum
-ask(ChdbScoreCache* cache,
-    Relation index,
-    uint64 generation,
-    const char* sql,
-    Oid typid) {
-    MemoryContext cxt = AllocSetContextCreate(
-        CurrentMemoryContext, "chdb_search score query", ALLOCSET_SMALL_SIZES
-    );
-    ChdbStream* s = chdb_search_stream_query(
-        RelationGetRelid(index), generation, sql, &typid, 1, cxt
-    );
-    int16 typlen;
-    bool typbyval;
-    Datum value;
-
-    if (!chdb_search_stream_next(s, NULL) || s->nulls[0]) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_DATA_EXCEPTION),
-            errmsg(
-                "chdb_search: the store did not answer: %s", chdb_search_mask_sql(sql)
-            )
-        );
-    }
-    get_typlenbyval(typid, &typlen, &typbyval);
-
-    MemoryContext old = MemoryContextSwitchTo(cache->cxt);
-
-    value = datumCopy(s->vals[0], typbyval, typlen);
-    MemoryContextSwitchTo(old);
-    chdb_search_stream_close(s);
-    MemoryContextDelete(cxt);
-    return value;
-}
-
-/* The tokens the index makes of `needle` on the column, from the store. */
-static List*
-needle_tokens(
-    ChdbScoreCache* cache,
-    Relation index,
-    const ChdbColumn* col,
-    AttrNumber attno,
-    const char* needle
-) {
-    ListCell* lc;
-    StringInfoData sql, lit;
-    Datum* elems;
-    bool* nulls;
-    int n;
-
-    foreach (lc, cache->needles) {
-        Needle* entry = lfirst(lc);
-
-        if (entry->attno == attno && strcmp(entry->needle, needle) == 0) {
-            return entry->tokens;
-        }
-    }
-    initStringInfo(&lit);
-    chdb_search_append_string(&lit, needle);
-    initStringInfo(&sql);
-    appendStringInfo(&sql, "SELECT %s", chdb_search_tokens_call(col, lit.data, true));
-
-    /* tokens() is tied to no table, so the request names no generation. */
-    ArrayType* arr = DatumGetArrayTypeP(ask(cache, index, 0, sql.data, TEXTARRAYOID));
-    MemoryContext old = MemoryContextSwitchTo(cache->cxt);
-    Needle* entry     = palloc0(sizeof(*entry));
-
-    entry->attno  = attno;
-    entry->needle = pstrdup(needle);
-    deconstruct_array_builtin(arr, TEXTOID, &elems, &nulls, &n);
-    for (int i = 0; i < n; i++) {
-        if (!nulls[i]) {
-            entry->tokens = lappend(entry->tokens, TextDatumGetCString(elems[i]));
-        }
-    }
-    cache->needles = lappend(cache->needles, entry);
-    MemoryContextSwitchTo(old);
-    return entry->tokens;
-}
-
-/*
- * `count()` of the store's rows, under `where` if given, as the index
- * answers it: with the transaction's staged rows, which the scan reads too.
- */
-static int64
-count_rows(ChdbScoreCache* cache, Relation index, const char* where) {
-    StringInfoData sql;
-
-    initStringInfo(&sql);
-    appendStringInfoString(&sql, "SELECT count()");
-    chdb_search_append_from(&sql, index, where ? where : "", NULL, NULL);
-    return DatumGetInt64(
-        ask(cache, index, chdb_meta_generation(index), sql.data, INT8OID)
-    );
-}
-
-/* `hasAllTokens(<col>, ['tok'])`: one token, as the index's, on `expr`. */
-static void
-append_match(
-    StringInfo buf,
-    const char* expr,
-    const char* token,
-    const char* tokenizer
-) {
-    appendStringInfo(buf, "hasAllTokens(%s, [", expr);
-    chdb_search_append_string(buf, token);
-    appendStringInfoChar(buf, ']');
-    if (tokenizer) {
-        appendStringInfoString(buf, ", ");
-        chdb_search_append_string(buf, tokenizer);
-    }
-    appendStringInfoChar(buf, ')');
-}
-
-/* df(t) for the column, asked of the index once per statement. */
-static int64
-document_frequency(
-    ChdbScoreCache* cache,
-    Relation index,
-    const ChdbColumn* col,
-    AttrNumber attno,
-    const char* token
-) {
-    ListCell* lc;
-    StringInfoData where;
-
-    foreach (lc, cache->counts) {
-        Count* c = lfirst(lc);
-
-        if (c->attno == attno && strcmp(c->token, token) == 0) {
-            return c->df;
-        }
-    }
-    initStringInfo(&where);
-    append_match(&where, col->name, token, NULL);
-
-    int64 df          = count_rows(cache, index, where.data);
-    MemoryContext old = MemoryContextSwitchTo(cache->cxt);
-    Count* c          = palloc0(sizeof(*c));
-
-    c->attno      = attno;
-    c->token      = pstrdup(token);
-    c->df         = df;
-    cache->counts = lappend(cache->counts, c);
-    MemoryContextSwitchTo(old);
-    return df;
-}
+    const char* token;
+} Term;
 
 /* Whether a (column, token) term is already in the expression. */
 static bool
@@ -249,9 +67,9 @@ seen(List* terms, AttrNumber attno, const char* token) {
     ListCell* lc;
 
     foreach (lc, terms) {
-        Count* c = lfirst(lc);
+        Term* t = lfirst(lc);
 
-        if (c->attno == attno && strcmp(c->token, token) == 0) {
+        if (t->attno == attno && strcmp(t->token, token) == 0) {
             return true;
         }
     }
@@ -294,7 +112,8 @@ chdb_search_score_expr(
         getTypeOutputInfo(argtype, &out, &varlena);
 
         const char* needle = OidOutputFunctionCall(out, key->sk_argument);
-        List* tokens       = needle_tokens(cache, index, col, key->sk_attno, needle);
+        List* tokens =
+            chdb_search_score_tokens(cache, index, col, key->sk_attno, needle);
 
         foreach (lc, tokens) {
             const char* token = lfirst(lc);
@@ -302,25 +121,22 @@ chdb_search_score_expr(
             if (seen(terms, key->sk_attno, token)) {
                 continue;
             }
-            if (cache->rows < 0) {
-                cache->rows = count_rows(cache, index, NULL);
-            }
-
-            int64 df = document_frequency(cache, index, col, key->sk_attno, token);
-            Count* t = palloc0(sizeof(*t));
+            int64 rows = chdb_search_score_rows(cache, index);
+            int64 df   = chdb_search_score_df(cache, index, col, key->sk_attno, token);
+            Term* t    = palloc0(sizeof(*t));
 
             t->attno = key->sk_attno;
-            t->token = (char*)token;
+            t->token = token;
             terms    = lappend(terms, t);
             /* The idf as a formula over the counts, which ClickHouse folds. */
             appendStringInfo(
                 &buf,
                 "%slog(%.1f / %.1f + 1) * ifNull(",
                 buf.len ? " + " : "",
-                (double)(cache->rows - df) + 0.5,
+                (double)(rows - df) + 0.5,
                 (double)df + 0.5
             );
-            append_match(
+            chdb_search_score_match(
                 &buf,
                 chdb_search_preprocessed(col, col->name, false),
                 token,

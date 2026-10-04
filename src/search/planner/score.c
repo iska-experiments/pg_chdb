@@ -20,6 +20,7 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 
+#include "../score.h"
 #include "../search.h"
 #include "planner.h"
 

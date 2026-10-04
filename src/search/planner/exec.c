@@ -33,6 +33,7 @@
 #include "utils/memutils.h"
 
 #include "../query.h"
+#include "../score.h"
 #include "../search.h"
 #include "../stream.h"
 #include "planner.h"

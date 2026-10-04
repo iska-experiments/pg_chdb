@@ -230,7 +230,7 @@ documented.
   only for tuples every open snapshot sees, which is what makes two clean
   checks around the statement sufficient.
 
-### Relevance score (`src/search/score.c`, CustomScan only)
+### Relevance score (`src/search/score.c`, `counts.c`, CustomScan only)
 
 `chdb.score(k)` is a placeholder function, like ParadeDB's `pdb.score(key)`:
 `k` is any column of the indexed table and only binds the call to that
