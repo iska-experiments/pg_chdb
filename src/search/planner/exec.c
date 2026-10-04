@@ -130,6 +130,7 @@ open_stream(ChdbScanState* st) {
         chdb_meta_generation(st->index),
         st->sql,
         list_length(st->spec->orderbys),
+        0,
         st->cxt
     );
     st->store_queries++;

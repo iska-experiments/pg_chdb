@@ -105,7 +105,12 @@ chdb_search_ambulkdelete(
 
     /* Read everything before deleting: one connection cannot do both. */
     ChdbStream* s = chdb_search_stream_open(
-        oid, generation, chdb_search_build_select(index, NULL, 0, NULL, 0, -1), 0, cxt
+        oid,
+        generation,
+        chdb_search_build_select(index, NULL, 0, NULL, 0, -1),
+        0,
+        0,
+        cxt
     );
 
     vs->live = 0;

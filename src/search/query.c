@@ -145,19 +145,31 @@ chdb_search_order_expr(Relation index, const ChdbColumn* cols, ScanKey orderby) 
     return buf.data;
 }
 
+/* `_distance`, or `_distance3` when there are several; `_score` the same way. */
+static void
+append_alias(StringInfo buf, const char* name, int i, int n) {
+    if (n == 1) {
+        appendStringInfoString(buf, name);
+    } else {
+        appendStringInfo(buf, "%s%d", name, i + 1);
+    }
+}
+
 char*
-chdb_search_build_select(
+chdb_search_build_scored_select(
     Relation index,
+    const ChdbColumn* cols,
     ScanKey keys,
     int nkeys,
     ScanKey orderbys,
     int norderbys,
+    const char* const* scores,
+    int nscores,
+    int score_order,
     int64 limit
 ) {
     StringInfoData buf, where;
     int natts = index->rd_att->natts;
-    /* Once per statement; VACUUM's unqualified SELECT needs none of them. */
-    ChdbColumn* cols = nkeys || norderbys ? chdb_search_columns(index) : NULL;
 
     initStringInfo(&buf);
     initStringInfo(&where);
@@ -174,20 +186,15 @@ chdb_search_build_select(
 
     appendStringInfoString(&buf, "SELECT ctid");
     for (int i = 0; i < norderbys; i++) {
-        if (norderbys == 1) {
-            appendStringInfo(
-                &buf,
-                ", %s AS _distance",
-                chdb_search_order_expr(index, cols, &orderbys[i])
-            );
-        } else {
-            appendStringInfo(
-                &buf,
-                ", %s AS _distance%d",
-                chdb_search_order_expr(index, cols, &orderbys[i]),
-                i + 1
-            );
-        }
+        appendStringInfo(
+            &buf, ", %s AS ", chdb_search_order_expr(index, cols, &orderbys[i])
+        );
+        append_alias(&buf, "_distance", i, norderbys);
+    }
+    /* Float32, the type chdb.score() returns, so the two sides agree. */
+    for (int i = 0; i < nscores; i++) {
+        appendStringInfo(&buf, ", toFloat32(%s) AS ", scores[i]);
+        append_alias(&buf, "_score", i, nscores);
     }
     appendStringInfo(&buf, " FROM %s", chdb_search_table_name(index));
     if (where.len) {
@@ -199,18 +206,37 @@ chdb_search_build_select(
         );
         return buf.data;
     }
-    if (norderbys) {
+    if (score_order) {
+        /* Ties broken by ctid, so that a LIMIT takes the same rows each time. */
+        appendStringInfoString(&buf, " ORDER BY ");
+        append_alias(&buf, "_score", score_order - 1, nscores);
+        appendStringInfoString(&buf, " DESC, ctid");
+    } else if (norderbys) {
         appendStringInfoString(&buf, " ORDER BY ");
         for (int i = 0; i < norderbys; i++) {
-            if (norderbys == 1) {
-                appendStringInfoString(&buf, "_distance");
-            } else {
-                appendStringInfo(&buf, "%s_distance%d", i ? ", " : "", i + 1);
-            }
+            appendStringInfoString(&buf, i ? ", " : "");
+            append_alias(&buf, "_distance", i, norderbys);
         }
     }
     if (limit >= 0) {
         appendStringInfo(&buf, " LIMIT " INT64_FORMAT, limit);
     }
     return buf.data;
+}
+
+char*
+chdb_search_build_select(
+    Relation index,
+    ScanKey keys,
+    int nkeys,
+    ScanKey orderbys,
+    int norderbys,
+    int64 limit
+) {
+    /* Once per statement; VACUUM's unqualified SELECT needs none of them. */
+    ChdbColumn* cols = nkeys || norderbys ? chdb_search_columns(index) : NULL;
+
+    return chdb_search_build_scored_select(
+        index, cols, keys, nkeys, orderbys, norderbys, NULL, 0, 0, limit
+    );
 }

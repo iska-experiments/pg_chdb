@@ -298,7 +298,8 @@ chdb_search_forget_statement(Oid indexoid, const char* sql);
 
 /*
  * A running SELECT against the worker, each column decoded to a Postgres type:
- * for a scan `SELECT ctid[, distances]`, int8 (the packed TID) then float8s.
+ * for a scan `SELECT ctid[, distances][, scores]`, int8 (the packed TID),
+ * then float8s, then float4s.
  */
 typedef struct ChdbStream {
     chdbSearchConn* conn;
@@ -318,6 +319,7 @@ chdb_search_stream_open(
     uint64 generation,
     const char* sql,
     int ndist,
+    int nscores,
     MemoryContext cxt
 );
 extern ChdbStream*

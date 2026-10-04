@@ -119,22 +119,24 @@ chdb_search_stream_query(
     return s;
 }
 
-/* A scan's stream: the packed ctid, then `ndist` distances. */
+/* A scan's stream: the packed ctid, `ndist` distances, then `nscores` scores. */
 ChdbStream*
 chdb_search_stream_open(
     Oid indexoid,
     uint64 generation,
     const char* sql,
     int ndist,
+    int nscores,
     MemoryContext cxt
 ) {
-    Oid* types = palloc(sizeof(Oid) * (1 + ndist));
+    int ncols  = 1 + ndist + nscores;
+    Oid* types = palloc(sizeof(Oid) * ncols);
 
     types[0] = INT8OID;
-    for (int i = 0; i < ndist; i++) {
-        types[1 + i] = FLOAT8OID;
+    for (int i = 1; i < ncols; i++) {
+        types[i] = i <= ndist ? FLOAT8OID : FLOAT4OID;
     }
-    return chdb_search_stream_query(indexoid, generation, sql, types, 1 + ndist, cxt);
+    return chdb_search_stream_query(indexoid, generation, sql, types, ncols, cxt);
 }
 
 bool
@@ -269,6 +271,7 @@ start(IndexScanDesc scan) {
             chdb_meta_generation(scan->indexRelation),
             sql,
             scan->numberOfOrderBys,
+            0,
             so->cxt
         );
     }

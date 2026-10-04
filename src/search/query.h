@@ -60,13 +60,35 @@ chdb_search_build_select(
 );
 
 /*
- * The pieces, for builders that select other things; `cols` is the index's
- * column array from chdb_search_columns, computed once per statement. The
- * WHERE part appends `a AND b` without the keyword and returns false when a
- * key is NULL. A literal is rendered for a column of ClickHouse type matching
- * `typid`.
+ * The custom scan's form of the same statement, with the columns it has the
+ * store compute after the distances: `scores` are ClickHouse expressions,
+ * selected `AS _score` (`_score1`, `_score2`... for several) cast to Float32,
+ * the type chdb.score() returns. `score_order`, 1-based, names the one the
+ * rows are ordered by, descending with ties broken by ctid, in place of the
+ * distances' order, which is not pushed with it; zero orders by the
+ * distances. `cols` is the index's column array from chdb_search_columns,
+ * computed once per statement.
  */
 struct ChdbColumn;
+extern char*
+chdb_search_build_scored_select(
+    Relation index,
+    const struct ChdbColumn* cols,
+    ScanKey keys,
+    int nkeys,
+    ScanKey orderbys,
+    int norderbys,
+    const char* const* scores,
+    int nscores,
+    int score_order,
+    int64 limit
+);
+
+/*
+ * The pieces, for builders that select other things. The WHERE part appends
+ * `a AND b` without the keyword and returns false when a key is NULL. A
+ * literal is rendered for a column of ClickHouse type matching `typid`.
+ */
 extern bool
 chdb_search_append_quals(
     StringInfo buf,
