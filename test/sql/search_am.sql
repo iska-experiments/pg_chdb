@@ -1,6 +1,7 @@
--- Tests of the chdb index access method against the stub worker client
--- (make CHDB_SEARCH_STUB=1): every statement the access method generates is
--- logged at DEBUG1, and the stub accepts it and returns no rows.
+-- Tests of the statements the chdb index access method generates, logged at
+-- DEBUG1. The output is the same with the worker and with the stub client
+-- (make CHDB_SEARCH_STUB=1), which accepts everything and returns no rows: rows
+-- found through the index are discarded here and checked by search_e2e.
 \set VERBOSITY terse
 CREATE EXTENSION chdb_search;
 SET chdb_search.mask_oids = on;
@@ -143,6 +144,7 @@ RESET enable_seqscan;
 SET enable_seqscan = off;
 SET enable_bitmapscan = off;
 SET client_min_messages = debug1;
+\o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
 SELECT id FROM docs WHERE body @@? 'it''s a \back\slash';
 SELECT id FROM docs WHERE title @@= 'Shoes' AND tags @@@ 'sport' AND author >= 'a' AND price < 50.50;
@@ -153,6 +155,7 @@ SET enable_indexscan = off;
 SET enable_bitmapscan = on;
 SET client_min_messages = debug1;
 SELECT id FROM docs WHERE body @@@ 'running shoes';
+\o
 RESET client_min_messages;
 RESET enable_indexscan;
 RESET enable_bitmapscan;
@@ -190,11 +193,9 @@ INSERT INTO docs VALUES (1, 'duplicate key');
 RESET client_min_messages;
 
 ----------------------------------------------------------------------------
--- VACUUM
+-- VACUUM (what it deletes depends on the store's rows; see search_e2e)
 ----------------------------------------------------------------------------
-SET client_min_messages = debug1;
 VACUUM docs;
-RESET client_min_messages;
 
 ----------------------------------------------------------------------------
 -- REINDEX, TRUNCATE, DROP INDEX, DROP TABLE
@@ -217,3 +218,12 @@ DROP TABLE docs;
 RESET client_min_messages;
 
 DROP EXTENSION chdb_search;
+
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it. There is none with the stub client.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;
