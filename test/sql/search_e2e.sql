@@ -199,6 +199,16 @@ SET enable_seqscan = off;
 DROP TABLE coll;
 
 ----------------------------------------------------------------------------
+-- Column names are quoted: a keyword or a float literal's spelling works
+----------------------------------------------------------------------------
+CREATE TABLE kw ("index" text, inf float8, nan float8);
+INSERT INTO kw VALUES ('a row', 1, 2);
+CREATE INDEX kw_idx ON kw USING chdb ("index", inf, nan);
+SELECT * FROM kw WHERE inf = 1;
+SELECT * FROM kw WHERE nan > 0 AND "index" @@@ 'row';
+DROP TABLE kw;
+
+----------------------------------------------------------------------------
 -- Floats compare at their own width, NaN and the infinities as in Postgres
 ----------------------------------------------------------------------------
 CREATE TABLE nums (id int, f4 float4, f8 float8, d date);
