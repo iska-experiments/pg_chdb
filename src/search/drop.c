@@ -122,7 +122,8 @@ run(Deferred* d) {
         return;
     }
     if (d->sql) {
-        chdb_search_try_run(d->indexoid, d->sql);
+        /* Cleanup of what may never have been made: no generation to check. */
+        chdb_search_try_run(d->indexoid, 0, d->sql);
         return;
     }
     PG_TRY();

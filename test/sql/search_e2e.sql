@@ -100,7 +100,9 @@ SET enable_indexscan = off;
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 RESET enable_indexscan;
 SET enable_seqscan = off;
--- A search ClickHouse cannot run raises, rather than finding nothing.
+-- A search whose table the store no longer has raises, naming the index and
+-- the REINDEX that rebuilds it, rather than finding nothing: the worker
+-- checks the generation every request carries before running it.
 SELECT chdb_search_exec(format('DROP TABLE %s', :'tbl'));
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 REINDEX INDEX prod_idx;

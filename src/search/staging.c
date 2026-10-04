@@ -39,7 +39,7 @@ send_rows(Pending* p, const char* table) {
 
     PG_TRY();
     {
-        chdb_search_insert(conn, p->indexoid, CHDB_SEARCH_NO_GENERATION, sql);
+        chdb_search_insert(conn, p->indexoid, p->generation, sql);
         chdb_channel_write(chdb_search_channel(conn), block, len);
         chdb_search_finish(conn);
     }
@@ -65,9 +65,11 @@ chdb_search_stage_rows(Pending* p) {
 
         /* Registered first, so a CREATE that fails halfway is undone too. */
         chdb_search_drop_statement_on_abort(p->indexoid, drop);
-        chdb_search_run(p->indexoid, drop);
+        chdb_search_run(p->indexoid, p->generation, drop);
         chdb_search_run(
-            p->indexoid, psprintf("CREATE TABLE %s AS %s", p->staging, p->table)
+            p->indexoid,
+            p->generation,
+            psprintf("CREATE TABLE %s AS %s", p->staging, p->table)
         );
     }
     send_rows(p, p->staging);
@@ -75,7 +77,9 @@ chdb_search_stage_rows(Pending* p) {
 
 void
 chdb_search_drop_staging(Pending* p) {
-    chdb_search_run(p->indexoid, psprintf("DROP TABLE IF EXISTS %s", p->staging));
+    chdb_search_run(
+        p->indexoid, p->generation, psprintf("DROP TABLE IF EXISTS %s", p->staging)
+    );
     chdb_search_forget_statement(p->indexoid, p->staging);
     p->staging = NULL;
 }
@@ -86,9 +90,12 @@ chdb_search_flush_pending(Pending* p) {
         send_rows(p, p->staging);
         chdb_search_run(
             p->indexoid,
+            p->generation,
             psprintf("INSERT INTO %s SELECT * FROM %s", p->table, p->staging)
         );
-        chdb_search_run(p->indexoid, psprintf("DROP TABLE %s", p->staging));
+        chdb_search_run(
+            p->indexoid, p->generation, psprintf("DROP TABLE %s", p->staging)
+        );
         chdb_search_forget_statement(p->indexoid, p->staging);
     } else {
         send_rows(p, p->table);

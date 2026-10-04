@@ -45,6 +45,7 @@ end_stream(ChdbStream* s) {
 ChdbStream*
 chdb_search_stream_query(
     Oid indexoid,
+    uint64 generation,
     const char* sql,
     const Oid* types,
     int ncols,
@@ -60,7 +61,7 @@ chdb_search_stream_query(
     chdb_search_log_sql("select", sql);
     PG_TRY();
     {
-        chdb_search_select(s->conn, indexoid, CHDB_SEARCH_NO_GENERATION, sql);
+        chdb_search_select(s->conn, indexoid, generation, sql);
 
         pgch_block_source src = chdb_native_source(chdb_search_channel(s->conn));
 
@@ -109,14 +110,20 @@ chdb_search_stream_query(
 
 /* A scan's stream: the packed ctid, then `ndist` distances. */
 ChdbStream*
-chdb_search_stream_open(Oid indexoid, const char* sql, int ndist, MemoryContext cxt) {
+chdb_search_stream_open(
+    Oid indexoid,
+    uint64 generation,
+    const char* sql,
+    int ndist,
+    MemoryContext cxt
+) {
     Oid* types = palloc(sizeof(Oid) * (1 + ndist));
 
     types[0] = INT8OID;
     for (int i = 0; i < ndist; i++) {
         types[1 + i] = FLOAT8OID;
     }
-    return chdb_search_stream_query(indexoid, sql, types, 1 + ndist, cxt);
+    return chdb_search_stream_query(indexoid, generation, sql, types, 1 + ndist, cxt);
 }
 
 bool
@@ -243,7 +250,11 @@ start(IndexScanDesc scan) {
 #endif
     if (sql) {
         so->stream = chdb_search_stream_open(
-            RelationGetRelid(scan->indexRelation), sql, scan->numberOfOrderBys, so->cxt
+            RelationGetRelid(scan->indexRelation),
+            chdb_meta_generation(scan->indexRelation),
+            sql,
+            scan->numberOfOrderBys,
+            so->cxt
         );
     }
 }

@@ -54,12 +54,15 @@
 
 #include "search.h"
 
-/* `idx_<oid>.t_<generation>`: the table the index's metapage names. */
+char*
+chdb_search_table_of(Oid indexoid, uint64 generation) {
+    return psprintf(CHDB_STORE_TABLE_FMT, indexoid, generation);
+}
+
+/* The table the index's metapage names. */
 char*
 chdb_search_table_name(Relation index) {
-    return psprintf(
-        "idx_%u.t_" UINT64_FORMAT, RelationGetRelid(index), chdb_meta_generation(index)
-    );
+    return chdb_search_table_of(RelationGetRelid(index), chdb_meta_generation(index));
 }
 
 /* `ctid UInt64, xmin UInt32, name type, ...`, the Native block's schema. */
@@ -129,15 +132,14 @@ chdb_search_column_list(const ChdbColumn* cols, int natts) {
     return buf.data;
 }
 
-/* Runs one statement in the index's database on its own connection. */
 void
-chdb_search_run(Oid indexoid, const char* sql) {
+chdb_search_run(Oid indexoid, uint64 generation, const char* sql) {
     chdbSearchConn* conn = chdb_search_connect();
 
     PG_TRY();
     {
         chdb_search_log_sql("exec", sql);
-        chdb_search_exec(conn, indexoid, CHDB_SEARCH_NO_GENERATION, sql);
+        chdb_search_exec(conn, indexoid, generation, sql);
     }
     PG_FINALLY();
     { chdb_search_close(conn); }
@@ -162,9 +164,9 @@ chdb_search_warn_failure(Oid indexoid) {
 
 /* chdb_search_run, warning instead of raising when the statement fails. */
 void
-chdb_search_try_run(Oid indexoid, const char* sql) {
+chdb_search_try_run(Oid indexoid, uint64 generation, const char* sql) {
     PG_TRY();
-    { chdb_search_run(indexoid, sql); }
+    { chdb_search_run(indexoid, generation, sql); }
     PG_CATCH();
     { chdb_search_warn_failure(indexoid); }
     PG_END_TRY();
@@ -180,6 +182,7 @@ chdb_search_create_store(Relation index) {
     Oid oid      = RelationGetRelid(index);
     char* create = chdb_search_create_sql(index); /* validates the columns first */
 
-    chdb_search_run(oid, psprintf("CREATE DATABASE IF NOT EXISTS idx_%u", oid));
-    chdb_search_run(oid, create);
+    /* No generation: the table these make does not exist yet. */
+    chdb_search_run(oid, 0, psprintf("CREATE DATABASE IF NOT EXISTS idx_%u", oid));
+    chdb_search_run(oid, 0, create);
 }

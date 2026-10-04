@@ -102,7 +102,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
         return palloc0(sizeof(IndexBuildResult));
     }
 
-    chdb_meta_init(index, MAIN_FORKNUM);
+    uint64 generation = chdb_meta_init(index, MAIN_FORKNUM);
 
     /*
      * Registered before any DDL, so a build that fails halfway is undone too.
@@ -131,7 +131,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
             chdb_rowwriter_column_list(bs.rw)
         );
 
-        chdb_search_insert(bs.conn, RelationGetRelid(index), CHDB_SEARCH_NO_GENERATION, sql);
+        chdb_search_insert(bs.conn, RelationGetRelid(index), generation, sql);
         reltuples = table_index_build_scan(
             heap, index, indexInfo, true, true, build_callback, &bs, NULL
         );
