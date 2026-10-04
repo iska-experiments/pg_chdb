@@ -202,8 +202,10 @@ DEFAULT FOR TYPE text USING chdb AS
     OPERATOR 4 @@~ (text, text),
     FUNCTION 1 (text) chdb_search_text_options(internal);
 
+-- The default for text[], or columnar_ops would take it through anyelement
+-- and store an array nothing can search.
 CREATE OPERATOR CLASS text_array_ops
-FOR TYPE text[] USING chdb AS
+DEFAULT FOR TYPE text[] USING chdb AS
     OPERATOR 1 @@@ (text[], text),
     OPERATOR 2 @@? (text[], text),
     OPERATOR 3 @@= (text[], text),
@@ -211,11 +213,13 @@ FOR TYPE text[] USING chdb AS
 
 -- One class for every stored column type, so that columns are written
 -- `author columnar_ops` whatever they hold. It is declared for anyelement; the
--- comparison operators of each supported type are members of its family.
--- Strategies: 11 =, 12 <, 13 <=, 14 >, 15 >=, disjoint from the text search
--- strategies so that an operator is rendered by its number alone, whatever
--- class it came from. Being the only default for types without one of their
--- own, it applies when a column names no class.
+-- comparison operators of each supported type are members of its family,
+-- with the cross-type pairs of the integer and float families, so that
+-- WHERE i2 = 1 or f4 > 0.1 is pushed down as written. Strategies: 11 =,
+-- 12 <, 13 <=, 14 >, 15 >=, disjoint from the text search strategies so that
+-- an operator is rendered by its number alone, whatever class it came from.
+-- Being the only default for types without one of their own, it applies
+-- when a column names no class; a type with no operators here is refused.
 CREATE OPERATOR CLASS columnar_ops
 DEFAULT FOR TYPE anyelement USING chdb AS
     FUNCTION 1 (anyelement) chdb_search_no_options(internal);
@@ -280,4 +284,44 @@ ALTER OPERATOR FAMILY columnar_ops USING chdb ADD
     OPERATOR 12 < (text, text),
     OPERATOR 13 <= (text, text),
     OPERATOR 14 > (text, text),
-    OPERATOR 15 >= (text, text);
+    OPERATOR 15 >= (text, text),
+    OPERATOR 11 = (int2, int4),
+    OPERATOR 12 < (int2, int4),
+    OPERATOR 13 <= (int2, int4),
+    OPERATOR 14 > (int2, int4),
+    OPERATOR 15 >= (int2, int4),
+    OPERATOR 11 = (int2, int8),
+    OPERATOR 12 < (int2, int8),
+    OPERATOR 13 <= (int2, int8),
+    OPERATOR 14 > (int2, int8),
+    OPERATOR 15 >= (int2, int8),
+    OPERATOR 11 = (int4, int2),
+    OPERATOR 12 < (int4, int2),
+    OPERATOR 13 <= (int4, int2),
+    OPERATOR 14 > (int4, int2),
+    OPERATOR 15 >= (int4, int2),
+    OPERATOR 11 = (int4, int8),
+    OPERATOR 12 < (int4, int8),
+    OPERATOR 13 <= (int4, int8),
+    OPERATOR 14 > (int4, int8),
+    OPERATOR 15 >= (int4, int8),
+    OPERATOR 11 = (int8, int2),
+    OPERATOR 12 < (int8, int2),
+    OPERATOR 13 <= (int8, int2),
+    OPERATOR 14 > (int8, int2),
+    OPERATOR 15 >= (int8, int2),
+    OPERATOR 11 = (int8, int4),
+    OPERATOR 12 < (int8, int4),
+    OPERATOR 13 <= (int8, int4),
+    OPERATOR 14 > (int8, int4),
+    OPERATOR 15 >= (int8, int4),
+    OPERATOR 11 = (float4, float8),
+    OPERATOR 12 < (float4, float8),
+    OPERATOR 13 <= (float4, float8),
+    OPERATOR 14 > (float4, float8),
+    OPERATOR 15 >= (float4, float8),
+    OPERATOR 11 = (float8, float4),
+    OPERATOR 12 < (float8, float4),
+    OPERATOR 13 <= (float8, float4),
+    OPERATOR 14 > (float8, float4),
+    OPERATOR 15 >= (float8, float4);

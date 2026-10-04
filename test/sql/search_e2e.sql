@@ -236,6 +236,8 @@ CREATE INDEX nums_idx ON nums USING chdb (f4, f8, d);
 CREATE FUNCTION pg_temp.num_checks() RETURNS TABLE (q text, ids int[]) LANGUAGE sql AS $$
     SELECT 'f4 = 0.1', array_agg(id ORDER BY id) FROM nums WHERE f4 = 0.1::real
     UNION ALL SELECT 'f4 > 0.1', array_agg(id ORDER BY id) FROM nums WHERE f4 > 0.1::real
+    UNION ALL SELECT 'f4 = 0.1::float8', array_agg(id ORDER BY id) FROM nums WHERE f4 = 0.1
+    UNION ALL SELECT 'f4 > 0.1::float8', array_agg(id ORDER BY id) FROM nums WHERE f4 > 0.1
     UNION ALL SELECT 'f8 = NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 = 'NaN'
     UNION ALL SELECT 'f8 < NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 < 'NaN'
     UNION ALL SELECT 'f8 <= NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 <= 'NaN'

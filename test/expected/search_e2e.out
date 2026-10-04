@@ -600,6 +600,8 @@ CREATE INDEX nums_idx ON nums USING chdb (f4, f8, d);
 CREATE FUNCTION pg_temp.num_checks() RETURNS TABLE (q text, ids int[]) LANGUAGE sql AS $$
     SELECT 'f4 = 0.1', array_agg(id ORDER BY id) FROM nums WHERE f4 = 0.1::real
     UNION ALL SELECT 'f4 > 0.1', array_agg(id ORDER BY id) FROM nums WHERE f4 > 0.1::real
+    UNION ALL SELECT 'f4 = 0.1::float8', array_agg(id ORDER BY id) FROM nums WHERE f4 = 0.1
+    UNION ALL SELECT 'f4 > 0.1::float8', array_agg(id ORDER BY id) FROM nums WHERE f4 > 0.1
     UNION ALL SELECT 'f8 = NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 = 'NaN'
     UNION ALL SELECT 'f8 < NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 < 'NaN'
     UNION ALL SELECT 'f8 <= NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 <= 'NaN'
@@ -616,34 +618,38 @@ EXPLAIN (COSTS OFF) SELECT id FROM nums WHERE f8 <= 'NaN';
 (2 rows)
 
 SELECT * FROM pg_temp.num_checks();
-       q       |  ids  
----------------+-------
- f4 = 0.1      | {1}
- f4 > 0.1      | {2}
- f8 = NaN      | {1}
- f8 < NaN      | {2}
- f8 <= NaN     | {1,2}
- f8 > NaN      | 
- d < infinity  | {1,2}
- d > -infinity | {1,2}
- d = infinity  | 
-(9 rows)
+        q         |  ids  
+------------------+-------
+ f4 = 0.1         | {1}
+ f4 > 0.1         | {2}
+ f4 = 0.1::float8 | 
+ f4 > 0.1::float8 | {1,2}
+ f8 = NaN         | {1}
+ f8 < NaN         | {2}
+ f8 <= NaN        | {1,2}
+ f8 > NaN         | 
+ d < infinity     | {1,2}
+ d > -infinity    | {1,2}
+ d = infinity     | 
+(11 rows)
 
 SET enable_seqscan = on;
 SET enable_indexscan = off;
 SELECT * FROM pg_temp.num_checks();
-       q       |  ids  
----------------+-------
- f4 = 0.1      | {1}
- f4 > 0.1      | {2}
- f8 = NaN      | {1}
- f8 < NaN      | {2}
- f8 <= NaN     | {1,2}
- f8 > NaN      | 
- d < infinity  | {1,2}
- d > -infinity | {1,2}
- d = infinity  | 
-(9 rows)
+        q         |  ids  
+------------------+-------
+ f4 = 0.1         | {1}
+ f4 > 0.1         | {2}
+ f4 = 0.1::float8 | 
+ f4 > 0.1::float8 | {1,2}
+ f8 = NaN         | {1}
+ f8 < NaN         | {2}
+ f8 <= NaN        | {1,2}
+ f8 > NaN         | 
+ d < infinity     | {1,2}
+ d > -infinity    | {1,2}
+ d = infinity     | 
+(11 rows)
 
 RESET enable_indexscan;
 SET enable_seqscan = off;
