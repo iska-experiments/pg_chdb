@@ -46,15 +46,29 @@ engine_lost(chdbChannel* ch pg_attribute_unused(), const char* what, int errnum)
     );
 }
 
-bool
-engine_send(const void* buf, size_t len) {
-    bool ok = engine.pid > 0;
+/*
+ * The failure is logged and swallowed: the caller reports the engine's death,
+ * which the log then explains, whether the channel broke or a page request
+ * served inside its wait failed.
+ */
+static bool
+engine_io(bool send, void* buf, size_t len) {
+    MemoryContext old = CurrentMemoryContext;
+    bool ok           = engine.pid > 0;
 
     if (ok) {
         PG_TRY();
-        { chdb_channel_send_exact(&engine.ch, buf, len); }
+        {
+            if (send) {
+                chdb_channel_send_exact(&engine.ch, buf, len);
+            } else {
+                chdb_channel_recv_exact(&engine.ch, buf, len);
+            }
+        }
         PG_CATCH();
         {
+            MemoryContextSwitchTo(old);
+            EmitErrorReport();
             FlushErrorState();
             ok = false;
         }
@@ -65,21 +79,13 @@ engine_send(const void* buf, size_t len) {
 }
 
 bool
+engine_send(const void* buf, size_t len) {
+    return engine_io(true, (void*)buf, len);
+}
+
+bool
 engine_recv(void* buf, size_t len) {
-    bool ok = engine.pid > 0;
-
-    if (ok) {
-        PG_TRY();
-        { chdb_channel_recv_exact(&engine.ch, buf, len); }
-        PG_CATCH();
-        {
-            FlushErrorState();
-            ok = false;
-        }
-        PG_END_TRY();
-    }
-
-    return ok;
+    return engine_io(false, buf, len);
 }
 
 pid_t
@@ -193,6 +199,7 @@ engine_serve_page(void) {
         PG_CATCH();
         {
             MemoryContextSwitchTo(old);
+            EmitErrorReport();
             FlushErrorState();
             ok = false;
         }
