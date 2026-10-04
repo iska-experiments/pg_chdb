@@ -114,7 +114,7 @@ extern const CustomPathMethods chdb_planner_path_methods;
 extern ChdbScanSpec*
 chdb_planner_unpack(const CustomScan* cscan);
 
-/* ---- exec.c, explain.c ---- */
+/* ---- sql.c, exec.c, explain.c ---- */
 
 extern const CustomScanMethods chdb_planner_scan_methods;
 extern const CustomExecMethods chdb_planner_exec_methods;
