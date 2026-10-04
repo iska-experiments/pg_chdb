@@ -128,6 +128,10 @@ chdb_search_order_expr(Relation index, ScanKey orderby) {
         elog(ERROR, "unknown chdb order-by strategy %d", orderby->sk_strategy);
     }
 
+    /* The operator is strict: every row gets a NULL distance, none is hidden. */
+    if (orderby->sk_flags & SK_ISNULL) {
+        return pstrdup("CAST(NULL AS Nullable(Float64))");
+    }
     initStringInfo(&buf);
     appendStringInfo(&buf, "%s(%s, ", fn, col->name);
     chdb_search_append_vector(&buf, orderby->sk_argument, argtype);
@@ -150,11 +154,6 @@ chdb_search_build_select(
     initStringInfo(&where);
     if (!chdb_search_append_quals(&where, index, keys, nkeys)) {
         return NULL;
-    }
-    for (int i = 0; i < norderbys; i++) {
-        if (orderbys[i].sk_flags & SK_ISNULL) {
-            return NULL;
-        }
     }
 
     appendStringInfoString(&buf, "SELECT ctid");

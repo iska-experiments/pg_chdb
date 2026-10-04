@@ -208,6 +208,25 @@ SELECT * FROM kw WHERE nan > 0 AND "index" @@@ 'row';
 DROP TABLE kw;
 
 ----------------------------------------------------------------------------
+-- ORDER BY a distance operator: rows come back nearest first, and a NULL
+-- argument leaves every row with a NULL distance
+----------------------------------------------------------------------------
+ALTER OPERATOR FAMILY columnar_ops USING chdb ADD OPERATOR 1 <-> (point, point) FOR ORDER BY float_ops;
+CREATE TABLE pts (id int, loc point);
+INSERT INTO pts VALUES (1, '(0,0)'), (2, '(10,10)'), (3, '(1,1)'), (4, NULL);
+CREATE INDEX pts_idx ON pts USING chdb (loc);
+EXPLAIN (COSTS OFF) SELECT id FROM pts ORDER BY loc <-> '(0,0)' LIMIT 3;
+SELECT id, loc <-> '(0,0)' AS distance FROM pts ORDER BY loc <-> '(0,0)' LIMIT 3;
+SELECT id FROM pts ORDER BY loc <-> '(10,10)';
+SET plan_cache_mode = force_generic_plan;
+PREPARE near(point) AS SELECT count(*) FROM (SELECT id FROM pts ORDER BY loc <-> $1 LIMIT 10) q;
+EXECUTE near(NULL);
+EXECUTE near('(1,1)');
+RESET plan_cache_mode;
+DROP TABLE pts;
+ALTER OPERATOR FAMILY columnar_ops USING chdb DROP OPERATOR 1 (point, point);
+
+----------------------------------------------------------------------------
 -- Floats compare at their own width, NaN and the infinities as in Postgres
 ----------------------------------------------------------------------------
 CREATE TABLE nums (id int, f4 float4, f8 float8, d date);
