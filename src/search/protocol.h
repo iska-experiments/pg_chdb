@@ -1,7 +1,8 @@
 #ifndef CHDB_SEARCH_PROTOCOL_H
 #define CHDB_SEARCH_PROTOCOL_H
 
-#include "postgres.h"
+/* Plain C: the engine program includes this without Postgres. */
+#include <stdint.h>
 
 #include "../setup.h"
 

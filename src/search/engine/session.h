@@ -1,0 +1,38 @@
+#ifndef CHDB_SEARCH_ENGINE_SESSION_H
+#define CHDB_SEARCH_ENGINE_SESSION_H
+
+/* The engine's one libchdb connection, held open for the life of the process. */
+
+#include "chdb.h"
+
+#include "io.h"
+
+/* Native is the only format either direction crosses in. */
+static const char native_format[] = "Native";
+
+extern chdb_connection* session_conn;
+
+/* Opens the store at `path`, exiting with a message on stderr if it cannot. */
+extern void
+session_open(const char* path);
+
+extern void
+session_close(void);
+
+/* The error as a client should see it, malloc'd. */
+extern char*
+session_clean_error(const char* raw);
+
+/* Runs a statement, buffering its result. NULL on success, else a malloc'd error. */
+extern char*
+session_run(const char* sql, size_t len);
+
+/* Settings and database every statement against an index needs first. */
+extern char*
+session_prepare(const request* req);
+
+/* Applies the request's settings, for commands that do not need the database. */
+extern char*
+session_apply_settings(const request* req);
+
+#endif /* CHDB_SEARCH_ENGINE_SESSION_H */

@@ -9,11 +9,6 @@ PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chd
                -DCHC_ERR_MSG_LEN=4096
 PG_CONFIG   ?= pg_config
 
-# worker.c only needs chdb.h for types; it reaches libchdb through dlsym.
-ifneq ($(LIBCHDB_DIR),)
-PG_CPPFLAGS += -isystem ../../$(LIBCHDB_DIR)/include
-endif
-
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 

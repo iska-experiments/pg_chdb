@@ -51,7 +51,7 @@ PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chd
                -DCHC_ERR_MSG_LEN=4096
 
 # Clean up generated files.
-EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc sql/chdb_search--0.1.sql src/search/chdb_search$(DLSUFFIX) src/search/*.o src/search/*.bc src/helper/chdb_helper src/helper/*.o test/schedule*
+EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc sql/chdb_search--0.1.sql src/search/chdb_search$(DLSUFFIX) src/search/*.o src/search/*.bc src/helper/chdb_helper src/helper/*.o src/search/engine/chdb_search_engine src/search/engine/*.o test/schedule*
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -61,10 +61,12 @@ ifeq ($(PROVE_FLAGS),)
 PROVE_FLAGS = -fwvj $(if $(MAX_CONCURRENT_TESTS),$(MAX_CONCURRENT_TESTS),$(shell nproc))
 endif
 
+ENGINE := src/search/engine/chdb_search_engine
+
 # Build against, install, uninstall a local copy of libchdb.
 ifneq ($(BUNDLE_LIBCHDB),)
 LIBCHDB_DIR = vendor/libchdb-$(LIBCHDB_VERSION)-$(OS)-$(ARCH)
-src/helper/chdb_helper: $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
+src/helper/chdb_helper $(ENGINE): $(LIBCHDB_DIR)/lib/libchdb.$(if $(filter $(LIBCHDB_BUILD),static),a,so)
 ifneq ($(LIBCHDB_BUILD),static)
 install: install-libchdb
 uninstall: uninstall-libchdb
@@ -72,7 +74,7 @@ endif
 endif
 
 # Require the versioned SQL script.
-all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper src/hook/chdb_hook$(DLSUFFIX) src/search/chdb_search$(DLSUFFIX)
+all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper $(ENGINE) src/hook/chdb_hook$(DLSUFFIX) src/search/chdb_search$(DLSUFFIX)
 
 # PGXS tracks no header dependencies, and the vendored libraries are all header.
 # *.bc compiles same sources, so needs same headers.
@@ -104,7 +106,7 @@ uninstall: uninstall-hook
 # control file and script, so it installs through a sub-make of its own.
 SEARCH_MODULE := src/search/chdb_search$(DLSUFFIX)
 $(SEARCH_MODULE): $(wildcard src/search/*.c src/search/*.h) $(OBJS) src/version.h
-	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) LIBCHDB_DIR=$(LIBCHDB_DIR)
+	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR)
 
 sql/chdb_search--0.1.sql: sql/chdb_search.sql
 	cp $< $@
@@ -118,6 +120,20 @@ uninstall-search:
 	rm -f $(DESTDIR)$(datadir)/extension/chdb_search.control $(DESTDIR)$(datadir)/extension/chdb_search--0.1.sql
 install: install-search
 uninstall: uninstall-search
+
+# The program the search worker forks to run libchdb, so that a libchdb crash
+# never takes the worker, and with it the cluster, down.
+$(ENGINE): $(wildcard src/search/engine/*.c src/search/engine/*.h) src/search/protocol.h src/setup.h
+	@$(MAKE) -C $(dir $@) all LIBCHDB_DIR=$(LIBCHDB_DIR) LIBCHDB_BUILD=$(LIBCHDB_BUILD)
+
+# Installed as the helper is, and for the same reason.
+install-engine: $(ENGINE)
+	@to=$(DESTDIR)$(pkglibdir)/chdb_search_engine; \
+	  $(INSTALL_PROGRAM) $< $$to.new && mv -f $$to.new $$to
+uninstall-engine:
+	rm -f $(DESTDIR)$(pkglibdir)/chdb_search_engine
+install: install-engine
+uninstall: uninstall-engine
 
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
@@ -173,7 +189,7 @@ uninstall-libchdb:
 	rm -f $(DESTDIR)/usr/local/lib/libchdb.so
 
 .PHONY: format # Format .c and .h files to project standard in .clang-format.
-format: $(wildcard src/*.c src/*.h src/helper/*.c src/search/*.c src/search/*.h)
+format: $(wildcard src/*.c src/*.h src/helper/*.c src/search/*.c src/search/*.h src/search/engine/*.c src/search/engine/*.h)
 	@$(CLANG_FORMAT) --style=file:.clang-format -i $^
 
 .PHONY: type-table # Regenerate the data type tables of doc/chdb_hook.md.
