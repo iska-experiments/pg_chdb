@@ -24,6 +24,7 @@
 
 #include "client.h"
 #include "frame.h"
+#include "serve.h"
 #include "worker.h"
 
 /* Milliseconds between connection attempts while the worker comes up. */
@@ -78,16 +79,13 @@ chdb_search_client_init(void) {
 /* A connected socket, or -1 with errno saying why not. */
 static int
 try_connect(void) {
-    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    struct sockaddr_un addr;
+    socklen_t len = chdb_search_socket_addr(MyDatabaseId, &addr);
     int fd;
 
-    /* Relative to the data directory, which backends run in. */
-    snprintf(
-        addr.sun_path, sizeof(addr.sun_path), CHDB_SEARCH_SOCKET_FMT, MyDatabaseId
-    );
     /* Nonblocking, so that a full backlog is an EAGAIN to retry, not a hang. */
     fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-    if (fd >= 0 && connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (fd >= 0 && connect(fd, (struct sockaddr*)&addr, len) < 0) {
         int saved = errno;
 
         close(fd);
@@ -127,7 +125,10 @@ chdb_search_connect(void) {
             return conn;
         }
 
-        /* No socket yet, a stale one, or a full backlog: start it and retry. */
+        /*
+         * No listener yet, a socket file a crashed one left (off Linux), or a
+         * full backlog: start it and retry.
+         */
         if (errno != ENOENT && errno != ECONNREFUSED && errno != EAGAIN) {
             ereport(
                 ERROR,

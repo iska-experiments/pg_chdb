@@ -6,8 +6,8 @@
 
 /*
  * The wire protocol between backends and the chdb_search worker, spoken over
- * the unix stream socket at pg_chdb/<dboid>.sock under the data directory,
- * and between the worker and its chdb_search_engine child over a socketpair.
+ * the unix stream socket the worker listens on (serve.c), and between the
+ * worker and its chdb_search_engine child over a socketpair.
  * Fields are native endian. A string is a uint32 byte count followed by that
  * many bytes, unterminated.
  *
@@ -86,7 +86,8 @@
 
 /*
  * The store directory under the data directory: a <dboid> subdirectory holding
- * each database's chDB store, and the <dboid>.sock its worker listens on.
+ * each database's chDB store, and off Linux, where the worker's socket is
+ * not abstract, the <dboid>.sock it listens on.
  */
 #define CHDB_SEARCH_DIR "pg_chdb"
 #define CHDB_SEARCH_SOCKET_FMT CHDB_SEARCH_DIR "/%u.sock"

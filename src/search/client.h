@@ -6,8 +6,9 @@
  *
  * The worker owns the chDB store for the current database (chDB lets only
  * one process open a store path). Backends never link libchdb; they send
- * requests over a unix socket at $PGDATA/pg_chdb/<dboid>.sock and stream
- * Native blocks both ways. The client starts the worker on first use.
+ * requests over the worker's unix socket, a name in the abstract namespace
+ * on Linux (serve.c), and stream Native blocks both ways. The client starts
+ * the worker on first use.
  *
  * Every request names the index it works on and the store generation of the
  * table it works on. Before running it the worker creates the chDB database

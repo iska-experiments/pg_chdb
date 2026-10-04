@@ -42,8 +42,10 @@ is search(), 2, 'The index should answer a search';
 my $worker = worker_pid($node, 'postgres');
 ok $worker, 'Should have a worker listed in pg_stat_activity';
 my $dboid = $node->safe_psql(postgres => "SELECT oid FROM pg_database WHERE datname = 'postgres'");
-ok -S $node->data_dir . "/pg_chdb/$dboid.sock",
-    'Should have a socket under pg_chdb in the data directory';
+like worker_socket($node, 'postgres'), qr{^\@pg_chdb/[0-9a-f]{16}/$dboid$},
+    'Should listen on an abstract socket named for the data directory';
+ok !-e $node->data_dir . "/pg_chdb/$dboid.sock",
+    'Should leave no socket file in the data directory';
 ok engine_pid(), 'Should have an engine serving the worker';
 
 # The engine killed by a signal: the request that finds it dead fails naming

@@ -109,7 +109,8 @@ DROPPED_DATABASE: {
 
     # A backend without the library drops the database: nothing tells the
     # worker of another database, so the directory stays until a worker next
-    # starts. A worker that crashed would have left its socket too.
+    # starts. A worker that crashed off Linux, where its socket is a file,
+    # would have left the socket too.
     $node->safe_psql(postgres => 'DROP DATABASE d2');
     ok -d "$pg_chdb/$dboid",
         'The directory should survive a DROP DATABASE without the library';

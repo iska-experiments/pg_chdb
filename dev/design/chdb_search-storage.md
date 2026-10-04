@@ -132,18 +132,21 @@ at pre-commit. `ROLLBACK PREPARED` then leaves rows in the store whose heap
 tuples are dead; the visibility recheck hides them and VACUUM removes them.
 
 WAL-G's `backup-push` tars every file under the data directory, and tar has
-no entry for a socket, so in Phase 0 it fails while a worker listens on
+no entry for a socket, so it failed while a worker listened on
 `pg_chdb/<dboid>.sock`, where `pg_basebackup` skips the socket with a
-warning; the worker has to be stopped for the backup. Moving the socket out
-of the data directory, to the postmaster's first `unix_socket_directories`
-entry or to Linux's abstract namespace, is open.
+warning. On Linux the worker now listens in the abstract namespace, on
+`@pg_chdb/<hash>/<dboid>` with the hash of the data directory's path,
+device and inode, so the data directory holds no socket and a backup runs
+with the workers up; `SO_PEERCRED` stands in for the file mode, admitting
+peers of the server's uid only. Elsewhere the socket is still the file, and
+the worker has to be stopped for a WAL-G backup.
 
 Tests (`t/search_pitr.pl`, `t/search_standby.pl`, `t/search_logical.pl`,
 `t/search_walg.pl`, `t/search_twophase.pl`): base backup with WAL archiving
 restored to a PITR target; a streaming standby queried through the index
 (Phase 0 asserts the fail-safe error, Phase 1 asserts rows), then promoted
-and reindexed; a logical subscription whose subscriber builds its own
-index; WAL-G itself with `WALG_FILE_PREFIX` pointing at a local directory
+and reindexed; a logical subscription whose subscriber builds its own index;
+WAL-G itself with `WALG_FILE_PREFIX` pointing at a local directory
 (`backup-push`, `wal-push`, `backup-fetch`, `wal-fetch`), skipped when the
-binary is absent, pinning the socket failure; and two-phase commit through
-the store.
+binary is absent, backing up with the worker running; and two-phase commit
+through the store.

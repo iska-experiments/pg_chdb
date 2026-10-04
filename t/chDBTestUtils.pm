@@ -8,7 +8,7 @@ use PostgreSQL::Test::Utils;
 use Test::More;
 
 our @EXPORT = qw(
-    server_log check_log check_query search_node worker_pid stderr_of stop_worker
+    server_log check_log check_query search_node worker_pid worker_socket stderr_of stop_worker
     store_tables store_rows search_ids check_unavailable pitr_rows check_restored
 );
 
@@ -113,10 +113,33 @@ sub worker_pid {
     return $node->safe_psql($db => "SELECT pid $worker");
 }
 
+=head2 worker_socket
+
+The name the chdb_search worker of database $db listens on, as
+/proc/net/unix shows it: an abstract one, `@pg_chdb/<hash>/<dboid>`, on
+Linux. '' when the worker holds no listening socket.
+
+=cut
+
+sub worker_socket {
+    my ($node, $db) = @_;
+    my $pid = worker_pid($node, $db) or return '';
+    my %fds = map { (readlink($_) // '') =~ /^socket:\[(\d+)\]$/ ? ($1 => 1) : () }
+        glob "/proc/$pid/fd/*";
+    open my $unix, '<', '/proc/net/unix' or return '';
+    while (<$unix>) {
+        # Num RefCount Protocol Flags Type St Inode Path; a listener's flags
+        # have __SO_ACCEPTCON.
+        my @f = split;
+        return $f[7] if @f == 8 && $fds{ $f[6] } && hex($f[3]) & 0x10000;
+    }
+    return '';
+}
+
 =head2 stop_worker
 
-Stops the chdb_search worker of database $db, which removes its socket, and
-waits for it to be gone; the next request starts a new one.
+Stops the chdb_search worker of database $db and waits for it to be gone;
+the next request starts a new one.
 
 =cut
 

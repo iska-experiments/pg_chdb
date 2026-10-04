@@ -1,16 +1,30 @@
 /*
  * The worker's accept and dispatch loop: one thread, one request at a time,
  * with idle connections costing nothing.
+ *
+ * On Linux the worker listens on a name in the abstract namespace,
+ * `pg_chdb/<hash>/<dboid>`, the hash that of the data directory's path,
+ * device and inode, so that two clusters on one host, or two containers
+ * sharing a network namespace whose data directories have the same path,
+ * get names of their own. An abstract socket is no file: nothing in the
+ * data directory for a backup to trip over (WAL-G's backup-push aborts on a
+ * socket, as tar has no entry for one), and nothing to unlink, as the
+ * kernel drops the name with the last descriptor, a crashed worker's too.
+ * Having no file mode either, it lets in only peers of the server's own
+ * user, which the data directory's mode let in before. Elsewhere the socket
+ * is the file <dboid>.sock beside the stores.
  */
 
 #include "postgres.h"
 
 #include <errno.h>
+#include <stddef.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "common/hashfn.h"
 #include "miscadmin.h"
 #include "postmaster/interrupt.h"
 #include "storage/fd.h"
@@ -26,20 +40,53 @@
 #define CHDB_SEARCH_MAX_CLIENTS 128
 
 static int listen_fd = -1;
-static char socket_path[MAXPGPATH];
+static struct sockaddr_un listen_addr;
+
+socklen_t
+chdb_search_socket_addr(Oid dboid, struct sockaddr_un* addr) {
+    memset(addr, 0, sizeof(*addr));
+    addr->sun_family = AF_UNIX;
+#ifdef __linux__
+    struct stat st;
+
+    if (stat(DataDir, &st) < 0) {
+        ereport(
+            ERROR,
+            errcode_for_file_access(),
+            errmsg("chdb_search: could not stat directory \"%s\": %m", DataDir)
+        );
+    }
+
+    uint64 hash =
+        hash_bytes_extended((const unsigned char*)DataDir, strlen(DataDir), 0);
+
+    hash = hash_combine64(hash_combine64(hash, st.st_dev), st.st_ino);
+    /* sun_path[0] stays NUL: the name is abstract and runs to the length. */
+    return offsetof(struct sockaddr_un, sun_path) + 1 +
+           snprintf(
+               addr->sun_path + 1,
+               sizeof(addr->sun_path) - 1,
+               CHDB_SEARCH_DIR "/%016llx/%u",
+               (unsigned long long)hash,
+               dboid
+           );
+#else
+    snprintf(addr->sun_path, sizeof(addr->sun_path), CHDB_SEARCH_SOCKET_FMT, dboid);
+    return sizeof(*addr);
+#endif
+}
+
+/* The socket's name for a message: an abstract one as `ss -x` shows it, `@...`. */
+static const char*
+socket_name(const struct sockaddr_un* addr) {
+    return addr->sun_path[0] ? addr->sun_path : psprintf("@%s", addr->sun_path + 1);
+}
 
 void
 chdb_search_listen(Oid dboid) {
-    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    socklen_t len = chdb_search_socket_addr(dboid, &listen_addr);
 
-    snprintf(socket_path, sizeof(socket_path), CHDB_SEARCH_SOCKET_FMT, dboid);
-    if (strlen(socket_path) >= sizeof(addr.sun_path)) {
-        ereport(
-            FATAL, errmsg("chdb_search: socket path \"%s\" is too long", socket_path)
-        );
-    }
-    strcpy(addr.sun_path, socket_path);
-
+    /* The stores' directory, in the data directory's mode. */
     if (MakePGDirectory(CHDB_SEARCH_DIR) < 0 && errno != EEXIST) {
         ereport(
             FATAL,
@@ -50,17 +97,39 @@ chdb_search_listen(Oid dboid) {
         );
     }
 
-    /* A crashed predecessor leaves its socket file behind. */
-    unlink(socket_path);
+    /* A crashed predecessor leaves a socket file behind. */
+    if (listen_addr.sun_path[0]) {
+        unlink(listen_addr.sun_path);
+    }
     listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-    if (listen_fd < 0 || bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0 ||
+    if (listen_fd < 0 || bind(listen_fd, (struct sockaddr*)&listen_addr, len) < 0 ||
         listen(listen_fd, 64) < 0) {
         ereport(
             FATAL,
             errcode_for_socket_access(),
-            errmsg("chdb_search: could not listen on \"%s\": %m", socket_path)
+            errmsg(
+                "chdb_search: could not listen on \"%s\": %m", socket_name(&listen_addr)
+            )
         );
     }
+}
+
+/* Whether a peer may send requests: on Linux, one of the server's user. */
+static bool
+peer_allowed(int fd) {
+#ifdef __linux__
+    struct ucred cred;
+    socklen_t len = sizeof(cred);
+
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) < 0 ||
+        cred.uid != geteuid()) {
+        ereport(
+            LOG, errmsg("chdb_search: refused a connection from another user's process")
+        );
+        return false;
+    }
+#endif
+    return true;
 }
 
 /* WL_SOCKET_ACCEPT is WL_SOCKET_READABLE, so user_data tells the listener apart. */
@@ -85,8 +154,8 @@ build_wait_set(const int* clients, int nclients) {
 
 void
 chdb_search_unlisten(void) {
-    if (listen_fd >= 0) {
-        unlink(socket_path);
+    if (listen_fd >= 0 && listen_addr.sun_path[0]) {
+        unlink(listen_addr.sun_path);
     }
 }
 
@@ -116,7 +185,7 @@ chdb_search_serve(void) {
         } else if ((event.events & WL_SOCKET_READABLE) && event.user_data == LISTENER) {
             int fd = accept4(listen_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
-            if (fd >= 0 && nclients < CHDB_SEARCH_MAX_CLIENTS) {
+            if (fd >= 0 && nclients < CHDB_SEARCH_MAX_CLIENTS && peer_allowed(fd)) {
                 clients[nclients++] = fd;
                 rebuild             = true;
             } else if (fd >= 0) {

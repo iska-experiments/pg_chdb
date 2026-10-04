@@ -8,9 +8,10 @@
 # after any restore. Skipped without a wal-g binary on the PATH or in WALG.
 #
 # WAL-G tars every file under the data directory and tar has no entry for a
-# socket, so a running worker's pg_chdb/<dboid>.sock fails backup-push,
-# where pg_basebackup skips it with a warning. The test pins that, then
-# stops the worker, which removes the socket, before backing up.
+# socket, so a worker listening on pg_chdb/<dboid>.sock failed backup-push.
+# On Linux the worker listens in the abstract namespace instead, so the
+# backup runs with the worker up; and the restored cluster, on the same host
+# with the same database OID, listens on a name of its own.
 
 use v5.34;
 use strict;
@@ -40,13 +41,13 @@ END { $_->stop for grep { $_ } ($restored, $primary) }
 my $pgdata = $primary->data_dir;
 my $dboid  = $primary->safe_psql(postgres =>
     "SELECT oid FROM pg_database WHERE datname = 'postgres'");
-ok -S "$pgdata/pg_chdb/$dboid.sock", 'The worker should listen under the data directory';
-$primary->command_fails_like([ $walg, 'backup-push', $pgdata ],
-    qr/sockets not supported/, 'backup-push should fail on the worker\'s socket');
-stop_worker($primary, 'postgres');
-ok !-e "$pgdata/pg_chdb/$dboid.sock", 'Stopping the worker should remove the socket';
+my $socket = worker_socket($primary, 'postgres');
+like $socket, qr{^\@pg_chdb/[0-9a-f]{16}/$dboid$},
+    'The worker should listen on an abstract socket';
+ok !-e "$pgdata/pg_chdb/$dboid.sock", 'The data directory should hold no socket';
 $primary->command_ok([ $walg, 'backup-push', $pgdata ],
-    'backup-push should back up the data directory without it');
+    'backup-push should back up the data directory with the worker running');
+is worker_socket($primary, 'postgres'), $socket, 'The worker should still listen';
 
 my $target = pitr_rows($primary);
 
@@ -70,5 +71,7 @@ $restored->poll_query_until(postgres => 'SELECT NOT pg_is_in_recovery()')
 ok $restored->log_contains(qr/recovery stopping at restore point "$target"/),
     'Should recover to the restore point';
 check_restored($restored);
+ok worker_socket($restored, 'postgres') ne $socket,
+    'The restored cluster\'s worker should listen on a name of its own';
 
 done_testing;

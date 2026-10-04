@@ -430,10 +430,11 @@ files, not as pages, and the [fail-safe](#availability) decides what a copy
 is worth. The tests in `t/` prove each case:
 
 *   **Base backups and point-in-time recovery.** `pg_basebackup` copies the
-    store with the rest of the data directory, warning that it skips the
-    worker's socket. A restore brings the heap to its recovery target and
-    the store back as the backup took it, so an index flushed between the
-    two is refused until `REINDEX` rebuilds it from the restored heap.
+    store with the rest of the data directory (off Linux, warning that it
+    skips the worker's socket file). A restore brings the heap to its
+    recovery target and the store back as the backup took it, so an index
+    flushed between the two is refused until `REINDEX` rebuilds it from the
+    restored heap.
 *   **Streaming replication.** A standby has the copy its base backup took
     and starts no worker: a search through a chdb index fails with `Its
     store is not current on a server in recovery`, or in `skip` mode is
@@ -445,12 +446,13 @@ is worth. The tests in `t/` prove each case:
     to the subscriber's store at their commits, and replicated rows are
     searchable there once applied. The publisher's store is not involved.
 *   **WAL-G.** `backup-push`, `wal-push`, `backup-fetch` and `wal-fetch`
-    back up and restore the store as above, with one catch: WAL-G tars every
-    file under the data directory, and tar has no entry for a socket, so
-    `backup-push` fails with `sockets not supported` while a worker listens
-    on `pg_chdb/<database oid>.sock`. Stop the database's worker first
-    (`pg_terminate_backend()` on its `pg_stat_activity` row), which removes
-    the socket; it restarts on the next request.
+    back up and restore the store as above, workers running: on Linux a
+    worker's socket is a name in the abstract namespace, not a file, so the
+    tar WAL-G makes of the data directory meets no socket (tar has none).
+    Elsewhere the worker listens on `pg_chdb/<database oid>.sock`, which
+    `backup-push` fails on with `sockets not supported`; stop the database's
+    worker first (`pg_terminate_backend()` on its `pg_stat_activity` row),
+    which removes the socket, and it restarts on the next request.
 
 ## Dropping
 
@@ -468,8 +470,11 @@ runs, `DROP DATABASE ... WITH (FORCE)` stops it and proceeds.
 ## The Worker and the Engine
 
 The worker for a database appears in `pg_stat_activity` with `backend_type`
-`chdb_search worker`, connected to that database. It listens on
-`$PGDATA/pg_chdb/<database oid>.sock` and keeps its store in
+`chdb_search worker`, connected to that database. It listens on a unix
+socket, on Linux the abstract name `@pg_chdb/<hash>/<database oid>` with
+the hash of the data directory's path, which `ss -xl` lists and which only
+processes of the server's own user may connect to, elsewhere the file
+`$PGDATA/pg_chdb/<database oid>.sock`; it keeps its store in
 `$PGDATA/pg_chdb/<database oid>/`. It starts when a backend first needs it
 and, if it dies, restarts five seconds later or when a backend next asks. At
 most 64 databases can have a worker at once.
@@ -594,9 +599,10 @@ database named `idx_0`.
 *   The store is not replicated in this phase: it is a directory under
     `$PGDATA/pg_chdb`, not WAL-logged pages, so a standby cannot serve a
     chdb index, and a restore, a promotion or a `pg_rewind` leaves indexes
-    to rebuild with `REINDEX`; WAL-G backs it up only while the worker is
-    stopped. See [Backups and Replication](#backups-and-replication). The
-    next phase keeps the store in index pages.
+    to rebuild with `REINDEX`; off Linux, WAL-G backs it up only while the
+    worker is stopped. See [Backups and
+    Replication](#backups-and-replication). The next phase keeps the store
+    in index pages.
 *   `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
 *   The Postgres implementations of the operators tokenize as the default
     pipeline does; other tokenizers are usable through the index only, as

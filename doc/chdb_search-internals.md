@@ -85,9 +85,15 @@ carries as well, and answers `NO_STORE` for a table it does not have.
     (`registry.c`, 64 slots, states free, starting and running) and
     registers the worker with `RegisterDynamicBackgroundWorker`,
     `bgw_restart_time` five seconds. The worker claims the slot, runs the
-    sweep below, listens on `pg_chdb/<dboid>.sock` and logs `worker for
-    database N listening`. Backends that find no socket, a stale one or a
-    full backlog ask for a worker and retry for `chdb_search.worker_timeout`.
+    sweep below, listens and logs `worker for database N listening`. On
+    Linux the socket is the abstract name `@pg_chdb/<hash>/<dboid>`, the
+    hash of the data directory's path, device and inode (`serve.c`), so no
+    file of it lands in the data directory and two clusters on one host
+    never share one; the worker serves only peers of the server's own user,
+    which `SO_PEERCRED` names. Elsewhere it is the file
+    `pg_chdb/<dboid>.sock`. Backends that find no listener, a stale socket
+    file or a full backlog ask for a worker and retry for
+    `chdb_search.worker_timeout`.
 *   **Serving.** One thread, up to 128 connections, one request at a time
     across them (`serve.c`, `request.c`). A request is the setup payload of
     `src/setup.h` with the index OID and the store generation added: the
@@ -168,16 +174,16 @@ build cannot be carried past it.
 Drops are deferred to the end of the transaction (`drop.c`): an
 `object_access_hook` records every dropped relation that is a chdb index,
 and every dropped database, and the commit callback drops the store or
-removes the database's directory and socket; an abort drops the table a
-rolled-back build made. A `DROP INDEX CONCURRENTLY` drops the store after
-the last writer that opened the index before it has committed. Only a
-session that has the library loaded runs the hook.
+removes the database's directory (and socket file, off Linux); an abort
+drops the table a rolled-back build made. A `DROP INDEX CONCURRENTLY` drops
+the store after the last writer that opened the index before it has
+committed. Only a session that has the library loaded runs the hook.
 
 ## The Sweeps
 
 Before a worker serves its first request it drops the `idx_<oid>` databases
 of its store whose OID is no longer a chdb index, skipping an OID a build
-holds locked, and removes the directory and socket of every database no
+holds locked, and removes the directory and socket file of every database no
 longer in `pg_database` (`sweep.c`); it logs each. `VACUUM` sweeps inside a
 live index's store: the tables of other generations and the staging tables
 of transactions that are over (`vacuum.c`).

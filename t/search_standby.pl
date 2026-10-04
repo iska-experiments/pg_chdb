@@ -44,7 +44,6 @@ check_unavailable($standby, "2\n3",
 my $dboid = $standby->safe_psql(postgres =>
     "SELECT oid FROM pg_database WHERE datname = 'postgres'");
 ok -d $standby->data_dir . "/pg_chdb/$dboid", 'The backup should have copied the store';
-ok !-e $standby->data_dir . "/pg_chdb/$dboid.sock", 'The standby should have no socket';
 is $standby->safe_psql(postgres =>
     "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'chdb_search worker'"),
     0, 'The standby should start no worker';

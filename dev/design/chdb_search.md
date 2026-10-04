@@ -87,8 +87,10 @@ a ranker.
   contract in `chdb_search-storage.md` fixes the rules). Not implemented;
   the framing has no engine-initiated frame yet. Each callback is a round
   trip, so the blob cache of Phase 1 has to sit in the engine process.
-* Listens on `$PGDATA/pg_chdb/<dboid>.sock`. Wire protocol reuses the setup
-  payload of `src/setup.h` with new commands:
+* Listens on the abstract unix socket `@pg_chdb/<hash>/<dboid>` on Linux,
+  the hash of the data directory's path, device and inode, for peers of the
+  server's uid only, and on `$PGDATA/pg_chdb/<dboid>.sock` elsewhere. Wire
+  protocol reuses the setup payload of `src/setup.h` with new commands:
   * `CHDB_CMD_EXEC` run DDL/DML, reply status.
   * `CHDB_CMD_SELECT` stream Native blocks back (reuse `chdb_select_receive`).
   * `CHDB_CMD_INSERT` stream Native blocks in (reuse `chdb_copy_send`).

@@ -5,6 +5,18 @@
 
 #include "postgres.h"
 
+#include <sys/socket.h>
+#include <sys/un.h>
+
+/*
+ * The address the worker of database `dboid` listens on and backends
+ * connect to, and its length for bind() and connect(): a name in the
+ * abstract namespace on Linux, else the file pg_chdb/<dboid>.sock in the
+ * data directory (serve.c).
+ */
+extern socklen_t
+chdb_search_socket_addr(Oid dboid, struct sockaddr_un* addr);
+
 /* Binds the socket of database `dboid`. */
 extern void
 chdb_search_listen(Oid dboid);
@@ -13,7 +25,7 @@ chdb_search_listen(Oid dboid);
 extern void
 chdb_search_serve(void);
 
-/* Removes the socket file, if bound. */
+/* Removes the socket file, if one is bound. */
 extern void
 chdb_search_unlisten(void);
 
