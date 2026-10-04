@@ -49,6 +49,7 @@
 #include "pg-clickhouse-encode.h"
 
 #include "native.h"
+#include "native_writer.h"
 
 /*
  * Bytes to accumulate before cutting a block. ClickHouse coalesces small
@@ -70,43 +71,12 @@
 
 /* ---- Postgres to chDB ------------------------------------------------ */
 
-/*
- * Writer over the columns that `structure` declares. ClickHouse matches a Native
- * block's columns to the target by name and rejects one it cannot find, so the
- * block carries the declared names and types, not the relation's.
- *
- * A structure clause is a named Tuple's field list, so clickhouse-c's type
- * parser splits it: quoting, nesting and Enum8('a' = 1, 'b' = 2) come for free.
- * Children belong to the Tuple, which the writer's parent context outlives.
- */
+/* COPY's writer: an append per attribute, so the counts must agree. */
 static pgch_writer*
 writer_for(const char* structure, int nattrs) {
-    char* tuple = psprintf("Tuple(%s)", structure);
-    chc_type* type;
-    chc_err err = {};
+    size_t ncols;
+    pgch_writer* w = chdb_writer_for(CurrentMemoryContext, structure, &ncols);
 
-    if (chc_type_parse(tuple, strlen(tuple), &pgch_alloc, &type, &err) != CHC_OK) {
-        pgch_raise(&err, ERRCODE_INVALID_PARAMETER_VALUE, "structure: ", NULL);
-    }
-
-    size_t ncols   = chc_type_n_children(type);
-    pgch_col* cols = palloc0(ncols * sizeof(pgch_col));
-
-    for (size_t i = 0; i < ncols; i++) {
-        cols[i].name = chc_type_tuple_field_name(type, i, &cols[i].name_len);
-        cols[i].type = chc_type_child(type, i);
-
-        /* A bare type parses as an unnamed field, leaving nothing to match on. */
-        if (!cols[i].name) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                errmsg("chdb: structure column %zu has no name", i + 1)
-            );
-        }
-    }
-
-    /* An append per attribute, so a mismatch would shift every column. */
     if (ncols != (size_t)nattrs) {
         ereport(
             ERROR,
@@ -115,7 +85,7 @@ writer_for(const char* structure, int nattrs) {
         );
     }
 
-    return pgch_writer_new(CurrentMemoryContext, cols, ncols);
+    return w;
 }
 
 /* Buffers small writes before sending them to helper. */
