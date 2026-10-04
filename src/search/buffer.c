@@ -14,8 +14,9 @@
  * the parent's.
  *
  * Large transactions. Past chdb_search.flush_threshold a top-level
- * transaction flushes its buffer into a staging table idx_<oid>.t_tx_<xid>
- * instead, which pre-commit copies into `t` and drops (abort drops it too).
+ * transaction flushes its buffer into a staging table <table>_tx_<xid>
+ * instead, which pre-commit copies into the table and drops (abort drops it
+ * too).
  * Inside a savepoint nothing is flushed early, because rows already sent
  * could not be taken back.
  */
@@ -47,9 +48,9 @@ typedef struct Mark {
 typedef struct Pending {
     Oid indexoid;
     ChdbRowWriter* rw;
-    char* table;   /* idx_<oid>.t */
+    char* table;   /* idx_<oid>.t_<generation> */
     char* collist; /* (ctid, xmin, ...) for the INSERT */
-    char* staging; /* idx_<oid>.t_tx_<xid>, set once rows have been staged */
+    char* staging; /* <table>_tx_<xid>, set once rows have been staged */
     List* marks;   /* of Mark*, innermost last */
 } Pending;
 
@@ -71,7 +72,7 @@ find_pending(Relation index) {
     Pending* p        = palloc0(sizeof(*p));
 
     p->indexoid = RelationGetRelid(index);
-    p->table    = chdb_search_table_name(p->indexoid);
+    p->table    = chdb_search_table_name(index);
     p->collist  = chdb_search_column_list(index);
     p->rw       = chdb_rowwriter_new(index);
     pending     = lappend(pending, p);

@@ -16,10 +16,14 @@ int chdb_search_flush_threshold_kb       = 64 * 1024;
 double chdb_search_vacuum_optimize_ratio = 0.2;
 bool chdb_search_mask_oids               = false;
 
+/* Prefixes whose run of digits the mask replaces: OID, generation, xid. */
+static const char* const masked_prefixes[] = { "idx_", ".t_", "_tx_" };
+
 /*
  * Logs a ClickHouse statement at DEBUG1, so tests can assert on what was
- * generated with client_min_messages = debug1. With mask_oids, index OIDs and
- * transaction ids become N, as they differ from run to run.
+ * generated with client_min_messages = debug1. With mask_oids, index OIDs,
+ * store generations and transaction ids become N, as they differ from run to
+ * run.
  */
 void
 chdb_search_log_sql(const char* what, const char* sql) {
@@ -31,9 +35,16 @@ chdb_search_log_sql(const char* what, const char* sql) {
     }
     initStringInfo(&buf);
     for (const char* p = sql; *p;) {
-        if (strncmp(p, "idx_", 4) == 0 || strncmp(p, "_tx_", 4) == 0) {
-            appendBinaryStringInfo(&buf, p, 4);
-            p += 4;
+        size_t len = 0;
+
+        for (int i = 0; i < lengthof(masked_prefixes) && !len; i++) {
+            if (strncmp(p, masked_prefixes[i], strlen(masked_prefixes[i])) == 0) {
+                len = strlen(masked_prefixes[i]);
+            }
+        }
+        if (len) {
+            appendBinaryStringInfo(&buf, p, len);
+            p += len;
             if (isdigit((unsigned char)*p)) {
                 while (isdigit((unsigned char)*p)) {
                     p++;

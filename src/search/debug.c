@@ -6,6 +6,7 @@
 
 #include "postgres.h"
 
+#include "access/genam.h"
 #include "access/table.h"
 #include "catalog/pg_class.h"
 #include "fmgr.h"
@@ -19,6 +20,7 @@
 
 #include "../native.h"
 #include "client.h"
+#include "search.h"
 
 #define CHDB_SEARCH_DEBUG_INDEX 0
 
@@ -98,8 +100,9 @@ chdb_search_debug_query(PG_FUNCTION_ARGS) {
 
 /*
  * Streams the whole heap table into an INSERT statement for idx_0, such as
- * 'INSERT INTO idx_0.t (id, name)', whose columns are the table's. Returns
- * the rows sent.
+ * 'INSERT INTO idx_0.t (id, name)' into a table the caller made there with
+ * chdb_search_exec (the scratch database has no generations), whose columns
+ * are the table's. Returns the rows sent.
  */
 PG_FUNCTION_INFO_V1(chdb_search_debug_copy_to);
 Datum
@@ -130,6 +133,24 @@ chdb_search_debug_copy_to(PG_FUNCTION_ARGS) {
     table_close(rel, AccessShareLock);
 
     PG_RETURN_INT64((int64)rows);
+}
+
+/*
+ * The ClickHouse table holding a chdb index's rows, `idx_<oid>.t_<generation>`,
+ * for reading the store through chdb_search_query.
+ */
+PG_FUNCTION_INFO_V1(chdb_search_debug_store_table);
+Datum
+chdb_search_debug_store_table(PG_FUNCTION_ARGS) {
+    Oid indexoid = PG_GETARG_OID(0);
+
+    require_superuser();
+    Relation index = index_open(indexoid, AccessShareLock);
+    char* table    = chdb_search_table_name(index);
+
+    index_close(index, AccessShareLock);
+
+    PG_RETURN_TEXT_P(cstring_to_text(table));
 }
 
 /* The pid of the worker's engine process, or NULL when none runs yet. */

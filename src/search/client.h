@@ -11,8 +11,9 @@
  *
  * Every request names the index it works on. Before running it the worker
  * creates the chDB database `idx_<indexoid>` if it is missing. Queries pass
- * through unchanged, so callers name the table in full: `idx_<indexoid>.t`.
- * The framing is documented in protocol.h.
+ * through unchanged, so callers name the table in full,
+ * `idx_<indexoid>.t_<generation>` (see ddl.c). The framing is documented in
+ * protocol.h.
  */
 
 #include "postgres.h"
@@ -35,7 +36,7 @@ extern void
 chdb_search_close(chdbSearchConn* conn);
 
 /*
- * Runs `sql`, which names the table as `idx_<indexoid>.t`.
+ * Runs `sql`, which names the table as `idx_<indexoid>.t_<generation>`.
  * Raises on failure with the worker's error text.
  */
 extern void
@@ -49,8 +50,8 @@ extern void
 chdb_search_select(chdbSearchConn* conn, Oid indexoid, const char* sql);
 
 /*
- * Starts `sql`, an `INSERT INTO idx_<indexoid>.t (cols)` with no FORMAT
- * clause, which the worker supplies as Native; the caller then sends blocks
+ * Starts `sql`, an `INSERT INTO idx_<indexoid>.t_<generation> (cols)` with no
+ * FORMAT clause, which the worker supplies as Native; the caller then sends blocks
  * through chdb_search_channel and ends the stream with chdb_search_finish, which
  * waits for the worker's acknowledgement and raises on failure.
  */

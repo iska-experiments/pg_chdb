@@ -2,8 +2,15 @@
  * ClickHouse DDL for a chdb index.
  *
  * Each index owns one ClickHouse database `idx_<indexrelid>` holding one
- * MergeTree table `t`. Statements name it in full, `idx_<oid>.t`, so they work
- * whichever default database the worker's session has.
+ * MergeTree table per build, `t_<generation>`, named after the metapage's
+ * random generation. Statements name it in full, `idx_<oid>.t_<generation>`,
+ * so they work whichever default database the worker's session has.
+ *
+ * Every rebuild (REINDEX, TRUNCATE, CLUSTER, a table rewrite) writes a new
+ * generation beside the old one and touches nothing else: if it commits, the
+ * metapage names the new table; if it rolls back, the old one. Whichever
+ * lost is swept by the next VACUUM, since the build cannot read the previous
+ * metapage once REINDEX has given the index a new relfilenode.
  *
  * ctid encoding. The first column is `ctid UInt64`, the heap TID packed as
  * (block << 16) | offset, which is ORDER BY key and the join back to the heap.
@@ -26,16 +33,16 @@
  * (tokenizer = 'ngrams', ngram_size = 3), tags text_array_ops, author columnar_ops):
  *
  *   CREATE DATABASE IF NOT EXISTS idx_16401
- *   CREATE TABLE idx_16401.t (ctid UInt64, xmin UInt32, body Nullable(String),
+ *   CREATE TABLE idx_16401.t_7342 (ctid UInt64, xmin UInt32, body Nullable(String),
  *     tags Array(Nullable(String)), author Nullable(String),
  *     INDEX body_idx body TYPE text(tokenizer = ngrams(3),
  *       preprocessor = lowerUTF8(body)),
  *     INDEX tags_idx tags TYPE text(tokenizer = array, preprocessor = lowerUTF8(tags)))
  *     ENGINE = MergeTree ORDER BY ctid
- *   INSERT INTO idx_16401.t (ctid, xmin, body, tags, author)
- *   SELECT ctid FROM idx_16401.t WHERE hasAllTokens(body, 'running shoes')
- *   DELETE FROM idx_16401.t WHERE ctid IN (4294967296, ...)
- *   OPTIMIZE TABLE idx_16401.t FINAL
+ *   INSERT INTO idx_16401.t_7342 (ctid, xmin, body, tags, author)
+ *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens(body, 'running shoes')
+ *   DELETE FROM idx_16401.t_7342 WHERE ctid IN (4294967296, ...)
+ *   OPTIMIZE TABLE idx_16401.t_7342 FINAL
  *
  * An INSERT carries no FORMAT clause: the worker streams it as Native. Every
  * statement is logged with elog(DEBUG1) before it is sent.
@@ -52,9 +59,12 @@
 
 #include "search.h"
 
+/* `idx_<oid>.t_<generation>`: the table the index's metapage names. */
 char*
-chdb_search_table_name(Oid indexoid) {
-    return psprintf("idx_%u.t", indexoid);
+chdb_search_table_name(Relation index) {
+    return psprintf(
+        "idx_%u.t_" UINT64_FORMAT, RelationGetRelid(index), chdb_meta_generation(index)
+    );
 }
 
 static ChdbColumnKind
@@ -130,9 +140,7 @@ chdb_search_create_sql(Relation index) {
 
     initStringInfo(&buf);
     appendStringInfo(
-        &buf,
-        "CREATE TABLE %s (ctid UInt64, xmin UInt32",
-        chdb_search_table_name(RelationGetRelid(index))
+        &buf, "CREATE TABLE %s (ctid UInt64, xmin UInt32", chdb_search_table_name(index)
     );
     for (int i = 0; i < index->rd_att->natts; i++) {
         appendStringInfo(&buf, ", %s %s", cols[i].name, cols[i].type);
@@ -196,17 +204,15 @@ chdb_search_run(Oid indexoid, const char* sql) {
 }
 
 /*
- * Creates the store for a fresh index. A rebuild (REINDEX, TRUNCATE) comes
- * through here too, so any table left from before is dropped first.
+ * Creates the table of the index's current generation. A rebuild comes
+ * through here too and leaves the previous generation's table alone, for
+ * the transaction may still roll back to it.
  */
 void
 chdb_search_create_store(Relation index) {
     Oid oid      = RelationGetRelid(index);
-    char* tbl    = chdb_search_table_name(oid);
     char* create = chdb_search_create_sql(index); /* validates the columns first */
-    char* db     = psprintf("idx_%u", oid);
 
-    chdb_search_run(oid, psprintf("CREATE DATABASE IF NOT EXISTS %s", db));
-    chdb_search_run(oid, psprintf("DROP TABLE IF EXISTS %s", tbl));
+    chdb_search_run(oid, psprintf("CREATE DATABASE IF NOT EXISTS idx_%u", oid));
     chdb_search_run(oid, create);
 }

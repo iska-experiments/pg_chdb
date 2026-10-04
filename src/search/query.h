@@ -37,7 +37,7 @@
 /*
  * Builds
  *
- *   SELECT ctid[, <distance> AS _distance] FROM idx_<oid>.t
+ *   SELECT ctid[, <distance> AS _distance] FROM idx_<oid>.t_<generation>
  *   [WHERE <keys>] [ORDER BY _distance] [LIMIT n]
  *
  * from the scan keys and order-by keys an index scan receives. Several

@@ -18,23 +18,33 @@ INSERT INTO prod VALUES
     (5, NULL, NULL, NULL);
 COMMIT;
 
--- The index's ClickHouse table, read through the worker. ctid is the heap TID
--- packed as (block << 16) | offset; a NULL array is stored empty.
+-- The index's ClickHouse table, idx_<oid>.t_<generation>, read through the
+-- worker. ctid is the heap TID packed as (block << 16) | offset; a NULL array
+-- is stored empty.
 SELECT 'prod_idx'::regclass::oid AS idx \gset
-CREATE FUNCTION pg_temp.store(oid)
+SELECT chdb_search_store_table('prod_idx') AS tbl \gset
+SELECT :'tbl' ~ ('^idx_' || :idx || '\.t_\d+$') AS named_by_generation;
+CREATE FUNCTION pg_temp.store(text)
 RETURNS TABLE (ctid bigint, body text, tags text[], price numeric)
 LANGUAGE sql AS $$
     SELECT * FROM chdb_search_query(format(
-        'SELECT toInt64(ctid), body, tags, price FROM idx_%s.t ORDER BY ctid', $1
+        'SELECT toInt64(ctid), body, tags, price FROM %s ORDER BY ctid', $1
     )) AS (ctid bigint, body text, tags text[], price numeric)
 $$;
-SELECT * FROM pg_temp.store(:idx) ORDER BY ctid;
+CREATE FUNCTION pg_temp.tables(oid)
+RETURNS bigint
+LANGUAGE sql AS $$
+    SELECT n FROM chdb_search_query(format(
+        'SELECT count() FROM system.tables WHERE database = ''idx_%s''', $1
+    )) AS (n bigint)
+$$;
+SELECT * FROM pg_temp.store(:'tbl') ORDER BY ctid;
 
 -- Every heap row's TID packs to the store row holding its values.
 SELECT p.id, p.ctid, s.ctid AS packed,
        (s.body, s.price) IS NOT DISTINCT FROM (p.body, p.price) AS same
   FROM prod p
-  LEFT JOIN pg_temp.store(:idx) s
+  LEFT JOIN pg_temp.store(:'tbl') s
     ON s.ctid = (p.ctid::text::point)[0]::bigint * 65536 + (p.ctid::text::point)[1]::bigint
  ORDER BY p.id;
 
@@ -89,7 +99,7 @@ SELECT id FROM prod WHERE body @@@ E'shoes\\'' OR 1 = 1 OR ''' ORDER BY id;
 
 -- The answers come from the store: a row deleted there behind Postgres's back
 -- is no longer found through the index, though the heap still has it.
-SELECT chdb_search_exec(format('DELETE FROM idx_%s.t WHERE ctid = 3', :idx));
+SELECT chdb_search_exec(format('DELETE FROM %s WHERE ctid = 3', :'tbl'));
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 SET enable_seqscan = on;
 SET enable_indexscan = off;
@@ -97,9 +107,10 @@ SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 RESET enable_indexscan;
 SET enable_seqscan = off;
 -- A search ClickHouse cannot run raises, rather than finding nothing.
-SELECT chdb_search_exec(format('DROP TABLE idx_%s.t', :idx));
+SELECT chdb_search_exec(format('DROP TABLE %s', :'tbl'));
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 REINDEX INDEX prod_idx;
+SELECT chdb_search_store_table('prod_idx') AS tbl \gset
 SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 
 ----------------------------------------------------------------------------
@@ -110,7 +121,7 @@ UPDATE prod SET body = 'Running sandals' WHERE id = 1;
 SELECT id, body FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
 SELECT id, body FROM prod WHERE body @@@ 'sandals' ORDER BY id;
 SELECT id, body FROM prod WHERE body @@@ 'running' ORDER BY id;
-SELECT count(*) FROM pg_temp.store(:idx);
+SELECT count(*) FROM pg_temp.store(:'tbl');
 
 -- Rows reach the store at COMMIT, so the index does not find a transaction's
 -- own inserts before then; a rolled-back insert never reaches it.
@@ -119,24 +130,33 @@ INSERT INTO prod VALUES (6, 'rolled back shoes', '{gone}', 1);
 SELECT id FROM prod WHERE body @@@ 'rolled' ORDER BY id;
 ROLLBACK;
 SELECT id FROM prod WHERE body @@@ 'rolled' ORDER BY id;
-SELECT count(*) FROM pg_temp.store(:idx) WHERE body LIKE 'rolled%';
+SELECT count(*) FROM pg_temp.store(:'tbl') WHERE body LIKE 'rolled%';
 
 DELETE FROM prod WHERE id = 2;
 SELECT id FROM prod WHERE body @@@ 'boots' ORDER BY id;
-SELECT ctid, body FROM pg_temp.store(:idx) WHERE body IN ('Walking boots', 'Running shoes for runners') ORDER BY ctid;
+SELECT ctid, body FROM pg_temp.store(:'tbl') WHERE body IN ('Walking boots', 'Running shoes for runners') ORDER BY ctid;
 
 -- VACUUM removes the dead versions from the store, and merges its parts once
 -- enough of it is dead.
 SET client_min_messages = debug1;
 VACUUM prod;
 SET client_min_messages = warning;
-SELECT * FROM pg_temp.store(:idx) ORDER BY ctid;
+SELECT * FROM pg_temp.store(:'tbl') ORDER BY ctid;
 SELECT id FROM prod WHERE body @@? 'running boots sandals' ORDER BY id;
 
--- REINDEX rebuilds the store from the live rows.
+-- REINDEX rebuilds the store from the live rows into a new generation. The
+-- old table stays until VACUUM sweeps it: the transaction could have rolled
+-- back to it.
 REINDEX INDEX prod_idx;
-SELECT * FROM pg_temp.store(:idx) ORDER BY ctid;
+SELECT chdb_search_store_table('prod_idx') AS tbl2 \gset
+SELECT :'tbl2' <> :'tbl' AS new_generation, pg_temp.tables(:idx);
+SELECT * FROM pg_temp.store(:'tbl2') ORDER BY ctid;
 SELECT id FROM prod WHERE body @@? 'running line' ORDER BY id;
+SET client_min_messages = debug1;
+VACUUM prod;
+SET client_min_messages = warning;
+SELECT pg_temp.tables(:idx);
+SELECT count(*) FROM pg_temp.store(:'tbl2');
 
 -- The chdb extension's own functions still work in the same backend.
 SELECT * FROM chdb_query('SELECT 42') AS (answer int);
