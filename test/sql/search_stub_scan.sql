@@ -1,0 +1,58 @@
+-- Scans answered by the stub worker client (make CHDB_SEARCH_STUB=1), which
+-- returns the ctids chdb_search_stub.ctids names: what the access method does
+-- with the rows a search returns, seen without a worker. A ctid is packed as
+-- (block << 16) | offset, so (0,1) is 1 and (1,1) is 65537. Runs only with
+-- the stub (see the Makefile); search_e2e covers the worker.
+\set VERBOSITY terse
+CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
+SET chdb_search.mask_oids = on;
+
+CREATE TABLE docs (id int PRIMARY KEY, body text, loc point);
+INSERT INTO docs VALUES (1, 'Running shoes', '(1,1)'), (2, 'Walking boots', '(2,2)'), (3, 'Trail shoes', '(3,3)');
+CREATE INDEX docs_idx ON docs USING chdb (body);
+SET enable_seqscan = off;
+
+----------------------------------------------------------------------------
+-- The rows a search returns are fetched from the heap by ctid
+----------------------------------------------------------------------------
+SET chdb_search_stub.ctids = '1,2';
+SELECT id FROM docs WHERE body @@@ 'x' ORDER BY id;
+-- The heap fetch decides visibility: a deleted row's ctid finds nothing.
+DELETE FROM docs WHERE id = 2;
+SELECT id FROM docs WHERE body @@@ 'x';
+-- An offset past the page's line pointers is skipped by the heap fetch.
+SET chdb_search_stub.ctids = '1,2,200';
+SELECT id FROM docs WHERE body @@@ 'x';
+-- No rows at all, as the stub answers by default.
+RESET chdb_search_stub.ctids;
+SELECT id FROM docs WHERE body @@@ 'x';
+
+----------------------------------------------------------------------------
+-- Answers a scan cannot read raise
+----------------------------------------------------------------------------
+SET chdb_search_stub.ctids = 'garbage';
+SELECT id FROM docs WHERE body @@@ 'x';
+SET chdb_search_stub.ctids = 'one,two';
+SELECT id FROM docs WHERE body @@@ 'x';
+RESET chdb_search_stub.ctids;
+-- A worker lost mid-answer: the stream is closed and the error raised.
+SET chdb_search_stub.ctids = '1';
+SET chdb_search_stub.fail = on;
+SELECT id FROM docs WHERE body @@@ 'x';
+RESET chdb_search_stub.fail;
+SELECT id FROM docs WHERE body @@@ 'x';
+
+----------------------------------------------------------------------------
+-- An ORDER BY scan returns the rows in the order the store gives them
+----------------------------------------------------------------------------
+ALTER OPERATOR FAMILY columnar_ops USING chdb ADD OPERATOR 1 <-> (point, point) FOR ORDER BY float_ops;
+CREATE INDEX docs_loc ON docs USING chdb (loc);
+SET chdb_search_stub.ctids = '3,1';
+SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT 2;
+RESET chdb_search_stub.ctids;
+DROP INDEX docs_loc;
+ALTER OPERATOR FAMILY columnar_ops USING chdb DROP OPERATOR 1 (point, point);
+
+DROP TABLE docs;
+DROP EXTENSION chdb_search;

@@ -37,20 +37,7 @@ _PG_init(void) {
         return;
     }
 
-    DefineCustomIntVariable(
-        "chdb_search.worker_timeout",
-        "Seconds to wait for the chdb_search worker to start.",
-        NULL,
-        &chdb_search_worker_timeout,
-        30,
-        1,
-        3600,
-        PGC_USERSET,
-        GUC_UNIT_S,
-        NULL,
-        NULL,
-        NULL
-    );
+    chdb_search_client_init();
     chdb_search_am_init();
 
     /*
