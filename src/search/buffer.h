@@ -54,5 +54,8 @@ chdb_search_flush_pending(Pending* p);
 /* Drops the staging table now rather than at abort. */
 extern void
 chdb_search_drop_staging(Pending* p);
+/* The same, warning rather than failing: for a commit that goes on without it. */
+extern void
+chdb_search_abandon_staging(Pending* p);
 
 #endif /* CHDB_SEARCH_BUFFER_H */
