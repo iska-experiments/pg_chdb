@@ -19,6 +19,8 @@
 #include "utils/lsyscache.h"
 #include "utils/pg_lsn.h"
 #include "utils/rel.h"
+#include "utils/timestamp.h"
+#include "utils/tuplestore.h"
 
 /* Type mapping declarations; native.c is the TU carrying the implementation. */
 #include "pg-clickhouse.h"
@@ -26,6 +28,7 @@
 #include "../native.h"
 #include "../srf.h"
 #include "client.h"
+#include "pagestore/pagestore.h"
 #include "search.h"
 #include "sweep.h"
 
@@ -118,6 +121,17 @@ chdb_search_debug_store_table(PG_FUNCTION_ARGS) {
     PG_RETURN_TEXT_P(cstring_to_text(table));
 }
 
+static void
+must_be_index(Oid indexoid) {
+    if (!chdb_search_is_index(indexoid)) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_WRONG_OBJECT_TYPE),
+            errmsg("\"%s\" is not a chdb index", get_rel_name(indexoid))
+        );
+    }
+}
+
 /*
  * The metapage of a chdb index: the magic, version, generation and WAL
  * position of the last flush (meta.c), as a row of the function's result type.
@@ -131,13 +145,7 @@ chdb_search_debug_metapage(PG_FUNCTION_ARGS) {
     Datum values[4];
     bool nulls[4] = { false, false, false, false };
 
-    if (!chdb_search_is_index(indexoid)) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_WRONG_OBJECT_TYPE),
-            errmsg("\"%s\" is not a chdb index", get_rel_name(indexoid))
-        );
-    }
+    must_be_index(indexoid);
     if (get_call_result_type(fcinfo, NULL, &desc) != TYPEFUNC_COMPOSITE) {
         elog(ERROR, "chdb_search: the metapage function must return a row");
     }
@@ -152,6 +160,39 @@ chdb_search_debug_metapage(PG_FUNCTION_ARGS) {
     values[3] = LSNGetDatum((XLogRecPtr)meta.flushed_lsn);
 
     PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(desc, values, nulls)));
+}
+
+/* One blob of the store, as a row of the function's result type. */
+static void
+blob_row(void* ud, const char* key, uint64 size, int64 mtime) {
+    ReturnSetInfo* rsinfo = ud;
+    Datum values[3]       = {
+        CStringGetTextDatum(key),
+        Int64GetDatum((int64)size),
+        TimestampTzGetDatum(time_t_to_timestamptz((pg_time_t)mtime)),
+    };
+    bool nulls[3] = { false, false, false };
+
+    tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+}
+
+/*
+ * The blobs of a chdb index's storage, as the worker holds them for the
+ * engine: the key libchdb chose, the size, and when the write committed.
+ * Read from the blob store directly, not through the worker.
+ */
+PG_FUNCTION_INFO_V1(chdb_search_debug_blobs);
+Datum
+chdb_search_debug_blobs(PG_FUNCTION_ARGS) {
+    Oid indexoid = PG_GETARG_OID(0);
+
+    must_be_index(indexoid);
+    InitMaterializedSRF(fcinfo, 0);
+    chdb_pagestore_list(
+        psprintf(CHDB_STORE_STORAGE_FMT, indexoid), blob_row, fcinfo->resultinfo
+    );
+
+    return (Datum)0;
 }
 
 /* The pid of the worker's engine process, or NULL when none runs yet. */

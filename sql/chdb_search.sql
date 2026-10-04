@@ -51,6 +51,14 @@ CREATE FUNCTION chdb_search_metapage(
 AS 'MODULE_PATHNAME', 'chdb_search_debug_metapage'
 LANGUAGE C STRICT;
 
+-- The blobs of a chdb index's storage, as the worker keeps them for the
+-- engine: the key libchdb chose, the size, and when the write committed.
+CREATE FUNCTION chdb_search_blobs(
+    regclass, OUT key text, OUT size bigint, OUT mtime timestamptz
+) RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'chdb_search_debug_blobs'
+LANGUAGE C STRICT;
+
 -- The process that runs libchdb for this database's worker; NULL until a
 -- request has started it.
 CREATE FUNCTION chdb_search_engine_pid() RETURNS INTEGER
@@ -68,6 +76,7 @@ REVOKE EXECUTE ON FUNCTION chdb_search_query(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_copy_to(regclass, text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_store_table(regclass) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_metapage(regclass) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION chdb_search_blobs(regclass) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_engine_pid() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_debug_kill_engine(integer) FROM PUBLIC;
 
