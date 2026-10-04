@@ -92,8 +92,4 @@
  * must fall back to a non-index plan or raise the setting.
  */
 
-/* Defined in settings.c, called from _PG_init. */
-void
-chdb_vector_define_gucs(void);
-
 #endif

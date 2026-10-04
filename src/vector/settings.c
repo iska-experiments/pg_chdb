@@ -1,15 +1,20 @@
 /*
- * The chdb_vector.* GUCs and the ClickHouse SETTINGS fragment built from them.
+ * Module entry point for chdb_vector: the chdb_vector.* GUCs and the
+ * ClickHouse SETTINGS fragment built from them.
  */
 
 #include "postgres.h"
 
 #include "fmgr.h"
 #include "lib/stringinfo.h"
+#include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 
+#include "../module.h"
 #include "chdb_vector.h"
+
+CHDB_MODULE_MAGIC("chdb_vector");
 
 enum { FILTER_AUTO, FILTER_POSTFILTER, FILTER_PREFILTER };
 
@@ -25,7 +30,13 @@ static bool vector_rescoring = false;
 static int vector_filter     = FILTER_AUTO;
 
 void
-chdb_vector_define_gucs(void) {
+_PG_init(void);
+void
+_PG_init(void) {
+    if (IsBinaryUpgrade) {
+        return;
+    }
+
     DefineCustomIntVariable(
         CHDB_VECTOR_GUC_CANDIDATES,
         "Candidates examined per HNSW search.",
