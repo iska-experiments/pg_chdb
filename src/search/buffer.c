@@ -12,14 +12,12 @@
  * buffer keeps a mark per subtransaction level that has inserted, and
  * marks.c rewinds or merges the level's rows when the savepoint ends.
  *
- * Large transactions. Past chdb_search.flush_threshold a top-level
- * transaction flushes its buffer into a staging table <table>_tx_<xid>
- * instead, which pre-commit copies into the table and drops, and the abort
- * callback here drops; staging.c does the sending. Inside a savepoint nothing is flushed
- * early, because rows already sent could not be taken back, so the buffer
- * grows until COMMIT: it warns once past the threshold and fails past
- * chdb_search.max_buffer, since an error inside the savepoint can be caught
- * and an OOM kill cannot.
+ * Staging. Past chdb_search.flush_threshold a transaction flushes its
+ * buffer into a staging table <table>_tx_<xid> instead, which pre-commit
+ * copies into the table and drops, and the abort callback here drops;
+ * staging.c does the sending. Rows staged inside a savepoint cannot be
+ * rewound, so marks.c remembers their (sub)transaction ids and a rollback
+ * excludes them from what the staging table contributes.
  *
  * Rebuilds. A REINDEX or TRUNCATE in the same transaction indexes the
  * transaction's own tuples in its build scan and names a new table, so the
@@ -90,9 +88,10 @@ poisoned_error(Pending* p) {
     ereport(
         ERROR,
         errcode(ERRCODE_INTERNAL_ERROR),
-        errmsg(
-            "the rows buffered for chdb index %u were lost in a savepoint rollback",
-            p->indexoid
+        errmsg("the rows buffered for chdb index %u were lost", p->indexoid),
+        errdetail(
+            "A savepoint rollback could not rewind them, or a flush failed after "
+            "taking them from the buffer."
         ),
         errhint("Roll the transaction back.")
     );
@@ -138,53 +137,17 @@ chdb_search_aminsert(
     bool indexUnchanged,
     struct IndexInfo* indexInfo
 ) {
-    Pending* p             = find_pending(index);
-    SubTransactionId subid = GetCurrentSubTransactionId();
-    bool nested            = GetCurrentTransactionNestLevel() > 1;
-    MemoryContext old      = MemoryContextSwitchTo(TopTransactionContext);
+    Pending* p = find_pending(index);
 
     if (p->poisoned) {
         poisoned_error(p);
     }
-    if (nested) {
-        chdb_search_mark_level(p, subid);
+    if (GetCurrentTransactionNestLevel() > 1) {
+        chdb_search_mark_level(p, GetCurrentSubTransactionId());
     }
-    MemoryContextSwitchTo(old);
-
     chdb_rowwriter_append(p->rw, ht_ctid, GetCurrentTransactionId(), values, isnull);
-
-    size_t bytes = chdb_rowwriter_bytes(p->rw);
-
-    if (!nested && bytes >= (size_t)chdb_search_flush_threshold_kb * 1024) {
+    if (chdb_rowwriter_bytes(p->rw) >= (size_t)chdb_search_flush_threshold_kb * 1024) {
         chdb_search_stage_rows(p);
-    } else if (
-        chdb_search_max_buffer_kb && bytes >= (size_t)chdb_search_max_buffer_kb * 1024
-    ) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-            errmsg(
-                "chdb index \"%s\" buffer exceeds chdb_search.max_buffer",
-                RelationGetRelationName(index)
-            ),
-            errhint("Insert outside a savepoint, or raise the setting.")
-        );
-    } else if (
-        nested && !p->warned && bytes >= (size_t)chdb_search_flush_threshold_kb * 1024
-    ) {
-        p->warned = true;
-        ereport(
-            WARNING,
-            errmsg(
-                "chdb index \"%s\" buffers rows inserted inside a savepoint until "
-                "COMMIT",
-                RelationGetRelationName(index)
-            ),
-            errdetail(
-                "The buffer has passed chdb_search.flush_threshold and grows until the "
-                "transaction ends, up to chdb_search.max_buffer."
-            )
-        );
     }
 
     /* The index never reports a uniqueness violation. */
@@ -341,6 +304,9 @@ subxact_callback(
 
         if (p->superseded == InvalidSubTransactionId && !list_member_ptr(revived, p) &&
             revived_for(revived, p->indexoid)) {
+            if (p->staging) {
+                chdb_search_abandon_staging(p);
+            }
             free_pending(p);
             pending = foreach_delete_current(pending, lc);
         }

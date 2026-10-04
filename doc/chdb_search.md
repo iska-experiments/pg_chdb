@@ -359,9 +359,8 @@ SELECT author, count(*), avg(price) FROM docs WHERE body @@@ 'shoes'
 *   **Large transactions.** Past
     [`chdb_search.flush_threshold`](#chdb_searchflush_threshold) a
     transaction flushes early into a staging table that commit merges and
-    abort drops. Rows inserted inside a savepoint cannot be staged, so their
-    buffer grows until commit, up to
-    [`chdb_search.max_buffer`](#chdb_searchmax_buffer).
+    abort drops. Rows staged inside a savepoint cannot be taken back from
+    it, so rolling the savepoint back excludes them from the merge instead.
 *   **Two-phase commit.** `PREPARE TRANSACTION` flushes as `COMMIT` does, so
     the rows of a prepared transaction are in the store before its fate is
     decided: `ROLLBACK PREPARED` leaves them dead in the heap, hidden until
@@ -478,12 +477,6 @@ SET chdb_search.flush_threshold = '256MB';
 Bytes of insert buffer per index above which a transaction stages its rows
 in ClickHouse. Takes the memory units of `postgresql.conf`; at least `64kB`.
 Defaults to `64MB`.
-
-### `chdb_search.max_buffer`
-
-Bytes of insert buffer per index above which an insert fails: a ceiling for
-rows that cannot be staged early, so that a transaction gets an error rather
-than the backend an OOM kill. `0` means no limit. Defaults to `1GB`.
 
 ### `chdb_search.vacuum_optimize_ratio`
 

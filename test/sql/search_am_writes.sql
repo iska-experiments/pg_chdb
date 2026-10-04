@@ -144,30 +144,37 @@ END $$;
 RESET client_min_messages;
 
 ----------------------------------------------------------------------------
--- Inside a savepoint the buffer is not staged early: it warns, then it caps
+-- Inside a savepoint rows are staged too; rolling it back excludes them
 ----------------------------------------------------------------------------
+-- Staged rows cannot be rewound, so the transaction id of a rolled-back
+-- savepoint is excluded from what the staging table contributes at COMMIT;
+-- the rows of enclosing levels that were staged with them stay.
 SET chdb_search.flush_threshold = '64kB';
-SET chdb_search.max_buffer = '128kB';
 SET client_min_messages = debug1;
 BEGIN;
+INSERT INTO docs (id, body) VALUES (999, 'kept');
 SAVEPOINT s;
 INSERT INTO docs (id, body) SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
-INSERT INTO docs (id, body) SELECT 2000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
 ROLLBACK TO s;
+COMMIT;
+\echo -- a released savepoint passes its staged rows to its parent
+BEGIN;
+SAVEPOINT a;
+INSERT INTO docs (id, body) SELECT 2000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+SAVEPOINT b;
+INSERT INTO docs (id, body) SELECT 3000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+RELEASE b;
+ROLLBACK TO a;
+INSERT INTO docs (id, body) VALUES (3999, 'kept');
 COMMIT;
 \echo -- a PL/pgSQL block that completes keeps its rows for COMMIT
 DO $$
 BEGIN
-    INSERT INTO docs (id, body) SELECT 3000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+    INSERT INTO docs (id, body) SELECT 4000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
 EXCEPTION WHEN OTHERS THEN
     NULL;
 END $$;
-\echo -- at the top level the same rows are staged instead
-BEGIN;
-INSERT INTO docs (id, body) SELECT 4000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
-ROLLBACK;
 RESET client_min_messages;
-RESET chdb_search.max_buffer;
 RESET chdb_search.flush_threshold;
 
 ----------------------------------------------------------------------------

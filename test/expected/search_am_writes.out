@@ -188,43 +188,66 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 row
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 ----------------------------------------------------------------------------
--- Inside a savepoint the buffer is not staged early: it warns, then it caps
+-- Inside a savepoint rows are staged too; rolling it back excludes them
 ----------------------------------------------------------------------------
+-- Staged rows cannot be rewound, so the transaction id of a rolled-back
+-- savepoint is excluded from what the staging table contributes at COMMIT;
+-- the rows of enclosing levels that were staged with them stay.
 SET chdb_search.flush_threshold = '64kB';
-SET chdb_search.max_buffer = '128kB';
 SET client_min_messages = debug1;
 BEGIN;
+INSERT INTO docs (id, body) VALUES (999, 'kept');
 SAVEPOINT s;
 INSERT INTO docs (id, body) SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
-WARNING:  chdb index "docs_idx" buffers rows inserted inside a savepoint until COMMIT
-INSERT INTO docs (id, body) SELECT 2000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
-ERROR:  chdb index "docs_idx" buffer exceeds chdb_search.max_buffer
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 51 rows
 ROLLBACK TO s;
 COMMIT;
+DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N WHERE xmin NOT IN (N)
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+\echo -- a released savepoint passes its staged rows to its parent
+-- a released savepoint passes its staged rows to its parent
+BEGIN;
+SAVEPOINT a;
+INSERT INTO docs (id, body) SELECT 2000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
+SAVEPOINT b;
+INSERT INTO docs (id, body) SELECT 3000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
+RELEASE b;
+ROLLBACK TO a;
+INSERT INTO docs (id, body) VALUES (3999, 'kept');
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N WHERE xmin NOT IN (N, N)
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- a PL/pgSQL block that completes keeps its rows for COMMIT
 -- a PL/pgSQL block that completes keeps its rows for COMMIT
 DO $$
 BEGIN
-    INSERT INTO docs (id, body) SELECT 3000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+    INSERT INTO docs (id, body) SELECT 4000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
 EXCEPTION WHEN OTHERS THEN
     NULL;
 END $$;
-WARNING:  chdb index "docs_idx" buffers rows inserted inside a savepoint until COMMIT
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 60 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 60 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
-\echo -- at the top level the same rows are staged instead
--- at the top level the same rows are staged instead
-BEGIN;
-INSERT INTO docs (id, body) SELECT 4000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
-ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 10 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 60 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
-RESET chdb_search.max_buffer;
 RESET chdb_search.flush_threshold;
 ----------------------------------------------------------------------------
 -- Staging: past the threshold a transaction's rows go to <table>_tx_<xid>
@@ -239,7 +262,7 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "tit
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 INSERT INTO docs (id, body) VALUES (11000, 'tail');
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 21 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 21 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
@@ -267,7 +290,7 @@ SAVEPOINT s;
 INSERT INTO docs (id, body) VALUES (14000, 'sp');
 ROLLBACK TO s;
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 20 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 20 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)

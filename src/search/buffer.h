@@ -3,9 +3,9 @@
 
 /*
  * The per-transaction insert buffer behind aminsert, shared by buffer.c,
- * which fills it and runs the transaction callbacks, marks.c, which rewinds
- * it for savepoints, and staging.c, which sends its rows to the worker. See
- * buffer.c for how it works.
+ * which fills it and runs the transaction callbacks, marks.c, which keeps
+ * its savepoint bookkeeping, and staging.c, which sends its rows to the
+ * worker. See buffer.c for how it works.
  */
 
 #include "postgres.h"
@@ -23,10 +23,12 @@ typedef struct Pending {
     char* collist; /* (ctid, xmin, ...) for the INSERT */
     char* staging; /* <table>_tx_<xid>, set once rows have been staged */
     List* marks;   /* of Mark*, innermost last; private to marks.c */
+    List* staged;  /* of Staged*, levels with rows staged; private to marks.c */
+    /* Staged (sub)transaction ids since rolled back, as ints; see marks.c. */
+    List* excluded;
     /* The subtransaction whose rebuild set these rows aside, else Invalid. */
     SubTransactionId superseded;
-    bool poisoned; /* a savepoint rewind failed: rw is gone, COMMIT must error */
-    bool warned;   /* of growing past flush_threshold inside a savepoint */
+    bool poisoned; /* rows are lost: the buffer refuses to go on, COMMIT must error */
 } Pending;
 
 /* ---- marks.c ---- */
@@ -43,9 +45,15 @@ chdb_search_settle_marks(
     SubTransactionId mySubid,
     SubTransactionId parentSubid
 );
+/* The buffer's rows went to the staging table: the marks become staged levels. */
+extern void
+chdb_search_marks_shipped(Pending* p);
+/* `1, 2`, the excluded ids for an `xmin NOT IN (...)`, or NULL when none. */
+extern char*
+chdb_search_excluded_xids(Pending* p);
 
 /* ---- staging.c ---- */
-/* Moves a top-level transaction's rows into its staging table. */
+/* Moves the transaction's buffered rows for the index into its staging table. */
 extern void
 chdb_search_stage_rows(Pending* p);
 /* Sends everything buffered and staged into the index's table, at commit. */
