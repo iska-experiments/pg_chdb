@@ -328,9 +328,8 @@ source_error(void* ud) {
     return ((nativeSource*)ud)->error;
 }
 
-/* Creates block reader for helper output in current memory context. */
-static pgch_block_source
-source_for(chdbChannel* helper) {
+pgch_block_source
+chdb_native_source(chdbChannel* helper) {
     nativeSource* s = palloc0(sizeof(*s));
     chc_err err     = {};
 
@@ -546,7 +545,7 @@ chdb_native_describe(chdbChannel* helper) {
         CurrentMemoryContext, "chdb describe", ALLOCSET_SMALL_SIZES
     );
     MemoryContext oldcxt  = MemoryContextSwitchTo(streamcxt);
-    pgch_block_source src = source_for(helper);
+    pgch_block_source src = chdb_native_source(helper);
     List* columns         = NIL;
     pgch_reader reader;
 
@@ -624,7 +623,7 @@ chdb_copy_receive(
         AllocSetContextCreate(CurrentMemoryContext, "chdb row", ALLOCSET_DEFAULT_SIZES);
     MemoryContext oldcxt = MemoryContextSwitchTo(streamcxt);
 
-    pgch_block_source src = source_for(helper);
+    pgch_block_source src = chdb_native_source(helper);
     size_t ncols          = list_length(attnums);
     int* dest             = palloc(ncols * sizeof(int));
     size_t n              = 0;
@@ -923,7 +922,7 @@ chdb_select_receive(
     Datum* values = palloc(tupdesc->natts * sizeof(Datum));
     bool* nulls   = palloc0(tupdesc->natts * sizeof(bool));
 
-    pgch_block_source src = source_for(helper);
+    pgch_block_source src = chdb_native_source(helper);
     pgch_reader reader;
     pgch_reader_init(&reader, &src);
     if (reader.error) {
