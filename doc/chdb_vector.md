@@ -23,7 +23,14 @@ chdb_vector 0.1
 method. A `vector(n)` column becomes an `Array(Float32)` column in ClickHouse
 with a `vector_similarity('hnsw', <function>, n)` skip index. The column must
 have a dimension: `vector` without a typmod cannot be indexed. Values are
-encoded through pgvector's `vector::real[]` cast.
+encoded through pgvector's `vector::real[]` cast; a NULL vector cannot be
+stored, as ClickHouse wants every array at the index's dimension.
+
+An index scan ordered by a distance operator sends one query in the shape
+ClickHouse's HNSW index serves, `ORDER BY <function>(col, q) LIMIT n`, with
+`n` the server's `max_limit_for_vector_search_queries` (1000), the most the
+index returns: as a pgvector scan returns at most `hnsw.ef_search` rows, a
+`LIMIT` above that gets those rows only. The settings below go with it.
 
 ## Operator classes
 
@@ -63,11 +70,12 @@ returns, `1 - dot`, which the descending sort inverts.
 *   ClickHouse builds an HNSW graph per data part, so a search returns the
     best candidates of each part and merges them; recall depends on the
     candidate list size and rescoring, and merges rebuild graphs.
-*   ClickHouse rejects vector search above
-    `max_limit_for_vector_search_queries` (default 100); larger `LIMIT`s
-    cannot use the index.
+*   An index scan returns at most `max_limit_for_vector_search_queries`
+    rows (default 1000), the most ClickHouse's index serves; a larger
+    `LIMIT` wants a sequential scan.
 *   `dotProduct` is a similarity, so `<#>` orders DESC by `dotProduct`;
     the returned distance is its negation, as in pgvector.
+*   A vector column indexed by `chdb` cannot hold NULL.
 *   Only `vector` is supported, not `halfvec`, `bit` or `sparsevec`.
 
   [pgvector]: https://github.com/pgvector/pgvector

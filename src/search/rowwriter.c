@@ -44,12 +44,27 @@ chdb_search_u64_to_tid(uint64 v, ItemPointer tid) {
 /*
  * Date32 and DateTime64 have no infinities: the encoder wraps an infinite
  * date into some finite one and lets a -infinity timestamp through, so a
- * row holding one would be found by the wrong comparisons for good.
+ * row holding one would be found by the wrong comparisons for good. And the
+ * HNSW skip index wants every array at the column's dimension, so a vector
+ * column has no NULL to store: refused here, with the row, rather than by
+ * ClickHouse at the commit that flushes it.
  */
 static void
-check_finite(Datum value, Oid typid) {
+check_storable(Datum value, bool isnull, const ChdbColumn* col) {
+    Oid typid   = col->typid;
     bool finite = true;
 
+    if (isnull) {
+        if (col->kind == CHDB_COL_VECTOR) {
+            ereport(
+                ERROR,
+                errcode(ERRCODE_NOT_NULL_VIOLATION),
+                errmsg("a NULL vector cannot be stored in a chdb index"),
+                errhint("Declare the column NOT NULL.")
+            );
+        }
+        return;
+    }
     if (typid == DATEOID) {
         finite = !DATE_NOT_FINITE(DatumGetDateADT(value));
     } else if (typid == TIMESTAMPOID || typid == TIMESTAMPTZOID) {
@@ -111,9 +126,7 @@ chdb_rowwriter_append(
     );
     pgch_append_datum(rw->w, 1, Int32GetDatum((int32)xmin), INT4OID, false);
     for (int i = 0; i < rw->natts; i++) {
-        if (!isnull[i]) {
-            check_finite(values[i], rw->cols[i].typid);
-        }
+        check_storable(values[i], isnull[i], &rw->cols[i]);
         pgch_append_datum(rw->w, i + 2, values[i], rw->cols[i].typid, isnull[i]);
     }
     MemoryContextSwitchTo(old);

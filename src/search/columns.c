@@ -1,8 +1,8 @@
 /*
  * The columns of a chdb index as its ClickHouse table has them: the name,
- * always quoted, the type from pgch_ch_type_for, and the kind, which the
- * column's operator class decides and which says whether the column gets a
- * text skip index. The checks a column must pass live here too; ddl.c
+ * always quoted, the type from pgch_ch_type_for (or vector.c's), and the
+ * kind, which the column's operator class decides and which says what skip
+ * index the column gets. The checks a column must pass live here too; ddl.c
  * builds the statements from the result.
  */
 
@@ -23,6 +23,7 @@
 #include "pg-clickhouse.h"
 
 #include "search.h"
+#include "vector.h"
 
 /*
  * `"<name>"`, whatever the name: pgch_quote_ch_ident leaves a plain word
@@ -71,6 +72,9 @@ chdb_search_proc_kind(Oid proc) {
 
 static ChdbColumnKind
 kind_of(Relation index, int i) {
+    if (chdb_search_is_vector(index, i + 1)) {
+        return CHDB_COL_VECTOR;
+    }
     return chdb_search_proc_kind(index_getprocid(index, i + 1, 1));
 }
 
@@ -180,7 +184,10 @@ chdb_search_columns(Relation index) {
             check_collation(index, i);
         }
         cols[i].typid = a->atttypid;
-        cols[i].type = pgch_ch_type_for(a->atttypid, a->atttypmod, a->attnotnull, NULL);
+        cols[i].type =
+            cols[i].kind == CHDB_COL_VECTOR
+                ? chdb_search_vector_type(index, i + 1)
+                : pgch_ch_type_for(a->atttypid, a->atttypmod, a->attnotnull, NULL);
     }
     return cols;
 }

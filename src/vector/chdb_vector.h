@@ -1,21 +1,24 @@
 /*
  * The contract between the chdb_vector extension and the chdb access method
  * (and the CustomScan). The AM reads it from the catalogs and calls the
- * support function; it never links against chdb_vector.
+ * support functions; it never links against chdb_vector.
  *
  * Each pgvector `vector` column indexed by a chdb opclass becomes:
  *
- *   - a column `<name> Array(Float32)` in the ClickHouse table. The AM
- *     encodes it into Native by casting through `vector::real[]` (pgvector's
- *     implicit-in-assignment cast, vector_to_float4), then writing each
- *     element as Float32.
- *   - a skip index (see CHDB_VECTOR_INDEX_DDL).
+ *   - a column `<name> Array(Float32)` in the ClickHouse table
+ *     (CHDB_VECTOR_CH_TYPE). The encoder casts each vector through
+ *     `vector::real[]` (pgvector's implicit cast, vector_to_float4) and
+ *     writes the elements as Float32. ClickHouse wants every array at the
+ *     index's dimension, so a NULL vector cannot be stored: the AM refuses
+ *     the row.
+ *   - a skip index (see CHDB_VECTOR_INDEX_TYPE).
  *
  * An opclass is recognized as a vector opclass when it has support function
- * CHDB_VECTOR_PROC_DISTANCE_NAME registered. The AM calls it with the
- * strategy number of the opclass's single ORDER BY operator (found in
- * pg_amop with amoppurpose = 'o') through index_getprocinfo and
- * FunctionCall1Coll(Int16GetDatum(strategy)), getting back text.
+ * CHDB_VECTOR_PROC_DISTANCE_NAME registered. The AM calls it with a strategy
+ * number through index_getprocinfo and FunctionCall1Coll(Int16GetDatum(
+ * strategy)), getting back text: with the strategy of the class's ORDER BY
+ * operator (pg_amop, amoppurpose = 'o') for the index DDL, with the scan's
+ * order-by strategy for a search.
  *
  * Per-index dims come from the column typmod (pgvector stores the dimension
  * count there); a column with typmod -1 cannot be indexed.
@@ -43,34 +46,36 @@
 #define CHDB_VECTOR_FN_COSINE "cosineDistance"
 #define CHDB_VECTOR_FN_IP "dotProduct"
 
-/*
- * Skip index DDL fragment; the arguments are the column name, the function
- * name from the support function, and the typmod dimension count.
- *
- *   INDEX <col>_idx <col> TYPE vector_similarity('hnsw', '<fn>', <dims>)
- *
- * Example: INDEX embedding_idx embedding TYPE
- *          vector_similarity('hnsw', 'cosineDistance', 1536)
- */
-#define CHDB_VECTOR_INDEX_DDL "INDEX %s_idx %s TYPE vector_similarity('hnsw', '%s', %d)"
+/* The column's ClickHouse type. */
+#define CHDB_VECTOR_CH_TYPE "Array(Float32)"
 
 /*
- * ORDER BY fragment, one per strategy. The query vector is a literal
- * `[f, f, ...]` array of Float32 (cast with CAST(... AS Array(Float32))).
- * The ClickHouse index is used only for `ORDER BY <fn>(col, q) ASC LIMIT k`
- * with the same function the index was built with, so dotProduct, which is
- * a similarity, must be inverted to match pgvector's `<#>` (negative inner
- * product, ascending):
+ * The skip index TYPE; the arguments are the function name from the support
+ * function and the typmod dimension count. The AM names the index after the
+ * column, quoted as it quotes every identifier:
  *
- *   L2     ORDER BY L2Distance(col, q) ASC
- *   cosine ORDER BY cosineDistance(col, q) ASC
- *   ip     ORDER BY dotProduct(col, q) DESC   -- NOT -dotProduct(col, q) ASC,
- *                                                which the index cannot use
- *
- * The distance returned to Postgres for `<#>` is -dotProduct.
+ *   INDEX "<col>_idx" "<col>" TYPE vector_similarity('hnsw', '<fn>', <dims>)
  */
-#define CHDB_VECTOR_ORDER_ASC "ASC"
-#define CHDB_VECTOR_ORDER_DESC "DESC"
+#define CHDB_VECTOR_INDEX_TYPE "vector_similarity('hnsw', '%s', %d)"
+
+/*
+ * A search is one SELECT in the shape ClickHouse's vector search
+ * optimization recognizes: the distance function itself as the one sort
+ * key, ascending for L2Distance and cosineDistance, descending for
+ * dotProduct, over a LIMIT no larger than max_limit_for_vector_search_queries,
+ * which the AM reads from the session with getSetting(), as an index scan
+ * has no LIMIT of its own. The query vector is a literal `[f, f, ...]`.
+ *
+ *   SELECT ctid, cosineDistance(col, q) AS _distance FROM t
+ *     ORDER BY cosineDistance(col, q)
+ *     LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS ...
+ *
+ * dotProduct is a similarity, so pgvector's `<#>` (the negative inner
+ * product, ascending) sorts it descending, and the distance Postgres gets
+ * back is -dotProduct(col, q); `-dotProduct(col, q) ASC` the index cannot
+ * use.
+ */
+#define CHDB_VECTOR_SETTING_MAX_LIMIT "max_limit_for_vector_search_queries"
 
 /*
  * ClickHouse query settings; chdb.vector_query_settings(strategy) returns
@@ -92,11 +97,5 @@
 #define CHDB_VECTOR_GUC_CANDIDATES "chdb_vector.hnsw_candidate_list_size"
 #define CHDB_VECTOR_GUC_RESCORING "chdb_vector.rescoring"
 #define CHDB_VECTOR_GUC_FILTER "chdb_vector.filter_strategy"
-
-/*
- * ClickHouse refuses vector search for LIMIT above
- * max_limit_for_vector_search_queries (default 100); the AM or CustomScan
- * must fall back to a non-index plan or raise the setting.
- */
 
 #endif

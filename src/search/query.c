@@ -10,6 +10,7 @@
 
 #include "query.h"
 #include "search.h"
+#include "vector.h"
 
 /*
  * ClickHouse's hasToken takes no array. The array tokenizer makes the needle
@@ -106,36 +107,39 @@ chdb_search_append_quals(
     return true;
 }
 
+/* For the classes of other extensions, numbered as pgvector numbers them. */
+static const char*
+distance_function(StrategyNumber strategy) {
+    switch (strategy) {
+    case CHDB_ORDER_L2:
+        return "L2Distance";
+    case CHDB_ORDER_NEG_INNER_PRODUCT:
+        return "-dotProduct";
+    case CHDB_ORDER_COSINE:
+        return "cosineDistance";
+    case CHDB_ORDER_L1:
+        return "L1Distance";
+    }
+    elog(ERROR, "unknown chdb order-by strategy %d", strategy);
+}
+
 char*
-chdb_search_order_expr(const ChdbColumn* cols, ScanKey orderby) {
+chdb_search_order_expr(Relation index, const ChdbColumn* cols, ScanKey orderby) {
     const ChdbColumn* col = &cols[orderby->sk_attno - 1];
-    const char* fn;
     StringInfoData buf;
     Oid argtype = OidIsValid(orderby->sk_subtype) ? orderby->sk_subtype : col->typid;
-
-    switch (orderby->sk_strategy) {
-    case CHDB_ORDER_L2:
-        fn = "L2Distance";
-        break;
-    case CHDB_ORDER_NEG_INNER_PRODUCT:
-        fn = "-dotProduct";
-        break;
-    case CHDB_ORDER_COSINE:
-        fn = "cosineDistance";
-        break;
-    case CHDB_ORDER_L1:
-        fn = "L1Distance";
-        break;
-    default:
-        elog(ERROR, "unknown chdb order-by strategy %d", orderby->sk_strategy);
-    }
 
     /* The operator is strict: every row gets a NULL distance, none is hidden. */
     if (orderby->sk_flags & SK_ISNULL) {
         return pstrdup("CAST(NULL AS Nullable(Float64))");
     }
+    if (col->kind == CHDB_COL_VECTOR) {
+        return chdb_search_vector_distance(index, col, orderby);
+    }
     initStringInfo(&buf);
-    appendStringInfo(&buf, "%s(%s, ", fn, col->name);
+    appendStringInfo(
+        &buf, "%s(%s, ", distance_function(orderby->sk_strategy), col->name
+    );
     chdb_search_append_vector(&buf, orderby->sk_argument, argtype);
     appendStringInfoChar(&buf, ')');
     return buf.data;
@@ -161,17 +165,26 @@ chdb_search_build_select(
         return NULL;
     }
 
+    /*
+     * One distance operator of a vector column is the search the HNSW index
+     * serves, with the ORDER BY, LIMIT and SETTINGS vector.c renders.
+     */
+    bool knn = norderbys == 1 && !(orderbys->sk_flags & SK_ISNULL) &&
+               cols[orderbys->sk_attno - 1].kind == CHDB_COL_VECTOR;
+
     appendStringInfoString(&buf, "SELECT ctid");
     for (int i = 0; i < norderbys; i++) {
         if (norderbys == 1) {
             appendStringInfo(
-                &buf, ", %s AS _distance", chdb_search_order_expr(cols, &orderbys[i])
+                &buf,
+                ", %s AS _distance",
+                chdb_search_order_expr(index, cols, &orderbys[i])
             );
         } else {
             appendStringInfo(
                 &buf,
                 ", %s AS _distance%d",
-                chdb_search_order_expr(cols, &orderbys[i]),
+                chdb_search_order_expr(index, cols, &orderbys[i]),
                 i + 1
             );
         }
@@ -179,6 +192,12 @@ chdb_search_build_select(
     appendStringInfo(&buf, " FROM %s", chdb_search_table_name(index));
     if (where.len) {
         appendStringInfo(&buf, " WHERE %s", where.data);
+    }
+    if (knn) {
+        chdb_search_vector_order(
+            index, &buf, &cols[orderbys->sk_attno - 1], orderbys, limit
+        );
+        return buf.data;
     }
     if (norderbys) {
         appendStringInfoString(&buf, " ORDER BY ");

@@ -60,13 +60,15 @@ extern int chdb_search_unavailable_index;
 
 /*
  * How an indexed column is stored and searched, chosen by its operator
- * class's options support function (ddl.c). Classes of other extensions are
- * columnar: their operators are still rendered by strategy number.
+ * class's options support function (ddl.c), or by chdb_vector's (vector.c).
+ * Classes of other extensions are columnar: their operators are still
+ * rendered by strategy number.
  */
 typedef enum ChdbColumnKind {
     CHDB_COL_TEXT,       /* text_ops: String with a text() skip index */
     CHDB_COL_TEXT_ARRAY, /* text_array_ops: Array(String), tokenizer = array */
     CHDB_COL_COLUMNAR,   /* columnar_ops: stored and filterable, no skip index */
+    CHDB_COL_VECTOR,     /* chdb_vector's classes: Array(Float32), HNSW skip index */
 } ChdbColumnKind;
 
 /* One indexed column as it appears in the ClickHouse table. */

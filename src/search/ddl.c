@@ -20,11 +20,13 @@
  * fetching the heap tuple.
  *
  * Columns. columns.c names and types the indexed attributes and decides the
- * kind of each (text, text array or plain) from its operator class. Names
- * are always quoted; types come from pgch_ch_type_for, so text is
+ * kind of each (text, text array, vector or plain) from its operator class.
+ * Names are always quoted; types come from pgch_ch_type_for, so text is
  * Nullable(String) and text[] is Array(Nullable(String)); ClickHouse's text
  * index accepts both and NULLs survive. A NULL array is stored as the empty
- * array.
+ * array. A vector column of chdb_vector's classes is Array(Float32) under a
+ * `TYPE vector_similarity('hnsw', <function>, <dimensions>)` index
+ * (vector.c), which a search orders by.
  *
  * Example, for CREATE INDEX ON docs USING chdb (body text_ops
  * (tokenizer = 'ngrams', ngram_size = 3), tags text_array_ops, author columnar_ops):
@@ -56,6 +58,7 @@
 #include "pg-clickhouse.h"
 
 #include "search.h"
+#include "vector.h"
 
 char*
 chdb_search_table_of(Oid indexoid, uint64 generation) {
@@ -105,10 +108,14 @@ chdb_search_create_sql(Relation index) {
 
         appendStringInfo(
             &buf,
-            ", INDEX %s %s TYPE text(%s)",
+            ", INDEX %s %s TYPE %s",
             idxname,
             cols[i].name,
-            chdb_search_skip_index_args(index, i + 1, &cols[i])
+            cols[i].kind == CHDB_COL_VECTOR
+                ? chdb_search_vector_index_type(index, i + 1)
+                : psprintf(
+                      "text(%s)", chdb_search_skip_index_args(index, i + 1, &cols[i])
+                  )
         );
     }
     /*

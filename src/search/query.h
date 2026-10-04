@@ -45,7 +45,9 @@
  * order-bys select _distance1, _distance2 and so on. Keys are ANDed. `limit`
  * is negative for none. Returns NULL when a search key's argument is NULL,
  * as the operators are strict and the scan can return nothing; a NULL
- * order-by argument instead gives every row a NULL distance.
+ * order-by argument instead gives every row a NULL distance. One order-by
+ * on a vector column becomes the search ClickHouse's HNSW index serves,
+ * whose ORDER BY, LIMIT and SETTINGS vector.c renders.
  */
 extern char*
 chdb_search_build_select(
@@ -95,6 +97,6 @@ chdb_search_append_special(
     Oid typid
 );
 extern char*
-chdb_search_order_expr(const struct ChdbColumn* cols, ScanKey orderby);
+chdb_search_order_expr(Relation index, const struct ChdbColumn* cols, ScanKey orderby);
 
 #endif /* CHDB_SEARCH_QUERY_H */
