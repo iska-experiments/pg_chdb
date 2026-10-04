@@ -5,6 +5,7 @@
 
 #include "lib/stringinfo.h"
 
+#include "channel.h"
 #include "setup.h"
 
 /*
@@ -20,13 +21,12 @@
  *
  * Row counts never cross: the Postgres side counts what it scanned or stored.
  */
-typedef struct chdbHelper chdbHelper;
 
 /*
  * Starts the helper on `query`, bound to `nparams` named parameters. The helper
  * dies with the backend.
  */
-extern chdbHelper*
+extern chdbChannel*
 chdb_helper_start(
     chdbHelperContext* ctx,
     const char* query,
@@ -35,20 +35,9 @@ chdb_helper_start(
     size_t nparams
 );
 
-/*
- * Reads up to `len` bytes of Native output into `buf`. Returns number of bytes
- * read, or zero at end of stream. Reports helper failures as errors.
- */
-extern size_t
-chdb_helper_recv(chdbHelper* helper, void* buf, size_t len);
-
-/* Sends one Native block, raising if the helper has gone. */
-extern void
-chdb_helper_write(chdbHelper* helper, const void* p, size_t len);
-
 /* Ends the stream and waits for the helper, raising unless it exited cleanly. */
 extern void
-chdb_helper_finish(chdbHelper* helper);
+chdb_helper_finish(chdbChannel* helper);
 
 /* Appends the setup payload of setup.h for `query` and its parameters to `buf`. */
 extern void
