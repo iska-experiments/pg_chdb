@@ -285,8 +285,6 @@ chdb_search_amrescan(
 );
 extern bool
 chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir);
-extern int64
-chdb_search_amgetbitmap(IndexScanDesc scan, struct TIDBitmap* tbm);
 extern void
 chdb_search_amendscan(IndexScanDesc scan);
 
