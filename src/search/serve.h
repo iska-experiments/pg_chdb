@@ -25,7 +25,7 @@ chdb_search_listen(Oid dboid);
 extern void
 chdb_search_serve(void);
 
-/* Removes the socket file, if one is bound. */
+/* Stops listening: closes the socket and removes its file, if it has one. */
 extern void
 chdb_search_unlisten(void);
 

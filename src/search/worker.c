@@ -99,6 +99,12 @@ chdb_search_worker_main(Datum arg) {
 
     chdb_search_serve();
 
+    /*
+     * No client is served from here on, so none is let in: one connecting
+     * while the engine winds down finds no listener and starts the next
+     * worker, which waits for this one's slot.
+     */
+    chdb_search_unlisten();
     /* Here, not in worker_exit: the engine's last page requests are served meanwhile.
      */
     engine_stop();

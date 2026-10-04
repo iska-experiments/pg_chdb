@@ -166,11 +166,22 @@ build_wait_set(const int* clients, int nclients, int page_fd) {
     return set;
 }
 
+/*
+ * Closing the socket is what frees an abstract name, which outlives an
+ * unlink until the last descriptor goes; a client that connects in the
+ * meantime is taken into the backlog of a worker that will never read it,
+ * and gets a reset where it would have started the next worker.
+ */
 void
 chdb_search_unlisten(void) {
-    if (listen_fd >= 0 && listen_addr.sun_path[0]) {
+    if (listen_fd < 0) {
+        return;
+    }
+    if (listen_addr.sun_path[0]) {
         unlink(listen_addr.sun_path);
     }
+    close(listen_fd);
+    listen_fd = -1;
 }
 
 void
