@@ -299,7 +299,24 @@ RESET enable_indexscan;
 RESET enable_bitmapscan;
 RESET enable_seqscan;
 -- Writes are in search_am_writes, rebuilds and drops in search_am_rebuild.
+----------------------------------------------------------------------------
+-- A session that first loads the library inside a DROP misses the drop
+----------------------------------------------------------------------------
+-- The object access hook that drops a store with its index is installed
+-- when the library loads, which a fresh session does from index_drop's
+-- relcache build, after the hook for that index would have fired. docs has
+-- two indexes: the first drop loads the library and is missed, the second
+-- is caught, so one `drop: idx_N` follows instead of two. The backend says
+-- why, and the missed store waits for the worker's next start to be swept
+-- (t/search_sweep.pl). (The GUC set before the load is a placeholder the
+-- load takes over.)
+\c
+SET chdb_search.mask_oids = on;
+SET client_min_messages = debug1;
 DROP TABLE docs;
+LOG:  chdb_search was loaded on demand by this DROP TABLE
+DEBUG:  chdb_search drop: idx_N
+RESET client_min_messages;
 DROP EXTENSION chdb_search;
 SELECT count(*) FROM chdb.user_table;
  count 

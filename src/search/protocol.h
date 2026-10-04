@@ -56,7 +56,11 @@
 /* Largest chunk either side will take, so a corrupt count cannot size a buffer. */
 #define CHDB_SEARCH_CHUNK_MAX (8 * 1024 * 1024)
 
-/* Where the worker for `dboid` listens, relative to the data directory. */
-#define CHDB_SEARCH_SOCKET_FMT "pg_chdb/%u.sock"
+/*
+ * The store directory under the data directory: a <dboid> subdirectory holding
+ * each database's chDB store, and the <dboid>.sock its worker listens on.
+ */
+#define CHDB_SEARCH_DIR "pg_chdb"
+#define CHDB_SEARCH_SOCKET_FMT CHDB_SEARCH_DIR "/%u.sock"
 
 #endif /* CHDB_SEARCH_PROTOCOL_H */

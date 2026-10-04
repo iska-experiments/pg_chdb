@@ -9,6 +9,7 @@
 
 #include <signal.h>
 
+#include "access/xact.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
@@ -19,6 +20,7 @@
 #include "engine_proc.h"
 #include "registry.h"
 #include "serve.h"
+#include "sweep.h"
 #include "worker.h"
 
 static Oid worker_dboid;
@@ -65,6 +67,19 @@ chdb_search_worker_main(Datum arg) {
         proc_exit(0);
     }
     slot_claimed = true;
+
+    /* What drops without the library left behind goes before anything is served. */
+    PG_TRY();
+    { chdb_search_sweep(worker_dboid); }
+    PG_CATCH();
+    {
+        if (IsTransactionState()) {
+            AbortCurrentTransaction();
+        }
+        EmitErrorReport();
+        FlushErrorState();
+    }
+    PG_END_TRY();
 
     chdb_search_listen(worker_dboid);
     ereport(LOG, errmsg("chdb_search: worker for database %u listening", worker_dboid));

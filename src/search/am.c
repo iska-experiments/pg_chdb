@@ -12,8 +12,10 @@
 #include "access/htup_details.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
+#include "catalog/pg_class.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_type_d.h"
+#include "commands/defrem.h"
 #include "commands/vacuum.h"
 #include "fmgr.h"
 #include "miscadmin.h"
@@ -31,6 +33,22 @@
 #include "search.h"
 
 PG_FUNCTION_INFO_V1(chdb_search_handler);
+
+bool
+chdb_search_is_index(Oid relid) {
+    HeapTuple tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+
+    if (!HeapTupleIsValid(tup)) {
+        return false;
+    }
+
+    Form_pg_class cls = (Form_pg_class)GETSTRUCT(tup);
+    bool ours         = cls->relkind == RELKIND_INDEX && OidIsValid(cls->relam) &&
+                        cls->relam == get_am_oid("chdb", true);
+
+    ReleaseSysCache(tup);
+    return ours;
+}
 
 /*
  * The planner asks what a scan costs before it knows the query is cheap in

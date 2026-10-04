@@ -42,6 +42,11 @@ typedef struct ChdbColumn {
     Oid typid; /* Postgres type of the index attribute */
 } ChdbColumn;
 
+/* ---- am.c ---- */
+/* Whether the catalog has `relid` as an index of this access method. */
+extern bool
+chdb_search_is_index(Oid relid);
+
 /* ---- gucs.c ---- */
 /* GUCs, reloptions and transaction callbacks; run by _PG_init. */
 extern void
