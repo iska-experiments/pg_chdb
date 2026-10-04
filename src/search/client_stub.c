@@ -1,9 +1,8 @@
 /*
  * A per-backend fake of the worker client (client.h), linked when make is
- * given CHDB_SEARCH_STUB=1. It lets the access method be built and tested
- * without a worker: statements are accepted, inserted data is dropped, and
- * a select answers with the rows two GUCs describe, so a test can hand a
- * scan the ctids it should fetch and VACUUM the rows it should judge.
+ * given CHDB_SEARCH_STUB=1, so the access method builds and tests without
+ * a worker: statements are accepted, inserted data is dropped, and a select
+ * answers with the rows these GUCs describe.
  *
  *   chdb_search_stub.ctids  the packed ctids ((block << 16) | offset, so
  *                           (0,1) is 1 and (1,1) is 65537) a select returns,
@@ -19,8 +18,7 @@
  *                           neither table nor flush for it; a number is the
  *                           WAL position of its last flush
  *
- * The AM logs every statement it generates at DEBUG1, so nothing is logged
- * here.
+ * The AM logs every statement it generates at DEBUG1; nothing is logged here.
  */
 
 #include "postgres.h"
