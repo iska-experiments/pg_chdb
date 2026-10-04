@@ -16,9 +16,8 @@
  * Large transactions. Past chdb_search.flush_threshold a top-level
  * transaction flushes its buffer into a staging table <table>_tx_<xid>
  * instead, which pre-commit copies into the table and drops (abort drops it
- * too).
- * Inside a savepoint nothing is flushed early, because rows already sent
- * could not be taken back.
+ * too); staging.c does the sending. Inside a savepoint nothing is flushed
+ * early, because rows already sent could not be taken back.
  */
 
 #include "postgres.h"
@@ -36,6 +35,7 @@
 
 #include "pg-clickhouse-encode.h"
 
+#include "buffer.h"
 #include "search.h"
 
 /* ---- per-transaction buffers ---- */
@@ -44,15 +44,6 @@ typedef struct Mark {
     SubTransactionId subid;
     pgch_checkpoint ckpt;
 } Mark;
-
-typedef struct Pending {
-    Oid indexoid;
-    ChdbRowWriter* rw;
-    char* table;   /* idx_<oid>.t_<generation> */
-    char* collist; /* (ctid, xmin, ...) for the INSERT */
-    char* staging; /* <table>_tx_<xid>, set once rows have been staged */
-    List* marks;   /* of Mark*, innermost last */
-} Pending;
 
 static List* pending = NIL; /* of Pending*, in TopTransactionContext */
 
@@ -94,49 +85,6 @@ pop_mark(Pending* p) {
     pfree(m);
 }
 
-/* Sends the buffered rows into `table` as Native blocks. */
-static void
-send_rows(Pending* p, const char* table) {
-    if (chdb_rowwriter_rows(p->rw) == 0) {
-        return;
-    }
-
-    size_t len;
-    void* block          = chdb_rowwriter_take(p->rw, &len);
-    char* sql            = psprintf("INSERT INTO %s %s", table, p->collist);
-    chdbSearchConn* conn = chdb_search_connect();
-
-    PG_TRY();
-    {
-        chdb_search_log_sql("insert", sql);
-        chdb_search_insert(conn, p->indexoid, CHDB_SEARCH_NO_GENERATION, sql);
-        chdb_channel_write(chdb_search_channel(conn), block, len);
-        chdb_search_finish(conn);
-    }
-    PG_FINALLY();
-    { chdb_search_close(conn); }
-    PG_END_TRY();
-    pfree(block);
-}
-
-/* Moves a top-level transaction's rows into its staging table. */
-static void
-stage_rows(Pending* p) {
-    if (!p->staging) {
-        MemoryContext old = MemoryContextSwitchTo(TopTransactionContext);
-
-        p->staging = psprintf("%s_tx_%u", p->table, GetTopTransactionId());
-        MemoryContextSwitchTo(old);
-        chdb_search_run(
-            p->indexoid, psprintf("CREATE TABLE %s AS %s", p->staging, p->table)
-        );
-        chdb_search_drop_statement_on_abort(
-            p->indexoid, psprintf("DROP TABLE IF EXISTS %s", p->staging)
-        );
-    }
-    send_rows(p, p->staging);
-}
-
 bool
 chdb_search_aminsert(
     Relation index,
@@ -170,26 +118,11 @@ chdb_search_aminsert(
 
     if (!nested &&
         chdb_rowwriter_bytes(p->rw) >= (size_t)chdb_search_flush_threshold_kb * 1024) {
-        stage_rows(p);
+        chdb_search_stage_rows(p);
     }
 
     /* The index never reports a uniqueness violation. */
     return false;
-}
-
-static void
-flush_pending(Pending* p) {
-    if (p->staging) {
-        send_rows(p, p->staging);
-        chdb_search_run(
-            p->indexoid,
-            psprintf("INSERT INTO %s SELECT * FROM %s", p->table, p->staging)
-        );
-        chdb_search_run(p->indexoid, psprintf("DROP TABLE %s", p->staging));
-        chdb_search_forget_statement(p->indexoid, p->staging);
-    } else {
-        send_rows(p, p->table);
-    }
 }
 
 static void
@@ -223,7 +156,7 @@ xact_callback(XactEvent event, void* arg) {
             if (chdb_rowwriter_rows(p->rw) == 0 && !p->staging) {
                 continue;
             }
-            flush_pending(p);
+            chdb_search_flush_pending(p);
 
             /* The index may have been dropped later in this transaction. */
             Relation index = try_relation_open(p->indexoid, NoLock);
