@@ -113,6 +113,8 @@ SELECT set_config('chdb_search_test.old_pid', :'old_pid', false) IS NOT NULL AS 
 DO $$
 BEGIN
     FOR i IN 1..200 LOOP
+        -- pg_stat_activity is cached for the transaction; read it afresh.
+        PERFORM pg_stat_clear_snapshot();
         EXIT WHEN NOT EXISTS (SELECT FROM pg_stat_activity WHERE pid = current_setting('chdb_search_test.old_pid')::int);
         PERFORM pg_sleep(0.025);
     END LOOP;
