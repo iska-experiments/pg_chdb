@@ -6,6 +6,7 @@ SET chdb_search.worker_timeout = '45s';
 CREATE EXTENSION chdb_search;
 SHOW chdb_search.worker_timeout;
 RESET chdb_search.worker_timeout;
+SET search_path = public, chdb;
 
 SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
 

@@ -4,6 +4,7 @@
 \set VERBOSITY terse
 SET client_min_messages = warning;
 CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
 
 CREATE TABLE prod (id int PRIMARY KEY, body text, tags text[], price numeric(10, 2));

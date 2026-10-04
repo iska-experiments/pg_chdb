@@ -3,7 +3,18 @@
 -- (make CHDB_SEARCH_STUB=1), which accepts everything and returns no rows: rows
 -- found through the index are discarded here and checked by search_e2e.
 \set VERBOSITY terse
+-- The extension installs into schema chdb, which it creates or, as here,
+-- finds already in use, and which DROP EXTENSION then leaves alone.
+CREATE SCHEMA IF NOT EXISTS chdb;
+CREATE TABLE chdb.user_table (x int);
 CREATE EXTENSION chdb_search;
+SELECT extnamespace::regnamespace FROM pg_extension WHERE extname = 'chdb_search';
+ extnamespace 
+--------------
+ chdb
+(1 row)
+
+SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
 SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
  ?column? 
@@ -290,6 +301,21 @@ RESET enable_seqscan;
 -- Writes are in search_am_writes, rebuilds and drops in search_am_rebuild.
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
+SELECT count(*) FROM chdb.user_table;
+ count 
+-------
+     0
+(1 row)
+
+-- The USAGE the script granted on the schema, which was not the extension's
+-- to drop, stays with it.
+SELECT has_schema_privilege('public', 'chdb', 'USAGE');
+ has_schema_privilege 
+----------------------
+ t
+(1 row)
+
+DROP TABLE chdb.user_table;
 -- The worker stays connected to the database, which could not be dropped for
 -- the next run, so stop it. There is none with the stub client.
 DO $$

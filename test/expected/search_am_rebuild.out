@@ -7,6 +7,7 @@
 -- store holds after each step is checked by search_e2e.
 \set VERBOSITY terse
 CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
 -- (Bounded varchars keep the table free of a TOAST table, whose rebuilds
 -- would log its OID at DEBUG1.)
