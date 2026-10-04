@@ -10,23 +10,28 @@ CREATE FUNCTION vector_distance_name(int2) RETURNS text
 AS 'MODULE_PATHNAME', 'chdb_vector_distance_name'
 LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
--- A ClickHouse SETTINGS fragment built from the chdb_vector.* GUCs.
-CREATE FUNCTION vector_query_settings() RETURNS text
+-- A ClickHouse SETTINGS fragment built from the chdb_vector.* GUCs for a
+-- search by the given strategy: support function 3, which the access method
+-- appends to the statements it builds.
+CREATE FUNCTION vector_query_settings(int2) RETURNS text
 AS 'MODULE_PATHNAME', 'chdb_vector_query_settings'
 LANGUAGE C STABLE STRICT PARALLEL SAFE;
 
 -- One class per distance, each with the one ORDER BY operator of its
--- distance (strategies 1 <->, 2 <=>, 3 <#>, as the support function numbers
+-- distance (strategies 1 <->, 2 <=>, 3 <#>, as the support functions number
 -- them). The chdb access method comes from chdb_search, which the control
 -- file requires, as it does pgvector for the type and the operators.
 CREATE OPERATOR CLASS vector_l2_ops FOR TYPE vector USING chdb AS
     OPERATOR 1 <-> (vector, vector) FOR ORDER BY pg_catalog.float_ops,
-    FUNCTION 2 chdb.vector_distance_name(int2);
+    FUNCTION 2 chdb.vector_distance_name(int2),
+    FUNCTION 3 chdb.vector_query_settings(int2);
 
 CREATE OPERATOR CLASS vector_cosine_ops FOR TYPE vector USING chdb AS
     OPERATOR 2 <=> (vector, vector) FOR ORDER BY pg_catalog.float_ops,
-    FUNCTION 2 chdb.vector_distance_name(int2);
+    FUNCTION 2 chdb.vector_distance_name(int2),
+    FUNCTION 3 chdb.vector_query_settings(int2);
 
 CREATE OPERATOR CLASS vector_ip_ops FOR TYPE vector USING chdb AS
     OPERATOR 3 <#> (vector, vector) FOR ORDER BY pg_catalog.float_ops,
-    FUNCTION 2 chdb.vector_distance_name(int2);
+    FUNCTION 2 chdb.vector_distance_name(int2),
+    FUNCTION 3 chdb.vector_query_settings(int2);

@@ -73,8 +73,9 @@ chdb_search_validate(Oid opclassoid) {
             kind     = chdb_search_proc_kind(procform->amproc);
             own_kind = procform->amproclefttype == opcintype;
         }
-        /* chdb_vector's: a strategy number in, a ClickHouse function name out. */
-        if (procform->amprocnum == CHDB_VECTOR_PROC_DISTANCE_NAME) {
+        /* chdb_vector's: a strategy in, a function name or a SETTINGS clause out. */
+        if (procform->amprocnum == CHDB_VECTOR_PROC_DISTANCE_NAME ||
+            procform->amprocnum == CHDB_VECTOR_PROC_QUERY_SETTINGS) {
             if (!check_amproc_signature(
                     procform->amproc, TEXTOID, true, 1, 1, INT2OID
                 )) {

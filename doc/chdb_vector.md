@@ -33,9 +33,10 @@ encoded through pgvector's `vector::real[]` cast.
 | `vector_cosine_ops` | `<=>` | `cosineDistance` | ASC |
 | `vector_ip_ops` | `<#>` | `dotProduct` | DESC |
 
-Each class has one ORDER BY operator and the support function
+Each class has one ORDER BY operator and two support functions:
 `chdb.vector_distance_name(int2)`, which maps its strategy number to the
-ClickHouse function. Vector operators are usable only in `ORDER BY ... LIMIT`.
+ClickHouse function, and `chdb.vector_query_settings(int2)` below. Vector
+operators are usable only in `ORDER BY ... LIMIT`.
 
 ## Settings
 
@@ -48,11 +49,14 @@ ClickHouse function. Vector operators are usable only in `ORDER BY ... LIMIT`.
 ### `chdb.vector_query_settings`
 
 ```sql
-SELECT chdb.vector_query_settings();
+SELECT chdb.vector_query_settings(2::int2);
 ```
 
-Returns the settings above as a ClickHouse `SETTINGS` fragment, for the
-index scan and CustomScan to append to their queries.
+Returns the settings above as a ClickHouse `SETTINGS` fragment for a search
+by the given strategy, for the index scan and CustomScan to append to their
+queries. A `dotProduct` search (strategy 3) always rescores: without
+rescoring ClickHouse 26.9 sorts by the inner-product distance the index
+returns, `1 - dot`, which the descending sort inverts.
 
 ## Limitations
 

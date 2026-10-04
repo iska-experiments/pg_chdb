@@ -29,12 +29,14 @@
 #define CHDB_VECTOR_STRATEGY_IP 3     /* <#>, vector_ip_ops */
 
 /*
- * Support function number of chdb.vector_distance_name(int2) RETURNS text.
+ * Support function numbers: chdb.vector_distance_name(int2) RETURNS text
+ * and chdb.vector_query_settings(int2) RETURNS text, both taking a strategy.
  * Number 1 is the access method's options function (amoptsprocnum), which
  * these classes do not have; am.c sizes amsupport to the numbers here, and
- * validate.c checks the signature.
+ * validate.c checks the signatures.
  */
 #define CHDB_VECTOR_PROC_DISTANCE_NAME 2
+#define CHDB_VECTOR_PROC_QUERY_SETTINGS 3
 
 /* ClickHouse function per strategy. */
 #define CHDB_VECTOR_FN_L2 "L2Distance"
@@ -71,12 +73,16 @@
 #define CHDB_VECTOR_ORDER_DESC "DESC"
 
 /*
- * ClickHouse query settings; chdb.vector_query_settings() returns them
- * as one fragment, e.g.
+ * ClickHouse query settings; chdb.vector_query_settings(strategy) returns
+ * them as one fragment, e.g.
  *   SETTINGS hnsw_candidate_list_size_for_search = 256,
  *            vector_search_with_rescoring = 0,
  *            vector_search_filter_strategy = 'auto'
- * to be appended after LIMIT. The fragment is empty-safe: it is never NULL.
+ * to be appended after LIMIT. The fragment is never NULL. A dotProduct
+ * search rescores whatever the GUC says: without rescoring ClickHouse sorts
+ * by the distance the index returns, which for the inner product is
+ * usearch's 1 - dot, so the descending sort would come out inverted
+ * (ClickHouse 26.9).
  */
 #define CHDB_VECTOR_SETTING_CANDIDATES "hnsw_candidate_list_size_for_search"
 #define CHDB_VECTOR_SETTING_RESCORING "vector_search_with_rescoring"

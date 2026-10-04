@@ -80,9 +80,16 @@ _PG_init(void) {
     MarkGUCPrefixReserved("chdb_vector");
 }
 
+/*
+ * The SETTINGS fragment for a search by `strategy`. Without rescoring
+ * ClickHouse sorts by the distance the index returns, and for the inner
+ * product that is usearch's 1 - dot, which the descending sort then inverts
+ * (ClickHouse 26.9), so a dotProduct search always rescores.
+ */
 PG_FUNCTION_INFO_V1(chdb_vector_query_settings);
 Datum
 chdb_vector_query_settings(PG_FUNCTION_ARGS) {
+    bool rescoring = vector_rescoring || PG_GETARG_INT16(0) == CHDB_VECTOR_STRATEGY_IP;
     StringInfoData buf;
 
     initStringInfo(&buf);
@@ -92,7 +99,7 @@ chdb_vector_query_settings(PG_FUNCTION_ARGS) {
         CHDB_VECTOR_SETTING_CANDIDATES,
         vector_candidates,
         CHDB_VECTOR_SETTING_RESCORING,
-        vector_rescoring ? 1 : 0,
+        rescoring ? 1 : 0,
         CHDB_VECTOR_SETTING_FILTER,
         GetConfigOption(CHDB_VECTOR_GUC_FILTER, false, false)
     );

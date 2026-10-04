@@ -99,7 +99,7 @@ chdb_search_handler(PG_FUNCTION_ARGS) {
      * functions are the options one and chdb_vector's (validate.c).
      */
     am->amstrategies            = 0;
-    am->amsupport               = CHDB_VECTOR_PROC_DISTANCE_NAME;
+    am->amsupport               = CHDB_VECTOR_PROC_QUERY_SETTINGS;
     am->amoptsprocnum           = 1;
     am->amcanorder              = false;
     am->amcanorderbyop          = true; /* distance order-bys, from chdb_vector */
