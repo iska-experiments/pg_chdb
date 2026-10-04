@@ -181,17 +181,20 @@ needle_tokens(
     return entry->tokens;
 }
 
-/* `count()` of the store table, under `where` if given, as the index answers it. */
+/*
+ * `count()` of the store's rows, under `where` if given, as the index
+ * answers it: with the transaction's staged rows, which the scan reads too.
+ */
 static int64
 count_rows(ChdbScoreCache* cache, Relation index, const char* where) {
-    char* sql = psprintf(
-        "SELECT count() FROM %s%s%s",
-        chdb_search_table_name(index),
-        where ? " WHERE " : "",
-        where ? where : ""
-    );
+    StringInfoData sql;
 
-    return DatumGetInt64(ask(cache, index, chdb_meta_generation(index), sql, INT8OID));
+    initStringInfo(&sql);
+    appendStringInfoString(&sql, "SELECT count()");
+    chdb_search_append_from(&sql, index, where ? where : "", NULL, NULL);
+    return DatumGetInt64(
+        ask(cache, index, chdb_meta_generation(index), sql.data, INT8OID)
+    );
 }
 
 /* `hasAllTokens(<col>, ['tok'])`: one token, as the index's, on `expr`. */

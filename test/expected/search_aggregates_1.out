@@ -511,14 +511,14 @@ EXECUTE c;
      3
 (1 row)
 
--- A transaction's own insert takes the exact plan too, which reads the
--- store's ctids: as through the index, the row is seen once committed.
+-- A transaction's own insert takes the exact plan too, whose scan reads
+-- the transaction's staged rows with the store's: the row counts at once.
 BEGIN;
 INSERT INTO docs VALUES (7, 'Running uncommitted', '{}', 'eve', 1.00, 1, 1, 1, 1, '2026-04-01', '2026-04-01 10:00+00', true);
 EXECUTE c;
  count 
 -------
-     3
+     4
 (1 row)
 
 COMMIT;
@@ -528,6 +528,38 @@ EXECUTE c;
      4
 (1 row)
 
+-- COPY FREEZE into a table truncated in the transaction leaves its pages
+-- all-visible, so the store answers, with the rows the transaction staged.
+BEGIN;
+TRUNCATE docs;
+COPY docs (id, body, author) FROM stdin (FREEZE);
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) EXECUTE c;
+                                                                                          QUERY PLAN                                                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate) (actual rows=1 loops=1)
+   Pushed Cond: (body @@@ 'running'::text)
+   ClickHouse: SELECT count() FROM (SELECT * FROM idx_N.t_N WHERE hasAllTokens("body", 'running') UNION ALL SELECT * FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'running'))
+   Store Rows: 1
+   ->  Aggregate (never executed)
+         ->  Custom Scan (chdb_search) on docs (never executed)
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'running'))
+               Store Rows: 0
+(9 rows)
+
+EXECUTE c;
+ count 
+-------
+     2
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT author, count(*) FROM docs WHERE body @@@ 'running' GROUP BY author$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+ROLLBACK;
 RESET plan_cache_mode;
 DEALLOCATE c;
 DROP TABLE docs;

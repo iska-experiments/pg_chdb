@@ -314,27 +314,6 @@ SELECT count(*) FROM pg_temp.store(:'tbl');
      6
 (1 row)
 
--- Rows reach the store at COMMIT, so the index does not find a transaction's
--- own inserts before then; a rolled-back insert never reaches it.
-BEGIN;
-INSERT INTO prod VALUES (6, 'rolled back shoes', '{gone}', 1);
-SELECT id FROM prod WHERE body @@@ 'rolled' ORDER BY id;
- id 
-----
-(0 rows)
-
-ROLLBACK;
-SELECT id FROM prod WHERE body @@@ 'rolled' ORDER BY id;
- id 
-----
-(0 rows)
-
-SELECT count(*) FROM pg_temp.store(:'tbl') WHERE body LIKE 'rolled%';
- count 
--------
-     0
-(1 row)
-
 DELETE FROM prod WHERE id = 2;
 SELECT id FROM prod WHERE body @@@ 'boots' ORDER BY id;
  id 

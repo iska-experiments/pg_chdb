@@ -21,6 +21,7 @@
 #include "utils/memutils.h"
 
 #include "buffer.h"
+#include "query.h"
 
 /*
  * Sends the buffered rows into `table` as Native blocks; false when there
@@ -89,6 +90,29 @@ chdb_search_stage_rows(Pending* p) {
     if (send_rows(p, p->staging)) {
         chdb_search_marks_shipped(p);
     }
+}
+
+/*
+ * For a scan of the index: the transaction's staging table, or NULL when it
+ * has none. The rows the transaction has buffered for the index go there
+ * first, so that the scan finds every row it inserted; *excluded is the
+ * `xmin NOT IN` list the table is to be read with, NULL for none.
+ */
+char*
+chdb_search_staged_table(Oid indexoid, const char** excluded) {
+    Pending* p = chdb_search_pending_of(indexoid);
+
+    *excluded = NULL;
+    if (!p) {
+        return NULL;
+    }
+    if (chdb_rowwriter_rows(p->rw)) {
+        chdb_search_stage_rows(p);
+    }
+    if (p->staging) {
+        *excluded = chdb_search_excluded_xids(p);
+    }
+    return p->staging;
 }
 
 /* Drops the staging table with `run`. */

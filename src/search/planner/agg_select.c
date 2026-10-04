@@ -1,10 +1,17 @@
 /*
  * The statement an aggregate scan sends and the shape of its answer. Each
  * output is one ClickHouse expression, two for avg, over the index's
- * columns as columns.c names them; the WHERE clause is the pushed quals
- * rendered by query.c, as every chdb statement's is, and the GROUP BY the
- * grouping columns. The answer's columns decode to the Postgres types the
- * outputs have, and a row of them becomes the scan tuple.
+ * columns as columns.c names them; the FROM and WHERE clauses are the
+ * pushed quals rendered by query.c, as every chdb statement's are, and the
+ * GROUP BY the grouping columns. The answer's columns decode to the Postgres
+ * types the outputs have, and a row of them becomes the scan tuple.
+ *
+ * So the transaction's staged rows are aggregated with the table's, as a
+ * scan would find them. The visibility map seldom lets it come to that, as
+ * a transaction's own heap tuples clear the all-visible bits of their
+ * pages and send it to the exact plan; but COPY FREEZE into a table the
+ * transaction created or truncated sets them, and the rows it buffered for
+ * the index are then in the store only once staged.
  *
  * The aggregates are the OrNull forms, so that min, max, sum and avg of no
  * rows are NULL as in Postgres rather than ClickHouse's zero. A sum is
@@ -98,13 +105,12 @@ chdb_planner_build_agg_sql(ChdbScanState* st) {
             appendStringInfo(&group, "%s%s", group.len ? ", " : "", col->name);
         }
     }
-    appendStringInfo(&buf, " FROM %s", chdb_search_table_name(index));
     /* The operators are strict: a NULL argument matches no row. */
     if (!chdb_search_append_quals(&where, cols, natts, keys, nquals)) {
-        appendStringInfoString(&buf, " WHERE 0");
-    } else if (where.len) {
-        appendStringInfo(&buf, " WHERE %s", where.data);
+        resetStringInfo(&where);
+        appendStringInfoChar(&where, '0');
     }
+    chdb_search_append_from(&buf, index, where.data, NULL, NULL);
     if (group.len) {
         appendStringInfo(&buf, " GROUP BY %s", group.data);
     }

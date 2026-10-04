@@ -31,8 +31,11 @@ chdb_search_vector_distance(
     const struct ChdbColumn* col,
     ScanKey orderby
 );
-/* The ORDER BY, LIMIT and SETTINGS of a search by one distance operator. */
-extern void
+/*
+ * The ORDER BY, LIMIT and SETTINGS of a search by one distance operator.
+ * True when the order is descending, as a similarity's is.
+ */
+extern bool
 chdb_search_vector_order(
     Relation index,
     StringInfo buf,

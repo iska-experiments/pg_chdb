@@ -154,13 +154,26 @@ VACUUM docs;
 SELECT * FROM chdb_search_query(format('SELECT count() FROM %s WHERE hasAllTokens(body, ''running'')', :'tbl')) AS (store_rows bigint);
 EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) EXECUTE c;
 EXECUTE c;
--- A transaction's own insert takes the exact plan too, which reads the
--- store's ctids: as through the index, the row is seen once committed.
+-- A transaction's own insert takes the exact plan too, whose scan reads
+-- the transaction's staged rows with the store's: the row counts at once.
 BEGIN;
 INSERT INTO docs VALUES (7, 'Running uncommitted', '{}', 'eve', 1.00, 1, 1, 1, 1, '2026-04-01', '2026-04-01 10:00+00', true);
 EXECUTE c;
 COMMIT;
 EXECUTE c;
+-- COPY FREEZE into a table truncated in the transaction leaves its pages
+-- all-visible, so the store answers, with the rows the transaction staged.
+BEGIN;
+TRUNCATE docs;
+COPY docs (id, body, author) FROM stdin (FREEZE);
+8	Running free	fay
+9	Running fast	gus
+10	Walking slow	hal
+\.
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) EXECUTE c;
+EXECUTE c;
+SELECT * FROM pg_temp.check($$SELECT author, count(*) FROM docs WHERE body @@@ 'running' GROUP BY author$$);
+ROLLBACK;
 RESET plan_cache_mode;
 DEALLOCATE c;
 

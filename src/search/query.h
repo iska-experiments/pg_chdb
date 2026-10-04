@@ -48,6 +48,11 @@
  * order-by argument instead gives every row a NULL distance. One order-by
  * on a vector column becomes the search ClickHouse's HNSW index serves,
  * whose ORDER BY, LIMIT and SETTINGS vector.c renders.
+ *
+ * A transaction sees its own rows: when it has rows buffered or staged for
+ * the index, the query becomes a UNION ALL of the same SELECT over the
+ * table and over the staging table, ordered and limited again outside
+ * (chdb_search_append_from below).
  */
 extern char*
 chdb_search_build_select(
@@ -83,6 +88,35 @@ chdb_search_build_scored_select(
     int score_order,
     int64 limit
 );
+
+/*
+ * ` FROM <table>[ WHERE <where>]`, where every statement over the index's
+ * rows reads them, and false. When the transaction has rows buffered or
+ * staged for the index (chdb_search_staged_table, below), the buffered
+ * ones are staged first and the FROM clause is instead `(<leg> UNION ALL
+ * <leg>)`, the legs `<list> FROM <table>[ WHERE <where>]<tail>` over the
+ * table and over the staging table, whose WHERE also hides the rows of
+ * savepoints rolled back since; it then returns true. `list` and `tail`
+ * default to `SELECT *` and nothing: a statement whose legs order and limit
+ * their own rows, as the HNSW index serves only an ORDER BY ... LIMIT on the
+ * table it reads, gives its own, and merges the legs by what they select.
+ */
+extern bool
+chdb_search_append_from(
+    StringInfo buf,
+    Relation index,
+    const char* where,
+    const char* list,
+    const char* tail
+);
+/*
+ * The staging table the FROM clause reads besides the index's table, or
+ * NULL (staging.c): the transaction's rows buffered so far are staged first.
+ * *excluded is the `xmin NOT IN` list that hides the rows of savepoints
+ * since rolled back, or NULL.
+ */
+extern char*
+chdb_search_staged_table(Oid indexoid, const char** excluded);
 
 /*
  * The pieces, for builders that select other things. The WHERE part appends

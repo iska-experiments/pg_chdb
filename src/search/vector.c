@@ -143,9 +143,9 @@ chdb_search_vector_distance(Relation index, const ChdbColumn* col, ScanKey order
  * max_limit_for_vector_search_queries. An index scan has no LIMIT of its
  * own, so it asks for as many rows as the index serves, the most ClickHouse
  * would return through it; chdb_vector supplies the settings, as it owns
- * the GUCs behind them.
+ * the GUCs behind them. Returns whether the order is descending.
  */
-void
+bool
 chdb_search_vector_order(
     Relation index,
     StringInfo buf,
@@ -155,8 +155,9 @@ chdb_search_vector_order(
 ) {
     const char* fn;
     char* call = distance_call(index, col, orderby, &fn);
+    bool desc  = is_similarity(fn);
 
-    appendStringInfo(buf, " ORDER BY %s%s", call, is_similarity(fn) ? " DESC" : "");
+    appendStringInfo(buf, " ORDER BY %s%s", call, desc ? " DESC" : "");
     if (limit >= 0) {
         appendStringInfo(buf, " LIMIT " INT64_FORMAT, limit);
     } else {
@@ -170,4 +171,5 @@ chdb_search_vector_order(
             CHDB_VECTOR_PROC_QUERY_SETTINGS,
             orderby->sk_strategy)
     );
+    return desc;
 }

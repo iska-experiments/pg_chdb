@@ -31,6 +31,11 @@ typedef struct Pending {
     bool poisoned; /* rows are lost: the buffer refuses to go on, COMMIT must error */
 } Pending;
 
+/* ---- buffer.c ---- */
+/* The transaction's buffer for the index, or NULL; raises if its rows were lost. */
+extern Pending*
+chdb_search_pending_of(Oid indexoid);
+
 /* ---- marks.c ---- */
 /* Takes the level's checkpoint before its first row, unless it has one. */
 extern void

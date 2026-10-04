@@ -139,7 +139,8 @@ SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ 'running'$$);
 SELECT * FROM pg_temp.explain($$SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT 2$$, true);
 SELECT * FROM pg_temp.check($$SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT 2$$);
 SELECT * FROM pg_temp.check($$SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT 1$$);
--- A transaction's own rows reach the store at commit, as through the index.
+-- A transaction sees its own rows, as through the index: the statement
+-- reads the transaction's staging table with the index's table.
 BEGIN;
 INSERT INTO docs VALUES (6, 'Running late', '{}', 'dee', 1.00, '(0,1)');
 SELECT id FROM docs WHERE body @@@ 'running late';

@@ -47,12 +47,16 @@ take_block(pgch_writer* w, MemoryContext cxt, MemoryContext old, void** out) {
     return buf.len;
 }
 
-/* Counts the columns a scan's statement selects under an alias. */
+/*
+ * Counts the columns a scan's statement selects under an alias: those of
+ * its first leg, when a transaction with staged rows reads a union of two.
+ */
 static int
 count_aliases(const char* sql, const char* alias) {
-    int n = 0;
+    const char* end = strstr(sql, " UNION ALL ");
+    int n           = 0;
 
-    for (const char* p = sql; (p = strstr(p, alias)); p += 1) {
+    for (const char* p = sql; (p = strstr(p, alias)) && (!end || p < end); p += 1) {
         n++;
     }
     return n;

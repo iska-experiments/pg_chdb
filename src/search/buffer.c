@@ -48,22 +48,57 @@
 
 static List* pending = NIL; /* of Pending*, in TopTransactionContext */
 
+static void
+poisoned_error(Pending* p) {
+    ereport(
+        ERROR,
+        errcode(ERRCODE_INTERNAL_ERROR),
+        errmsg("the rows buffered for chdb index %u were lost", p->indexoid),
+        errdetail(
+            "A savepoint rollback could not rewind them, or a flush failed after "
+            "taking them from the buffer."
+        ),
+        errhint("Roll the transaction back.")
+    );
+}
+
+/* The transaction's live buffer for the index, or NULL. */
 static Pending*
-find_pending(Relation index) {
+lookup_pending(Oid indexoid) {
     ListCell* lc;
 
     foreach (lc, pending) {
         Pending* p = lfirst(lc);
 
-        if (p->indexoid == RelationGetRelid(index) &&
-            p->superseded == InvalidSubTransactionId) {
+        if (p->indexoid == indexoid && p->superseded == InvalidSubTransactionId) {
             return p;
         }
     }
+    return NULL;
+}
+
+/* For a scan, which could not answer from a buffer whose rows were lost. */
+Pending*
+chdb_search_pending_of(Oid indexoid) {
+    Pending* p = lookup_pending(indexoid);
+
+    if (p && p->poisoned) {
+        poisoned_error(p);
+    }
+    return p;
+}
+
+static Pending*
+find_pending(Relation index) {
+    Pending* p = lookup_pending(RelationGetRelid(index));
+
+    if (p) {
+        return p;
+    }
 
     MemoryContext old = MemoryContextSwitchTo(TopTransactionContext);
-    Pending* p        = palloc0(sizeof(*p));
 
+    p             = palloc0(sizeof(*p));
     p->indexoid   = RelationGetRelid(index);
     p->generation = chdb_meta_generation(index);
     p->table      = chdb_search_table_of(p->indexoid, p->generation);
@@ -81,20 +116,6 @@ free_pending(Pending* p) {
         chdb_rowwriter_free(p->rw);
     }
     pfree(p);
-}
-
-static void
-poisoned_error(Pending* p) {
-    ereport(
-        ERROR,
-        errcode(ERRCODE_INTERNAL_ERROR),
-        errmsg("the rows buffered for chdb index %u were lost", p->indexoid),
-        errdetail(
-            "A savepoint rollback could not rewind them, or a flush failed after "
-            "taking them from the buffer."
-        ),
-        errhint("Roll the transaction back.")
-    );
 }
 
 /*
