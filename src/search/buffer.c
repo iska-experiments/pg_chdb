@@ -196,6 +196,41 @@ reset_pending(void) {
     pending = NIL;
 }
 
+/*
+ * Sends one index's rows at commit. The store must first prove itself
+ * current (meta.c): a flush into a store that is behind the heap, as a
+ * restore or pg_rewind leaves it, would record the flush on both sides and
+ * so pass the store, missing every row between the backup and the restore
+ * point, as current. In error mode the refusal aborts the commit; in skip
+ * mode the rows stay out of the store and the metapage moves on without it,
+ * so the mismatch outlives any repair but a REINDEX. An index dropped later
+ * in this transaction has no metapage to check: its rows go to the store
+ * that goes with it.
+ */
+static void
+flush_at_commit(Pending* p) {
+    Relation index = try_relation_open(p->indexoid, NoLock);
+    bool skip      = false;
+
+    if (index) {
+        chdb_search_check_available(index, &skip);
+    }
+    if (skip) {
+        if (p->staging) {
+            chdb_search_abandon_staging(p);
+        }
+        chdb_meta_note_skipped(index);
+    } else {
+        chdb_search_flush_pending(p);
+        if (index) {
+            chdb_meta_note_flush(index);
+        }
+    }
+    if (index) {
+        relation_close(index, NoLock);
+    }
+}
+
 static void
 xact_callback(XactEvent event, void* arg) {
     ListCell* lc;
@@ -231,15 +266,7 @@ xact_callback(XactEvent event, void* arg) {
             if (chdb_rowwriter_rows(p->rw) == 0 && !p->staging) {
                 continue;
             }
-            chdb_search_flush_pending(p);
-
-            /* The index may have been dropped later in this transaction. */
-            Relation index = try_relation_open(p->indexoid, NoLock);
-
-            if (index) {
-                chdb_meta_note_flush(index);
-                relation_close(index, NoLock);
-            }
+            flush_at_commit(p);
         }
         break;
     case XACT_EVENT_COMMIT:

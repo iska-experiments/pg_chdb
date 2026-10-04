@@ -13,6 +13,11 @@
  *                           not a Native block; empty, the default, returns
  *                           no block at all
  *   chdb_search_stub.fail   reading the answer fails, as a lost worker would
+ *   chdb_search_stub.meta   what the store says of the index's generation when
+ *                           the fail-safe check (meta.c) asks: empty, the
+ *                           default, agrees with the metapage; 'none' has
+ *                           neither table nor flush for it; a number is the
+ *                           WAL position of its last flush
  *
  * The AM logs every statement it generates at DEBUG1, so nothing is logged
  * here.
@@ -32,9 +37,11 @@
 #include "pg-clickhouse.h"
 
 #include "client.h"
+#include "search.h"
 
 static char* stub_ctids = NULL;
 static bool stub_fail   = false;
+static char* stub_meta  = NULL;
 
 struct chdbSearchConn {
     chdbChannel ch;
@@ -71,6 +78,19 @@ chdb_search_client_init(void) {
         NULL,
         &stub_fail,
         false,
+        PGC_USERSET,
+        0,
+        NULL,
+        NULL,
+        NULL
+    );
+    DefineCustomStringVariable(
+        "chdb_search_stub.meta",
+        "What the stub worker client's store says of the index's generation.",
+        "Empty agrees with the metapage; 'none' has no table and no flush for it; a "
+        "number is the WAL position of its last flush.",
+        &stub_meta,
+        "",
         PGC_USERSET,
         0,
         NULL,
@@ -125,28 +145,13 @@ answer(chdbSearchConn* conn, const void* data, size_t len) {
     set_data_fd(conn, fds[0], "a pipe");
 }
 
-/*
- * One Native block of the GUC's ctids, with `ndist` distance columns, built
- * with the encoder the row writer uses. Returns the length, zero for no rows.
- */
-static size_t
-encode_ctids(const char* ctids, int ndist, void** out) {
-    MemoryContext cxt = AllocSetContextCreate(
-        CurrentMemoryContext, "chdb_search stub block", ALLOCSET_SMALL_SIZES
-    );
-    MemoryContext old = MemoryContextSwitchTo(cxt);
-    StringInfoData structure;
+/* A writer for one block of `structure`, with the encoder the row writer uses. */
+static pgch_writer*
+new_writer(MemoryContext cxt, const char* structure) {
     chc_type* type;
-    chc_err err  = {};
-    pgch_buf buf = {};
+    chc_err err = {};
 
-    initStringInfo(&structure);
-    appendStringInfoString(&structure, "Tuple(ctid UInt64");
-    for (int i = 0; i < ndist; i++) {
-        appendStringInfo(&structure, ", _distance%d Float64", i);
-    }
-    appendStringInfoChar(&structure, ')');
-    if (chc_type_parse(structure.data, structure.len, &pgch_alloc, &type, &err) !=
+    if (chc_type_parse(structure, strlen(structure), &pgch_alloc, &type, &err) !=
         CHC_OK) {
         pgch_raise(&err, ERRCODE_INTERNAL_ERROR, "chdb_search stub: ", NULL);
     }
@@ -158,8 +163,41 @@ encode_ctids(const char* ctids, int ndist, void** out) {
         cols[i].name = chc_type_tuple_field_name(type, i, &cols[i].name_len);
         cols[i].type = chc_type_child(type, i);
     }
+    return pgch_writer_new(cxt, cols, ncols);
+}
 
-    pgch_writer* w = pgch_writer_new(cxt, cols, ncols);
+/* The writer's rows as one block in the caller's context; `cxt` goes. */
+static size_t
+take_block(pgch_writer* w, MemoryContext cxt, MemoryContext old, void** out) {
+    pgch_buf buf = {};
+
+    if (pgch_writer_rows(w)) {
+        pgch_writer_flush(w, &buf, NULL);
+    }
+    MemoryContextSwitchTo(old);
+    *out = palloc(buf.len + 1);
+    memcpy(*out, buf.data, buf.len);
+    MemoryContextDelete(cxt);
+    return buf.len;
+}
+
+/* The ctids GUC as one block, with `ndist` distance columns. Zero for no rows. */
+static size_t
+encode_ctids(const char* ctids, int ndist, void** out) {
+    MemoryContext cxt = AllocSetContextCreate(
+        CurrentMemoryContext, "chdb_search stub block", ALLOCSET_SMALL_SIZES
+    );
+    MemoryContext old = MemoryContextSwitchTo(cxt);
+    StringInfoData structure;
+
+    initStringInfo(&structure);
+    appendStringInfoString(&structure, "Tuple(ctid UInt64");
+    for (int i = 0; i < ndist; i++) {
+        appendStringInfo(&structure, ", _distance%d Float64", i);
+    }
+    appendStringInfoChar(&structure, ')');
+
+    pgch_writer* w = new_writer(cxt, structure.data);
 
     for (const char* p = ctids; *p;) {
         char* end;
@@ -178,15 +216,38 @@ encode_ctids(const char* ctids, int ndist, void** out) {
         }
         p = *end == ',' ? end + 1 : end;
     }
-    if (pgch_writer_rows(w)) {
-        pgch_writer_flush(w, &buf, NULL);
-    }
-    MemoryContextSwitchTo(old);
+    return take_block(w, cxt, old, out);
+}
 
-    *out = palloc(buf.len + 1);
-    memcpy(*out, buf.data, buf.len);
-    MemoryContextDelete(cxt);
-    return buf.len;
+/*
+ * The store's answer to the fail-safe check of meta.c, (flushes, last flush,
+ * tables) for the index's generation: by default what the metapage says, so
+ * that the check passes as it does against a store that is current.
+ */
+static size_t
+encode_meta(Oid indexoid, void** out) {
+    MemoryContext cxt = AllocSetContextCreate(
+        CurrentMemoryContext, "chdb_search stub block", ALLOCSET_SMALL_SIZES
+    );
+    MemoryContext old = MemoryContextSwitchTo(cxt);
+    Relation index    = index_open(indexoid, AccessShareLock);
+    ChdbMetaPageData meta;
+    uint64 rows = 1, tables = 1;
+
+    chdb_meta_read(index, &meta);
+    index_close(index, AccessShareLock);
+    if (strcmp(stub_meta, "none") == 0) {
+        rows = tables = meta.flushed_lsn = 0;
+    } else if (*stub_meta) {
+        meta.flushed_lsn = strtoull(stub_meta, NULL, 10);
+    }
+
+    pgch_writer* w = new_writer(cxt, "Tuple(n UInt64, lsn UInt64, t UInt64)");
+
+    pgch_append_datum(w, 0, Int64GetDatum((int64)rows), INT8OID, false);
+    pgch_append_datum(w, 1, Int64GetDatum((int64)meta.flushed_lsn), INT8OID, false);
+    pgch_append_datum(w, 2, Int64GetDatum((int64)tables), INT8OID, false);
+    return take_block(w, cxt, old, out);
 }
 
 /* Counts the distance columns a scan's statement selects. */
@@ -244,7 +305,9 @@ chdb_search_select(
     } else if (strcmp(stub_ctids, "garbage") == 0) {
         answer(conn, "not a Native block", 18);
     } else {
-        len = encode_ctids(stub_ctids, count_distances(sql), &block);
+        len = strstr(sql, ".meta WHERE generation = ")
+                  ? encode_meta(indexoid, &block)
+                  : encode_ctids(stub_ctids, count_distances(sql), &block);
         answer(conn, block, len);
         pfree(block);
     }

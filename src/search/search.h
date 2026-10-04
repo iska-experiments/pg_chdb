@@ -148,11 +148,14 @@ chdb_search_warn_failure(Oid indexoid);
 
 /* ---- meta.c ---- */
 /*
- * Whether this server can serve the index's store now. Phase 0 keeps the
- * store in a local directory that base backups, standbys and pg_rewind do
- * not make current, so a server in recovery has no store it can trust; the
- * generation and LSN comparison against the worker (follow-up) will refine
- * this. A scan proves this true before returning any row.
+ * Whether this server can serve the index's store now: the server is not in
+ * recovery (Phase 0 keeps the store in a local directory that base backups,
+ * standbys and pg_rewind do not make current), and the store's meta table
+ * agrees with the metapage on the generation and the last flush. The store
+ * is asked once per (generation, flushed_lsn) a backend sees: a verdict in
+ * favour is kept in rd_amcache. A scan proves this before returning any row,
+ * VACUUM before deleting, a commit before flushing, the planner before
+ * costing in skip mode.
  */
 extern bool
 chdb_search_store_unavailable(Relation index);
@@ -183,6 +186,9 @@ extern uint64
 chdb_meta_generation(Relation index);
 extern void
 chdb_meta_note_flush(Relation index);
+/* A commit flushed nothing, the store being unavailable in skip mode. */
+extern void
+chdb_meta_note_skipped(Relation index);
 
 /* ---- rowwriter.c, buffer.c, build.c ---- */
 typedef struct ChdbRowWriter ChdbRowWriter;
