@@ -20,13 +20,18 @@ send_rows(Pending* p, const char* table) {
     }
 
     size_t len;
+    char* sql = psprintf("INSERT INTO %s %s", table, p->collist);
+
+    /* Logged with the rows, so tests see what a savepoint left in the buffer. */
+    chdb_search_log_sql(
+        "insert", psprintf("%s -- %zu rows", sql, chdb_rowwriter_rows(p->rw))
+    );
+
     void* block          = chdb_rowwriter_take(p->rw, &len);
-    char* sql            = psprintf("INSERT INTO %s %s", table, p->collist);
     chdbSearchConn* conn = chdb_search_connect();
 
     PG_TRY();
     {
-        chdb_search_log_sql("insert", sql);
         chdb_search_insert(conn, p->indexoid, CHDB_SEARCH_NO_GENERATION, sql);
         chdb_channel_write(chdb_search_channel(conn), block, len);
         chdb_search_finish(conn);

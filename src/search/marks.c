@@ -3,6 +3,14 @@
  * writer checkpoints, one per subtransaction level that has inserted into
  * it, taken before the level's first row. ROLLBACK TO rewinds the writer to
  * the level's checkpoint; RELEASE merges the level into its parent's.
+ *
+ * A rewind bumps the writer's generation, after which the writer refuses
+ * older checkpoints as stale. Those of the enclosing levels are still
+ * prefixes of the rewound columns, so they are restamped: without that a
+ * second ROLLBACK TO raised inside AbortSubTransaction, which re-entered
+ * until ERRORDATA_STACK_SIZE and took the cluster down. The abort path
+ * cannot fail, so a rewind that does poisons the buffer instead, and the
+ * error is raised at the next insert or at COMMIT.
  */
 
 #include "postgres.h"
@@ -55,6 +63,31 @@ chdb_search_free_marks(Pending* p) {
     }
 }
 
+/* Rewinds the buffer to the aborted level's checkpoint, or poisons it. */
+static void
+rewind_marks(Pending* p) {
+    Mark* top = top_mark(p);
+    ListCell* lc;
+
+    PG_TRY();
+    { chdb_rowwriter_rollback(p->rw, &top->ckpt); }
+    PG_CATCH();
+    {
+        FlushErrorState();
+        chdb_rowwriter_free(p->rw);
+        p->rw       = NULL;
+        p->poisoned = true;
+    }
+    PG_END_TRY();
+    pop_mark(p);
+    if (p->poisoned) {
+        return;
+    }
+    foreach (lc, p->marks) {
+        chdb_rowwriter_revalidate(p->rw, &((Mark*)lfirst(lc))->ckpt);
+    }
+}
+
 void
 chdb_search_settle_marks(
     Pending* p,
@@ -64,12 +97,11 @@ chdb_search_settle_marks(
 ) {
     Mark* top = top_mark(p);
 
-    if (!top || top->subid != mySubid) {
+    if (!top || top->subid != mySubid || p->poisoned) {
         return;
     }
     if (event == SUBXACT_EVENT_ABORT_SUB) {
-        chdb_rowwriter_rollback(p->rw, &top->ckpt);
-        pop_mark(p);
+        rewind_marks(p);
     } else if (parentSubid == TopSubTransactionId) {
         pop_mark(p); /* top level aborts as a whole, no mark needed */
     } else if (

@@ -109,6 +109,21 @@ chdb_rowwriter_rollback(ChdbRowWriter* rw, const pgch_checkpoint* ckpt) {
     pgch_writer_rollback(rw->w, ckpt);
 }
 
+/*
+ * A rollback bumps the writer's generation and later rollbacks refuse any
+ * older checkpoint as stale. A checkpoint taken before the one rewound to
+ * is still a prefix of the writer's columns, so it is stamped current. The
+ * writer is opaque here, and a fresh checkpoint is how its generation reads.
+ */
+void
+chdb_rowwriter_revalidate(ChdbRowWriter* rw, pgch_checkpoint* ckpt) {
+    pgch_checkpoint now = {};
+
+    pgch_writer_checkpoint(rw->w, &now);
+    ckpt->generation = now.generation;
+    pgch_checkpoint_free(&now);
+}
+
 size_t
 chdb_rowwriter_bytes(ChdbRowWriter* rw) {
     return pgch_writer_bytes(rw->w);
