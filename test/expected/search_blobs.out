@@ -9,13 +9,13 @@ SET search_path = public, chdb;
 CREATE TABLE docs (id int PRIMARY KEY, body text);
 INSERT INTO docs VALUES (1, 'Running shoes for runners'), (2, 'Walking boots');
 CREATE INDEX docs_idx ON docs USING chdb (body);
--- The storage holds the parts of the store table and of the meta table
--- beside it, each file under a key libchdb chose, and plain_rewritable's
+-- The storage holds the parts of the store table, each file under a key
+-- libchdb chose below the generation's prefix, and plain_rewritable's
 -- directory entries that name those keys. The keys are random, so the files
 -- are shown by name; every blob was committed by the worker just now.
-SELECT DISTINCT regexp_replace(key, '^[a-z]+/', '<key>/') AS file
+SELECT DISTINCT regexp_replace(key, '^g\d+/[a-z]+/', '<key>/') AS file
   FROM chdb_search_blobs('docs_idx')
- WHERE key ~ '^[a-z]+/(checksums|columns|count|format_version)\.txt$'
+ WHERE key ~ '^g\d+/[a-z]+/(checksums|columns|count|format_version)\.txt$'
  ORDER BY 1;
            file           
 --------------------------
@@ -25,7 +25,7 @@ SELECT DISTINCT regexp_replace(key, '^[a-z]+/', '<key>/') AS file
  <key>/format_version.txt
 (4 rows)
 
-SELECT count(*) FILTER (WHERE key ~ '^__meta/[a-z]+/prefix\.path$') > 0 AS has_directory_entries,
+SELECT count(*) FILTER (WHERE key ~ '^g\d+/__meta/[a-z]+/prefix\.path$') > 0 AS has_directory_entries,
        sum(size) > 0 AS has_bytes,
        bool_and(mtime BETWEEN now() - interval '1 hour' AND now() + interval '1 hour') AS committed_now
   FROM chdb_search_blobs('docs_idx');
@@ -35,14 +35,14 @@ SELECT count(*) FILTER (WHERE key ~ '^__meta/[a-z]+/prefix\.path$') > 0 AS has_d
 (1 row)
 
 -- A flush adds a part: its files appear under a new key.
-SELECT count(DISTINCT split_part(key, '/', 1)) FILTER (WHERE key ~ '/count\.txt$') AS parts
+SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') AS parts
   FROM chdb_search_blobs('docs_idx') \gset
 INSERT INTO docs VALUES (3, 'Hiking boots');
-SELECT count(DISTINCT split_part(key, '/', 1)) FILTER (WHERE key ~ '/count\.txt$') - :parts AS parts_added
+SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') - :parts AS parts_added
   FROM chdb_search_blobs('docs_idx');
  parts_added 
 -------------
-           2
+           1
 (1 row)
 
 SET enable_seqscan = off;
@@ -55,8 +55,9 @@ SELECT id FROM docs WHERE body @@@ 'boots' ORDER BY id;
 
 RESET enable_seqscan;
 -- Each index has a storage of its own; a rebuild writes its new generation
--- into the same one, and VACUUM, dropping the generation that lost, removes
--- its blobs: the count of parts returns to what one generation holds.
+-- into the same one, under its own prefix, and VACUUM, dropping the
+-- generation that lost, removes its blobs: the count of parts returns to
+-- what one generation holds.
 CREATE INDEX docs_idx2 ON docs USING chdb (body);
 SELECT count(*) > 0 AS second_storage FROM chdb_search_blobs('docs_idx2');
  second_storage 
@@ -65,10 +66,10 @@ SELECT count(*) > 0 AS second_storage FROM chdb_search_blobs('docs_idx2');
 (1 row)
 
 DROP INDEX docs_idx2;
-SELECT count(DISTINCT split_part(key, '/', 1)) FILTER (WHERE key ~ '/count\.txt$') AS parts
+SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') AS parts
   FROM chdb_search_blobs('docs_idx') \gset
 REINDEX INDEX docs_idx;
-SELECT count(DISTINCT split_part(key, '/', 1)) FILTER (WHERE key ~ '/count\.txt$') > :parts AS rebuilt_beside
+SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') > :parts AS rebuilt_beside
   FROM chdb_search_blobs('docs_idx');
  rebuilt_beside 
 ----------------
@@ -76,7 +77,7 @@ SELECT count(DISTINCT split_part(key, '/', 1)) FILTER (WHERE key ~ '/count\.txt$
 (1 row)
 
 VACUUM docs;
-SELECT count(DISTINCT split_part(key, '/', 1)) FILTER (WHERE key ~ '/count\.txt$') <= :parts AS old_generation_gone
+SELECT count(DISTINCT split_part(key, '/', 2)) FILTER (WHERE key ~ '/count\.txt$') <= :parts AS old_generation_gone
   FROM chdb_search_blobs('docs_idx');
  old_generation_gone 
 ---------------------

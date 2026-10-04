@@ -31,9 +31,14 @@ chdb_pagestore_serve(chdbChannel* page);
 extern void
 chdb_pagestore_engine_gone(void);
 
-/* The blobs of a storage, from any process of the database: the debug function's. */
+/* The blobs of a storage under `prefix`, from any process of the database. */
 extern void
-chdb_pagestore_list(const char* storage, chdbBlobListSink sink, void* ud);
+chdb_pagestore_list(
+    const char* storage,
+    const char* prefix,
+    chdbBlobListSink sink,
+    void* ud
+);
 
 /*
  * The engine dropped the index's database: its storage goes, with whatever

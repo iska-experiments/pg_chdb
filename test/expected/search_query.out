@@ -249,7 +249,6 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ 'run+ing' AND body @@% 'R
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs WHERE body @@/ 'run+ing';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)run+ing')
 SELECT id FROM docs WHERE body @@% 'Run%';
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (lowerUTF8("body") LIKE lowerUTF8('Run%'))

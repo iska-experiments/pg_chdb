@@ -43,24 +43,5 @@ VACUUM docs;
 RESET client_min_messages;
 RESET chdb_search.vacuum_optimize_ratio;
 
--- A store the fail-safe check refuses (see search_stub_scan) is not deleted
--- from either: VACUUM raises, or in skip mode leaves the store alone, and
--- the catalog's figures for it as they were rather than counting a store it
--- did not read.
-SELECT reltuples AS before FROM pg_class WHERE relname = 'docs_idx' \gset
-SET chdb_search_stub.ctids = '3,4';
-DELETE FROM docs WHERE id = 3;
-CALL pg_temp.wait_removable();
-SET chdb_search_stub.meta = '1';
-VACUUM docs;
-SET chdb_search.unavailable_index = skip;
-SET client_min_messages = debug1;
-VACUUM docs;
-RESET client_min_messages;
-SELECT relpages, reltuples = :before AS kept FROM pg_class WHERE relname = 'docs_idx';
-RESET chdb_search.unavailable_index;
-RESET chdb_search_stub.meta;
-RESET chdb_search_stub.ctids;
-
 DROP TABLE docs;
 DROP EXTENSION chdb_search;

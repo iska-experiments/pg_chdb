@@ -152,8 +152,17 @@ extern char*
 chdb_search_table_name(Relation index);
 extern char*
 chdb_search_table_of(Oid indexoid, uint64 generation);
+/* `idx_<oid>.t_<generation>_tx_<fxid>`, the staging table of a transaction. */
+extern char*
+chdb_search_staging_of(Oid indexoid, uint64 generation, uint64 fxid);
 extern char*
 chdb_search_create_sql(Relation index);
+/* The staging table of transaction `fxid`, defined as the index's table is. */
+extern char*
+chdb_search_staging_sql(Relation index, uint64 fxid);
+/* ATTACH TABLE IF NOT EXISTS for the index's table, or for a staging table. */
+extern char*
+chdb_search_attach_sql(Relation index, uint64 fxid);
 extern char*
 chdb_search_structure(const ChdbColumn* cols, int natts);
 extern char*
@@ -174,14 +183,11 @@ chdb_search_warn_failure(Oid indexoid);
 
 /* ---- meta.c ---- */
 /*
- * Whether this server can serve the index's store now: the server is not in
- * recovery (Phase 0 keeps the store in a local directory that base backups,
- * standbys and pg_rewind do not make current), and the store's meta table
- * agrees with the metapage on the generation and the last flush. The store
- * is asked once per (generation, flushed_lsn) a backend sees: a verdict in
- * favour is kept in rd_amcache. A scan proves this before returning any row,
- * VACUUM before deleting, a commit before flushing, the planner before
- * costing in skip mode.
+ * Whether this server can serve the index's store now: the store lives in
+ * the index relation's pages, so it is as current as the relation, but a
+ * server in recovery does not serve it yet. A scan proves this before
+ * returning any row, VACUUM before deleting, a commit before flushing, the
+ * planner before costing in skip mode.
  */
 extern bool
 chdb_search_store_unavailable(Relation index);

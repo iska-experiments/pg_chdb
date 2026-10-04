@@ -26,6 +26,8 @@ my $oid = $node->safe_psql(postgres => "SELECT 'docs_idx'::regclass::oid");
 
 # A prepared row is in the store and hidden by the heap.
 my $offset = -s $node->logfile;
+my $flushed = q{SELECT flushed_lsn FROM chdb_search_metapage('docs_idx')};
+my $before  = $node->safe_psql(postgres => $flushed);
 $node->safe_psql(postgres => q{
     BEGIN;
     INSERT INTO docs VALUES (3, 'Hiking boots');
@@ -34,8 +36,8 @@ $node->safe_psql(postgres => q{
 ok $node->log_contains(
     qr/chdb_search insert: INSERT INTO idx_$oid\.t_\d+ .* -- 1 rows/, $offset),
     'PREPARE should flush the buffered row';
-ok $node->log_contains(qr/chdb_search exec: INSERT INTO idx_$oid\.meta /, $offset),
-    'PREPARE should record the flush in the store';
+is $node->safe_psql(postgres => "SELECT ($flushed) > '$before'"), 't',
+    'PREPARE should record the flush in the metapage';
 is store_rows($node), 3, 'The store should hold the prepared row';
 is search_ids($node, 'boots'), 2, 'A search should not return the prepared row';
 

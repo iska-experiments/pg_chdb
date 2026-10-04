@@ -168,7 +168,7 @@ chdb_search_aminsert(
     }
     chdb_rowwriter_append(p->rw, ht_ctid, GetCurrentTransactionId(), values, isnull);
     if (chdb_rowwriter_bytes(p->rw) >= (size_t)chdb_search_flush_threshold_kb * 1024) {
-        chdb_search_stage_rows(p);
+        chdb_search_stage_rows(p, index);
     }
 
     /* The index never reports a uniqueness violation. */

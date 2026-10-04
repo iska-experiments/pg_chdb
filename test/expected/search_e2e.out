@@ -38,7 +38,7 @@ LANGUAGE sql AS $$
         'SELECT toInt64(ctid), body, tags, price FROM %s ORDER BY ctid', $1
     )) AS (ctid bigint, body text, tags text[], price numeric)
 $$;
--- The generation tables of the store; the meta table beside them stays.
+-- The generation tables of the store.
 CREATE FUNCTION pg_temp.tables(oid)
 RETURNS bigint
 LANGUAGE sql AS $$

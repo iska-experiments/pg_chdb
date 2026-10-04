@@ -189,7 +189,7 @@ chdb_search_debug_blobs(PG_FUNCTION_ARGS) {
     must_be_index(indexoid);
     InitMaterializedSRF(fcinfo, 0);
     chdb_pagestore_list(
-        psprintf(CHDB_STORE_STORAGE_FMT, indexoid), blob_row, fcinfo->resultinfo
+        psprintf(CHDB_STORE_STORAGE_FMT, indexoid), "", blob_row, fcinfo->resultinfo
     );
 
     return (Datum)0;

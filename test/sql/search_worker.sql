@@ -14,13 +14,11 @@ SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
 SELECT chdb_search_drop();
 SELECT chdb_search_drop();
 
--- The store keeps a meta table beside its generation tables, made with the
--- database on the first request for the index, where the access method will
--- record each flush. A DROP DATABASE run as a statement is a drop too: the
--- next request makes both again.
-SELECT * FROM chdb_search_query('SELECT name FROM system.tables WHERE database = ''idx_0''') AS (name text);
+-- The index's database is made on the first request for it, and a DROP
+-- DATABASE run as a statement is a drop too: the next request makes it again.
+SELECT * FROM chdb_search_query('SELECT count() FROM system.databases WHERE name = ''idx_0''') AS (n bigint);
 SELECT chdb_search_exec('DROP DATABASE idx_0 SYNC');
-SELECT * FROM chdb_search_query('SELECT name FROM system.tables WHERE database = ''idx_0''') AS (name text);
+SELECT * FROM chdb_search_query('SELECT count() FROM system.databases WHERE name = ''idx_0''') AS (n bigint);
 
 SELECT chdb_search_exec('CREATE TABLE idx_0.t (id UInt64, body String) ENGINE = MergeTree ORDER BY id');
 
@@ -104,7 +102,9 @@ SELECT pg_backend_pid() = :backend_pid AS same_backend,
        (SELECT pid FROM pg_stat_activity
          WHERE backend_type = 'chdb_search worker' AND datname = current_database()) = :worker_pid AS same_worker;
 
--- Kill the worker; the next call starts another that finds the same store.
+-- Kill the worker; the next call starts another, which empties the engine's
+-- directory: the store tables of chdb indexes are attached again from the
+-- catalog on demand, but the debug database is gone with it.
 SELECT pid AS old_pid FROM pg_stat_activity
  WHERE backend_type = 'chdb_search worker' AND datname = current_database() \gset
 SELECT pg_terminate_backend(:old_pid);
@@ -119,7 +119,7 @@ BEGIN
         PERFORM pg_sleep(0.025);
     END LOOP;
 END $$;
-SELECT * FROM chdb_search_query('SELECT count() FROM idx_0.t') AS (n bigint);
+SELECT * FROM chdb_search_query('SELECT count() FROM system.tables WHERE database = ''idx_0''') AS (n bigint);
 SELECT pid <> :old_pid AS restarted FROM pg_stat_activity
  WHERE backend_type = 'chdb_search worker' AND datname = current_database();
 

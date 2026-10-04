@@ -46,11 +46,16 @@ is $node->safe_psql(postgres => $search), 0,
 # disk so that the transaction is seen to be over.
 $node->safe_psql(postgres => 'CHECKPOINT');
 
-# Crash recovery restarts everything; the staging table is still there.
+# Crash recovery restarts everything, the worker among it, which starts its
+# engine without tables and attaches the index's, the staging table among
+# them, when the first request names the index.
 my $offset = -s $node->logfile;
 is kill('KILL', $pid), 1, 'Should kill the backend';
 $node->wait_for_log(qr/database system is ready to accept connections/, $offset);
 eval { $victim->quit };
+is $node->safe_psql(postgres =>
+    "SET enable_seqscan = off; SELECT id FROM docs WHERE body @@@ 'boots'"), 2,
+    'The index should answer after the crash';
 like store_tables($node, $oid), qr/^t_\d+_tx_\d+$/m, 'The staging table should survive the crash';
 is $node->safe_psql(postgres => 'SELECT count(*) FROM docs WHERE id > 1000'), 0,
     'The rows should not';

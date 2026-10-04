@@ -56,7 +56,7 @@ chdb_search_append_from(
 ) {
     const char* excluded;
     char* table  = chdb_search_table_name(index);
-    char* staged = chdb_search_staged_table(RelationGetRelid(index), &excluded);
+    char* staged = chdb_search_staged_table(index, &excluded);
 
     if (!staged) {
         appendStringInfo(buf, " FROM %s", table);

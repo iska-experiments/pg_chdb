@@ -182,7 +182,7 @@ chdb_search_append_from(
  * since rolled back, or NULL.
  */
 extern char*
-chdb_search_staged_table(Oid indexoid, const char** excluded);
+chdb_search_staged_table(Relation index, const char** excluded);
 
 /*
  * The pieces, for builders that select other things. The WHERE part appends

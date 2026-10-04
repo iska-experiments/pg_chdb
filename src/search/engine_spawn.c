@@ -77,7 +77,7 @@ engine_ensure(Oid dboid) {
         program,
         CppAsString2(CHDB_SEARCH_ENGINE_FD),
         CppAsString2(CHDB_SEARCH_PAGE_FD),
-        psprintf("%s/" CHDB_SEARCH_DIR "/%u", DataDir, dboid),
+        psprintf("%s/" CHDB_SEARCH_ENGINE_DIR_FMT, DataDir, dboid),
         NULL,
     };
 

@@ -6,12 +6,15 @@
  * the savepoint levels whose rows were staged, so that a rollback of one
  * excludes its rows (by their xmin) from what the staging table contributes.
  *
- * The staging table is named by the full transaction id. Its only cleanup
- * from this backend is the drop buffer.c runs at abort, which a crash or OOM
- * kill skips; the VACUUM sweep in vacuum.c then removes it once the
- * transaction is over, and a 32-bit xid come round after wraparound would
- * have found it in the way. The drops name no generation: they clean up
- * after a build whose table may be gone already.
+ * The staging table is named by the full transaction id, and defined as the
+ * index's table is but for its name, UUID and key prefix (ddl.c), on the
+ * index's own storage, so that a worker starting afresh can attach it again
+ * from what the index's pages hold (attach.c). Its only cleanup from this
+ * backend is the drop buffer.c runs at abort, which a crash or OOM kill
+ * skips; the VACUUM sweep in vacuum.c then removes it once the transaction
+ * is over, and a 32-bit xid come round after wraparound would have found it
+ * in the way. The drops name no generation: they clean up after a build
+ * whose table may be gone already.
  */
 
 #include "postgres.h"
@@ -66,15 +69,12 @@ send_rows(Pending* p, const char* table) {
 }
 
 void
-chdb_search_stage_rows(Pending* p) {
+chdb_search_stage_rows(Pending* p, Relation index) {
     if (!p->staging) {
+        uint64 fxid       = U64FromFullTransactionId(GetTopFullTransactionId());
         MemoryContext old = MemoryContextSwitchTo(TopTransactionContext);
 
-        p->staging = psprintf(
-            "%s_tx_" UINT64_FORMAT,
-            p->table,
-            U64FromFullTransactionId(GetTopFullTransactionId())
-        );
+        p->staging = chdb_search_staging_of(p->indexoid, p->generation, fxid);
         MemoryContextSwitchTo(old);
 
         /* Named before it is made, so a CREATE that fails halfway is dropped too. */
@@ -82,9 +82,7 @@ chdb_search_stage_rows(Pending* p) {
             p->indexoid, 0, psprintf("DROP TABLE IF EXISTS %s SYNC", p->staging)
         );
         chdb_search_run(
-            p->indexoid,
-            p->generation,
-            psprintf("CREATE TABLE %s AS %s", p->staging, p->table)
+            p->indexoid, p->generation, chdb_search_staging_sql(index, fxid)
         );
     }
     if (send_rows(p, p->staging)) {
@@ -99,15 +97,15 @@ chdb_search_stage_rows(Pending* p) {
  * `xmin NOT IN` list the table is to be read with, NULL for none.
  */
 char*
-chdb_search_staged_table(Oid indexoid, const char** excluded) {
-    Pending* p = chdb_search_pending_of(indexoid);
+chdb_search_staged_table(Relation index, const char** excluded) {
+    Pending* p = chdb_search_pending_of(RelationGetRelid(index));
 
     *excluded = NULL;
     if (!p) {
         return NULL;
     }
     if (chdb_rowwriter_rows(p->rw)) {
-        chdb_search_stage_rows(p);
+        chdb_search_stage_rows(p, index);
     }
     if (p->staging) {
         *excluded = chdb_search_excluded_xids(p);

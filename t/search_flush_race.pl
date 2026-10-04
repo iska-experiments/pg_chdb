@@ -1,14 +1,12 @@
 #!/usr/bin/perl
 
-# The fail-safe check reads the index's metapage and then asks the store for
-# its last flush; a flush writes the store and then the metapage; and the
-# worker serves one request at a time. A check whose request queued behind
-# another backend's flush saw the store ahead of a metapage that backend had
-# yet to write, and refused a current store: an error, or in skip mode a
-# search with no rows and a VACUUM leaving its deletes undone. The check and
-# the flush now take a lock on the metapage, shared and exclusive, so that
-# writers and readers of one index never see a flush half done, whatever
-# their number and timing.
+# Writers committing a row at a time, each commit a flush into the store,
+# while readers search through the index: no flush and no search may fail,
+# every search answers, and the index ends up holding every committed row.
+# This once pinned a race between the fail-safe check and a flush under a
+# lock on the metapage; the check is gone with the store in the index's own
+# pages, and the test stays as the one that runs the two paths against each
+# other.
 
 use v5.34;
 use strict;

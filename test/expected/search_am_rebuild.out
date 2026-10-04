@@ -23,9 +23,8 @@ BEGIN;
 REINDEX INDEX docs_idx;
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 \echo -- TRUNCATE rebuilds every index of the table
@@ -36,14 +35,12 @@ DEBUG:  building index "docs_pkey" on table "docs" serially
 DEBUG:  index "docs_pkey" can safely use deduplication
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
@@ -62,14 +59,12 @@ DEBUG:  building index "docs_pkey" on table "docs" serially
 DEBUG:  index "docs_pkey" can safely use deduplication
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK TO s;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
@@ -81,14 +76,12 @@ ALTER TABLE docs ALTER COLUMN id TYPE bigint;
 DEBUG:  rewriting table "docs"
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "docs_pkey" on table "docs" serially
 DEBUG:  index "docs_pkey" can safely use deduplication
 ROLLBACK;
@@ -102,14 +95,12 @@ DEBUG:  building index "docs_pkey" on table "docs" serially
 DEBUG:  index "docs_pkey" can safely use deduplication
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
@@ -118,7 +109,6 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 SET enable_seqscan = off;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
@@ -135,9 +125,8 @@ DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx
 REINDEX INDEX docs_idx;
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 -- (With the worker, VACUUM now drops the previous generation; the stub
 -- client returns no table names, so the statement is checked by search_e2e.)
@@ -153,13 +142,10 @@ INSERT INTO docs (id, body) VALUES (9, 'running shoes');
 REINDEX INDEX docs_idx;
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 3 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 COMMIT;
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- TRUNCATE rebuilds both indexes: nothing is sent at COMMIT
 -- TRUNCATE rebuilds both indexes: nothing is sent at COMMIT
 BEGIN;
@@ -169,14 +155,12 @@ DEBUG:  building index "docs_pkey" on table "docs" serially
 DEBUG:  index "docs_pkey" can safely use deduplication
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 COMMIT;
 \echo -- a rebuild rolled back to a savepoint gives the rows back
 -- a rebuild rolled back to a savepoint gives the rows back
@@ -186,19 +170,14 @@ SAVEPOINT s;
 REINDEX INDEX docs_idx;
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 INSERT INTO docs (id, body) VALUES (12, 'rolled back with the rebuild');
 ROLLBACK TO s;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 COMMIT;
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- a released one keeps them
 -- a released one keeps them
 BEGIN;
@@ -207,27 +186,20 @@ SAVEPOINT s;
 REINDEX INDEX docs_idx;
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RELEASE s;
 INSERT INTO docs (id, body) VALUES (14, 'sent to the new table');
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- control: one insert per index
 -- control: one insert per index
 BEGIN;
 INSERT INTO docs (id, body) VALUES (15, 'control');
 COMMIT;
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 ----------------------------------------------------------------------------
 -- Two-phase commit: a store drop cannot be carried past PREPARE
@@ -255,10 +227,7 @@ BEGIN;
 INSERT INTO docs (id, body) VALUES (16, 'x');
 PREPARE TRANSACTION 'r';
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ERROR:  prepared transactions are disabled
 \echo -- a rebuild may be prepared: the abort would only have dropped a table VACUUM sweeps
 -- a rebuild may be prepared: the abort would only have dropped a table VACUUM sweeps
@@ -271,9 +240,8 @@ BEGIN;
 REINDEX INDEX docs_idx;
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 4 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 SET LOCAL client_min_messages = warning;
 PREPARE TRANSACTION 's';
 ERROR:  prepared transactions are disabled
@@ -320,9 +288,8 @@ DEBUG:  chdb_search drop: idx_N
 CREATE INDEX docs_expr ON docs USING chdb ((lower(body)), (lower(title)));
 DEBUG:  building index "docs_expr" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "lower" Nullable(String), "lower1" Nullable(String), INDEX "lower_idx" "lower" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("lower")), INDEX "lower1_idx" "lower1" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("lower1"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "lower" Nullable(String), "lower1" Nullable(String), INDEX "lower_idx" "lower" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("lower")), INDEX "lower1_idx" "lower1" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("lower1"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "lower", "lower1") -- 4 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DROP INDEX docs_expr;
 DEBUG:  chdb_search drop: idx_N
 RESET client_min_messages;
@@ -336,7 +303,7 @@ SELECT to_hex(magic), version, generation <> '0', flushed_lsn > '0/0'
   FROM chdb_search_metapage('docs_idx');
   to_hex  | version | ?column? | ?column? 
 ----------+---------+----------+----------
- 43484453 |       1 | t        | t
+ 43484453 |       2 | t        | t
 (1 row)
 
 SELECT * FROM chdb_search_metapage('docs_pkey');
@@ -361,11 +328,8 @@ BEGIN;
 INSERT INTO docs (id) VALUES (30);
 DROP INDEX docs_tmp;
 COMMIT;
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search drop: idx_N
 RESET client_min_messages;
@@ -388,14 +352,12 @@ SET client_min_messages = debug1;
 CREATE INDEX ON p USING chdb (b);
 DEBUG:  building index "p1_b_idx" on table "p1" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "b" Nullable(String), INDEX "b_idx" "b" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("b"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "b" Nullable(String), INDEX "b_idx" "b" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("b"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "b") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "p2_b_idx" on table "p2" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "b" Nullable(String), INDEX "b_idx" "b" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("b"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "b" Nullable(String), INDEX "b_idx" "b" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("b"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "b") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DROP TABLE p;
 DEBUG:  chdb_search drop: idx_N
 DEBUG:  chdb_search drop: idx_N
@@ -423,9 +385,8 @@ BEGIN;
 CREATE INDEX docs_rolled ON docs USING chdb (title text_ops);
 DEBUG:  building index "docs_rolled" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 5 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK;
 DEBUG:  chdb_search drop: idx_N
 DROP TABLE docs;

@@ -1,9 +1,10 @@
 #!/usr/bin/perl
 
-# Stores and store directories whose owner went without the worker hearing of
-# it, among them the drops the object access hook never saw because the
-# dropping backend had not loaded chdb_search, and their removal by the worker
-# when it next starts.
+# What a worker's start sweeps: the engine's directory, a cache, goes whole,
+# so a database the engine held for a relation that is no chdb index, as a
+# drop the object access hook never saw because the dropping backend had not
+# loaded chdb_search leaves behind, is gone with the next worker; and the
+# directories and sockets of databases that no longer exist go with it.
 
 use v5.34;
 use strict;
@@ -19,7 +20,7 @@ plan skip_all => 'needs the chdb_search worker' if $ENV{CHDB_SEARCH_STUB};
 my $node = search_node('sweep');
 END { $node->stop if $node }
 
-my $pg_chdb = $node->data_dir . '/pg_chdb';
+my $pg_chdb = $node->data_dir . '/pg_chdb/pgsql_tmp';
 
 # Whether the store of index $oid exists, asked of the worker, which starts
 # one if none runs and so runs the sweep first.
@@ -51,31 +52,29 @@ sub make_store {
 }
 
 ORPHAN_STORE: {
-    # A store named after a relation that is no chdb index, as a dropped
-    # index's is once its OID is gone or reused.
+    # A database named after a relation that is no chdb index, as a dropped
+    # index's is once its OID is gone or reused: it lives in the engine's
+    # cache alone, which the next worker starts without.
     my $oid = $node->safe_psql(postgres => q{
         CREATE TABLE t (i int);
         SELECT 't'::regclass::oid;
     });
     $node->safe_psql(postgres =>
         "SELECT chdb_search_exec('CREATE DATABASE idx_$oid')");
-    is has_store($oid), 1, 'The store should exist while its worker runs';
-
-    # A build in progress holds its OID exclusively before the catalog shows
-    # the index, so a store whose OID cannot be share-locked is kept.
-    my $holder = $node->background_psql('postgres');
-    $holder->query_safe('BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE');
+    is has_store($oid), 1, 'The database should exist while its worker runs';
     stop_worker($node, 'postgres');
-    is has_store($oid), 1, 'A store whose OID is locked should be kept';
-    $holder->query_safe('COMMIT');
-    $holder->quit;
+    is has_store($oid), 0, 'The restarted worker should start without it';
 
+    # The index's own database is attached again on the first request for it.
+    my $idx = $node->safe_psql(postgres => "SELECT 'docs_idx'::regclass::oid");
+    is has_store($idx), 0, 'The index should have no database until it is asked for';
     my $offset = -s $node->logfile;
-    stop_worker($node, 'postgres');
-    is has_store($oid), 0, 'The restarted worker should sweep the store';
-    ok $node->log_contains(qr/chdb_search: swept orphan store idx_$oid\b/, $offset),
-        'Should log the sweep';
-    is has_store(0), 1, 'The debug database should stay';
+    is $node->safe_psql(postgres =>
+        "SET enable_seqscan = off; SELECT id FROM docs WHERE body @@@ 'boots'"), 2,
+        'The index should answer through a freshly attached table';
+    ok $node->log_contains(qr/chdb_search attach: ATTACH TABLE IF NOT EXISTS idx_$idx\.t_\d+ UUID/, $offset),
+        'Should log the attach';
+    is has_store($idx), 1, 'The index should have its database again';
 }
 
 MISSED_DROP: {
@@ -94,14 +93,12 @@ MISSED_DROP: {
         'Should hint at preloading';
     ok !$node->log_contains(qr/chdb_search drop: idx_$oid\b/, $offset),
         'Should have missed the drop';
-    is has_store($oid), 1, 'Should leave the store behind';
+    is has_store($oid), 1, 'Should leave the database in the engine';
 
-    # The worker's next start sweeps it before serving anything.
-    $offset = -s $node->logfile;
+    # The worker's next start empties the cache before serving anything, and
+    # nothing attaches a table for an index the catalog no longer has.
     stop_worker($node, 'postgres');
-    is has_store($oid), 0, 'The restarted worker should sweep the store';
-    ok $node->log_contains(qr/chdb_search: swept orphan store idx_$oid\b/, $offset),
-        'Should log the sweep';
+    is has_store($oid), 0, 'The restarted worker should start without it';
 }
 
 DROPPED_DATABASE: {

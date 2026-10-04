@@ -50,8 +50,13 @@ chdb_pagestore_init(void) {
 }
 
 void
-chdb_pagestore_list(const char* storage, chdbBlobListSink sink, void* ud) {
-    store->list(storage, "", sink, ud);
+chdb_pagestore_list(
+    const char* storage,
+    const char* prefix,
+    chdbBlobListSink sink,
+    void* ud
+) {
+    store->list(storage, prefix, sink, ud);
 }
 
 void

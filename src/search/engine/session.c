@@ -71,10 +71,10 @@ session_begin(const chdbSearchRequest* req) {
 }
 
 /*
- * The indexes whose database and meta table this engine has made. It is the
- * only process on the store, and a database goes only through a drop, which
- * forgets them all, so the DDL need run once per index; a full list only
- * costs repeats.
+ * The indexes whose database this engine has made. It is the only process
+ * on the store, and a database goes only through a drop, which forgets
+ * them all, so the DDL need run once per index; a full list only costs
+ * repeats.
  */
 static uint32_t prepared[128];
 static size_t nprepared;
@@ -95,13 +95,11 @@ session_forget(void) {
     nprepared = 0;
 }
 
-/* Registers the index's blob storage and makes its database and meta table, once. */
+/* Registers the index's blob storage and makes its database, once. */
 static char*
 prepare_database(uint32_t index) {
-    static const char* const ddl[] = {
-        "CREATE DATABASE IF NOT EXISTS " CHDB_STORE_DB_FMT, CHDB_STORE_META_DDL
-    };
     char storage[CHDB_PAGE_STORAGE_MAX];
+    char* sql = NULL;
 
     if (is_prepared(index)) {
         return NULL;
@@ -111,19 +109,15 @@ prepare_database(uint32_t index) {
     if (!pagestore_register(storage)) {
         return strdup("could not register the index's blob storage");
     }
-    for (size_t i = 0; i < sizeof(ddl) / sizeof(ddl[0]); i++) {
-        char* sql = NULL;
+    if (asprintf(&sql, "CREATE DATABASE IF NOT EXISTS " CHDB_STORE_DB_FMT, index) < 0) {
+        return strdup("out of memory");
+    }
 
-        if (asprintf(&sql, ddl[i], index, index) < 0) {
-            return strdup("out of memory");
-        }
+    char* err = session_run(sql, strlen(sql));
 
-        char* err = session_run(sql, strlen(sql));
-
-        free(sql);
-        if (err) {
-            return err;
-        }
+    free(sql);
+    if (err) {
+        return err;
     }
     if (nprepared < sizeof(prepared) / sizeof(prepared[0])) {
         prepared[nprepared++] = index;

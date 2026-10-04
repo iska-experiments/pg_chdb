@@ -32,9 +32,8 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'nomatch';
 (2 rows)
 
 SELECT id FROM docs WHERE body @@@ 'nomatch';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
@@ -70,21 +69,19 @@ COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "loc") -- 1 rows
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- a transaction that never searches sends one block at COMMIT, as before
 -- a transaction that never searches sends one block at COMMIT, as before
 BEGIN;
 INSERT INTO docs (id, body) VALUES (7, 'unread boots');
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "loc") -- 1 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- ROLLBACK drops the staging table
 -- ROLLBACK drops the staging table
 BEGIN;
 INSERT INTO docs (id, body) VALUES (8, 'rolled back');
 SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
@@ -103,7 +100,7 @@ SAVEPOINT s;
 INSERT INTO docs (id, body) VALUES (10, 'inner');
 SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 2 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
@@ -120,7 +117,6 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 COMMIT;
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N WHERE xmin NOT IN (N)
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ----------------------------------------------------------------------------
 -- COPY, and a transaction past flush_threshold, stage the same way
 ----------------------------------------------------------------------------
@@ -128,7 +124,7 @@ BEGIN;
 COPY docs (id, body) FROM stdin;
 SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 2 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
@@ -138,12 +134,11 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 COMMIT;
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 SET chdb_search.flush_threshold = '64kB';
 BEGIN;
 INSERT INTO docs (id, body) SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 51 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 51 rows
 SELECT id FROM docs WHERE body @@@ 'nomatch';
@@ -164,7 +159,6 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 COMMIT;
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET chdb_search.flush_threshold;
 ----------------------------------------------------------------------------
 -- The custom scan's statement reads the same union, the pushed LIMIT on
@@ -175,7 +169,7 @@ BEGIN;
 INSERT INTO docs (id, body) VALUES (3000, 'custom shoes');
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'nomatch' ORDER BY loc <-> '(0,0)' LIMIT 2;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
                                                                                                                                                                             QUERY PLAN                                                                                                                                                                             
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -196,7 +190,6 @@ DEBUG:  chdb_search select: SELECT ctid, _distance FROM (SELECT ctid, L2Distance
 COMMIT;
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 DROP TABLE docs;
 ALTER OPERATOR FAMILY columnar_ops USING chdb DROP OPERATOR 1 (point, point);

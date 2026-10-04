@@ -13,6 +13,7 @@
 #include "utils/memutils.h"
 
 #include "../channel.h"
+#include "attach.h"
 #include "engine_proc.h"
 #include "pagestore/pagestore.h"
 #include "protocol.h"
@@ -106,6 +107,11 @@ serve(chdbChannel* client, MemoryContext cxt) {
         /* Unknown commands carry unknown data, so the framing is gone. */
         send_status(client, false, "unknown command");
         return false;
+    }
+
+    /* A table the engine does not have yet is attached before the request runs. */
+    if (req.ctx.cmd != CHDB_CMD_DROP) {
+        chdb_search_attach(req.index, req.generation);
     }
 
     char* err = relay_request(client, &raw, req.ctx.cmd, &data_open);

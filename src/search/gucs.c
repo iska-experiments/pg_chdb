@@ -25,17 +25,19 @@ static const struct config_enum_entry unavailable_index_options[] = {
 
 /*
  * Prefixes whose run of digits the mask replaces: OID (in a database and a
- * storage name), generation (in a table name, a literal and a predicate),
- * xid, and the lists of numbers that are the generation and LSN of a meta
- * row and the excluded xids of a staging table.
+ * storage name), generation (in a table name and a key prefix), xid, and
+ * the excluded xids of a staging table, a list of numbers. A table's UUID,
+ * hex of the OID and the generation, is masked whole.
  */
 static const char* const masked_prefixes[] = {
-    "idx_", "'pg_", ".t_", "'t_", "_tx_", "generation = ", "VALUES (", "xmin NOT IN (",
+    "idx_", "'pg_", ".t_", "'t_", "_tx_", "'g", "'s", "xmin NOT IN (",
 };
+
+#define UUID_PREFIX "UUID '"
 
 /*
  * The statement as the log and EXPLAIN show it: as is, or with mask_oids
- * the index OIDs, store generations, transaction ids and WAL positions
+ * the index OIDs, store generations, table UUIDs and transaction ids
  * replaced by N, as they differ from run to run and tests compare the text.
  */
 const char*
@@ -49,6 +51,14 @@ chdb_search_mask_sql(const char* sql) {
     for (const char* p = sql; *p;) {
         size_t len = 0;
 
+        if (strncmp(p, UUID_PREFIX, strlen(UUID_PREFIX)) == 0) {
+            appendStringInfoString(&buf, UUID_PREFIX "N");
+            p += strlen(UUID_PREFIX);
+            while (*p && *p != '\'') {
+                p++;
+            }
+            continue;
+        }
         for (int i = 0; i < lengthof(masked_prefixes) && !len; i++) {
             if (strncmp(p, masked_prefixes[i], strlen(masked_prefixes[i])) == 0) {
                 len = strlen(masked_prefixes[i]);

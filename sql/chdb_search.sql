@@ -42,8 +42,7 @@ LANGUAGE C STRICT;
 
 -- The metapage of a chdb index, which ties it to its store: the magic (the
 -- bytes "CHDS" as a number), the version, the generation that names the
--- store table, and the WAL position of the last flush, which the store's
--- meta table must match for a scan to trust it.
+-- store table, and the WAL position of the last flush.
 CREATE FUNCTION chdb_search_metapage(
     regclass,
     OUT magic bigint, OUT version integer, OUT generation text, OUT flushed_lsn pg_lsn

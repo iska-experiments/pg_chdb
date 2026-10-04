@@ -77,38 +77,47 @@
 /*
  * The layout of a store, which the access method writes and the engine
  * checks: one chDB database per index, idx_<oid>, holding one table per
- * build, t_<generation>, named after the index's metapage generation, and a
- * meta table recording per generation the WAL position of the last flush
- * into it, which a backend compares with its metapage before trusting the
- * store. The engine makes the meta table with the database, so that the
- * comparison can be made of a store that has nothing else. Both tables keep
- * their parts on the index's callback object storage (CHDB_STORE_DISK_FMT),
- * whose blobs the worker holds; the meta DDL takes the index OID twice.
+ * build, t_<generation>, named after the index's metapage generation and
+ * given a UUID fixed by the two (ddl.c), so that a worker can attach what
+ * the index relation's pages hold without the engine's metadata. The
+ * table keeps its parts on the index's callback object storage
+ * (CHDB_STORE_DISK_FMT), whose blobs the worker holds, under a key prefix
+ * naming the generation, so that the worker tells the blobs of a rebuild
+ * being written beside the generation it still serves.
  */
 #define CHDB_STORE_DB_FMT "idx_%" PRIu32
 #define CHDB_STORE_TABLE_FMT CHDB_STORE_DB_FMT ".t_%" PRIu64
-#define CHDB_STORE_META_FMT CHDB_STORE_DB_FMT ".meta"
 
 /*
  * The callback object storage holding an index's blobs, which the engine
  * registers before a table is made on it (pagestore/protocol.h) and the
- * access method names in a table's SETTINGS, both from the index OID.
+ * access method names in a table's SETTINGS, both from the index OID. Each
+ * table has a key prefix of its own on the storage, as libchdb asks of
+ * disks sharing one: the generation for a build's table, the generation
+ * and the transaction for a staging table (staging.c), so that the worker
+ * can tell a generation's blobs apart and find its staging tables again.
+ * The disk format takes the index OID and the rendered prefix.
  */
 #define CHDB_STORE_STORAGE_FMT "pg_%" PRIu32
+#define CHDB_STORE_KEY_PREFIX_FMT "g%" PRIu64
+#define CHDB_STORE_STAGING_PREFIX_FMT "s%" PRIu64 "_tx_%" PRIu64
 #define CHDB_STORE_DISK_FMT                                                            \
-    "disk = disk(type = 'callback', storage_name = '" CHDB_STORE_STORAGE_FMT "')"
-#define CHDB_STORE_META_DDL                                                            \
-    "CREATE TABLE IF NOT EXISTS " CHDB_STORE_META_FMT                                  \
-    " (generation UInt64, lsn UInt64) ENGINE = ReplacingMergeTree(lsn) "               \
-    "ORDER BY generation SETTINGS " CHDB_STORE_DISK_FMT
+    "disk = disk(type = 'callback', storage_name = '" CHDB_STORE_STORAGE_FMT           \
+    "', key_prefix = '%s')"
 
 /*
- * The store directory under the data directory: a <dboid> subdirectory holding
- * each database's chDB store, and off Linux, where the worker's socket is
- * not abstract, the <dboid>.sock it listens on.
+ * The worker's directory under the data directory: pg_chdb/pgsql_tmp holds a
+ * <dboid> subdirectory for each database's engine, chDB's own metadata and
+ * scratch space, and off Linux, where the worker's socket is not abstract,
+ * the <dboid>.sock it listens on. The engine's directory is a cache the
+ * worker empties when it starts and refills from the catalog and the index
+ * pages (sweep.c, attach.c), so it is named for Postgres to leave out of
+ * base backups and pg_rewind, as it leaves out every pgsql_tmp.
  */
 #define CHDB_SEARCH_DIR "pg_chdb"
-#define CHDB_SEARCH_SOCKET_FMT CHDB_SEARCH_DIR "/%u.sock"
+#define CHDB_SEARCH_CACHE_DIR CHDB_SEARCH_DIR "/pgsql_tmp"
+#define CHDB_SEARCH_ENGINE_DIR_FMT CHDB_SEARCH_CACHE_DIR "/%u"
+#define CHDB_SEARCH_SOCKET_FMT CHDB_SEARCH_CACHE_DIR "/%u.sock"
 
 /* A decoded request. The query borrows from the frame it was decoded from. */
 typedef struct chdbSearchRequest {

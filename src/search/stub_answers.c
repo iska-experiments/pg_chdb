@@ -9,7 +9,6 @@
 
 #include <string.h>
 
-#include "access/genam.h"
 #include "catalog/pg_type_d.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -107,34 +106,6 @@ encode_ctids(const char* ctids, int ndist, int nscores, void** out) {
     return take_block(w, cxt, old, out);
 }
 
-/*
- * The store's answer to the fail-safe check of meta.c, (flushes, last flush,
- * tables) for the index's generation: by default what the metapage says, so
- * that the check passes as it does against a store that is current.
- */
-static size_t
-encode_meta(Oid indexoid, void** out) {
-    MemoryContext cxt, old;
-    Relation index = index_open(indexoid, AccessShareLock);
-    ChdbMetaPageData meta;
-    uint64 rows = 1, tables = 1;
-
-    chdb_meta_read(index, &meta);
-    index_close(index, AccessShareLock);
-    if (strcmp(chdb_search_stub_meta, "none") == 0) {
-        rows = tables = meta.flushed_lsn = 0;
-    } else if (*chdb_search_stub_meta) {
-        meta.flushed_lsn = strtoull(chdb_search_stub_meta, NULL, 10);
-    }
-
-    pgch_writer* w = block_writer("n UInt64, lsn UInt64, t UInt64", &cxt, &old);
-
-    pgch_append_datum(w, 0, Int64GetDatum((int64)rows), INT8OID, false);
-    pgch_append_datum(w, 1, Int64GetDatum((int64)meta.flushed_lsn), INT8OID, false);
-    pgch_append_datum(w, 2, Int64GetDatum((int64)tables), INT8OID, false);
-    return take_block(w, cxt, old, out);
-}
-
 /* The end of the list item at `p`: the next comma, or the end of the list. */
 static const char*
 item_end(const char* p) {
@@ -220,9 +191,6 @@ count_for(const char* sql) {
 
 size_t
 chdb_stub_answer(const char* sql, Oid indexoid, void** out) {
-    if (strstr(sql, ".meta WHERE generation = ")) {
-        return encode_meta(indexoid, out);
-    }
     if (strncmp(sql, "SELECT tokens(", 14) == 0) {
         return encode_tokens(chdb_search_stub_tokens, out);
     }

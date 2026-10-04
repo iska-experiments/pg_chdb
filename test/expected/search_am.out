@@ -138,9 +138,8 @@ CREATE INDEX docs_idx ON docs USING chdb (
 ) WITH (vacuum_optimize_ratio = 0.5);
 DEBUG:  building index "docs_idx" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), "title" Nullable(String), "tags" Array(Nullable(String)), "author" Nullable(String), "price" Nullable(Decimal(10,2)), "seen" Nullable(DateTime64(6, 'UTC')), "flag" Nullable(Bool), INDEX "body_idx" "body" TYPE text(tokenizer = ngrams(2), preprocessor = lowerUTF8("body"), support_phrase_search = 1), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title")), INDEX "tags_idx" "tags" TYPE text(tokenizer = array, preprocessor = lowerUTF8("tags"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1, allow_experimental_text_index_phrase_search = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "title" Nullable(String), "tags" Array(Nullable(String)), "author" Nullable(String), "price" Nullable(Decimal(10,2)), "seen" Nullable(DateTime64(6, 'UTC')), "flag" Nullable(Bool), INDEX "body_idx" "body" TYPE text(tokenizer = ngrams(2), preprocessor = lowerUTF8("body"), support_phrase_search = 1), INDEX "title_idx" "title" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("title")), INDEX "tags_idx" "tags" TYPE text(tokenizer = array, preprocessor = lowerUTF8("tags"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1, allow_experimental_text_index_phrase_search = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 \d docs_idx
                 Index "public.docs_idx"
@@ -167,29 +166,25 @@ CREATE INDEX docs_title ON docs USING chdb (
 );
 DEBUG:  building index "docs_title" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByString([' ', ',']), preprocessor = caseFoldUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 CREATE INDEX docs_regexp ON docs USING chdb (
     title text_ops (tokenizer = 'splitByRegexp', tokenizer_arg = '\s+''x', preprocessor = 'none')
 );
 DEBUG:  building index "docs_regexp" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByRegexp('\\s+\'x'))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = splitByRegexp('\\s+\'x'))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 CREATE INDEX docs_icu ON docs USING chdb (title text_ops (tokenizer = 'icu', tokenizer_arg = 'en'));
 DEBUG:  building index "docs_icu" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = icu('en'), preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "title" Nullable(String), INDEX "title_idx" "title" TYPE text(tokenizer = icu('en'), preprocessor = lowerUTF8("title"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 CREATE INDEX docs_html ON docs USING chdb (body text_ops (preprocessor = 'extractTextFromHTML'));
 DEBUG:  building index "docs_html" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = extractTextFromHTML("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = extractTextFromHTML("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 DROP INDEX docs_regexp, docs_icu, docs_html;
 -- Rejected options.
@@ -228,13 +223,11 @@ SET client_min_messages = debug1;
 CREATE INDEX kw_idx ON kw USING chdb ("index", "constraint" columnar_ops, inf, nan);
 DEBUG:  building index "kw_idx" on table "kw" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "index" Nullable(String), "constraint" Nullable(String), "inf" Nullable(Float64), "nan" Nullable(Float64), INDEX "index_idx" "index" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("index"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "index" Nullable(String), "constraint" Nullable(String), "inf" Nullable(Float64), "nan" Nullable(Float64), INDEX "index_idx" "index" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("index"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "index", "constraint", "inf", "nan") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 SET enable_seqscan = off;
 \o /dev/null
 SELECT * FROM kw WHERE inf = 1 AND nan < 2 AND "constraint" = 'x';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "constraint" = 'x' AND "inf" = toFloat64('1') AND "nan" < toFloat64('2')
 \o
 RESET enable_seqscan;
@@ -296,13 +289,11 @@ SET client_min_messages = debug1;
 CREATE INDEX mine_idx ON mine USING chdb (body my_text);
 DEBUG:  building index "mine_idx" on table "mine" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String)) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String)) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 SET enable_seqscan = off;
 \o /dev/null
 SELECT body FROM mine WHERE body @@@ 'running shoes';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
@@ -315,7 +306,6 @@ SET client_min_messages = debug1;
 SET enable_seqscan = off;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
@@ -361,9 +351,8 @@ CREATE INDEX docs_raw ON docs USING chdb (
 );
 DEBUG:  building index "docs_raw" on table "docs" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(replaceAll(body, '-', ' ')))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(replaceAll(body, '-', ' ')))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 DROP INDEX docs_raw;
 CREATE ROLE chdb_search_user NOSUPERUSER;

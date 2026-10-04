@@ -78,7 +78,7 @@ chdb_search_worker_main(Datum arg) {
     /* The engine the sweep starts asks for its blobs at once. */
     chdb_pagestore_init();
 
-    /* What drops without the library left behind goes before anything is served. */
+    /* The engine's stale cache and what drops left behind go before anything is served. */
     PG_TRY();
     { chdb_search_sweep(worker_dboid); }
     PG_CATCH();

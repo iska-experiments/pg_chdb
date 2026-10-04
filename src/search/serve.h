@@ -11,8 +11,8 @@
 /*
  * The address the worker of database `dboid` listens on and backends
  * connect to, and its length for bind() and connect(): a name in the
- * abstract namespace on Linux, else the file pg_chdb/<dboid>.sock in the
- * data directory (serve.c).
+ * abstract namespace on Linux, else the file pg_chdb/pgsql_tmp/<dboid>.sock
+ * in the data directory (serve.c).
  */
 extern socklen_t
 chdb_search_socket_addr(Oid dboid, struct sockaddr_un* addr);

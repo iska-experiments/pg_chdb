@@ -58,9 +58,9 @@ extern char*
 chdb_search_excluded_xids(Pending* p);
 
 /* ---- staging.c ---- */
-/* Moves the transaction's buffered rows for the index into its staging table. */
+/* Moves the transaction's buffered rows for `index` into its staging table. */
 extern void
-chdb_search_stage_rows(Pending* p);
+chdb_search_stage_rows(Pending* p, Relation index);
 /* Sends everything buffered and staged into the index's table, at commit. */
 extern void
 chdb_search_flush_pending(Pending* p);

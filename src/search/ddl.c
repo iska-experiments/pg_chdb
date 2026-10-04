@@ -12,6 +12,13 @@
  * lost is swept by the next VACUUM, since the build cannot read the previous
  * metapage once REINDEX has given the index a new relfilenode.
  *
+ * The table's UUID is fixed by the index OID and the generation, and its
+ * parts live on the index's callback object storage under a key prefix
+ * naming the generation, so that the engine's own metadata is a cache: a
+ * worker that starts without it attaches the table again with the same
+ * statement (chdb_search_attach_sql) and the disk finds the parts where
+ * the UUID puts them, which is what the index relation's pages hold.
+ *
  * ctid encoding. The first column is `ctid UInt64`, the heap TID packed as
  * (block << 16) | offset, which is ORDER BY key and the join back to the heap.
  * Block numbers need 32 bits and offsets 16, so 48 bits are used and the
@@ -32,15 +39,19 @@
  * (tokenizer = 'ngrams', ngram_size = 3), tags text_array_ops, author columnar_ops):
  *
  *   CREATE DATABASE IF NOT EXISTS idx_16401
- *   CREATE TABLE idx_16401.t_7342 (ctid UInt64, xmin UInt32, "body" Nullable(String),
+ *   CREATE TABLE idx_16401.t_7342 UUID '00004011-0000-0000-0000-1cae00000000'
+ *     (ctid UInt64, xmin UInt32, "body" Nullable(String),
  *     "tags" Array(Nullable(String)), "author" Nullable(String),
  *     INDEX "body_idx" "body" TYPE text(tokenizer = ngrams(3),
  *       preprocessor = lowerUTF8("body")),
  *     INDEX "tags_idx" "tags" TYPE text(tokenizer = array,
  *       preprocessor = lowerUTF8("tags")))
  *     ENGINE = MergeTree ORDER BY ctid
- *     SETTINGS disk = disk(type = 'callback', storage_name = 'pg_16401'),
+ *     SETTINGS disk = disk(type = 'callback', storage_name = 'pg_16401',
+ *       key_prefix = 'g7342'),
  *       enable_block_number_column = 1, enable_block_offset_column = 1
+ *   ATTACH TABLE IF NOT EXISTS idx_16401.t_7342 UUID '...' (the same)
+ *   CREATE TABLE idx_16401.t_7342_tx_912 UUID '...' (the same, key_prefix = 's7342_tx_912')
  *   INSERT INTO idx_16401.t_7342 (ctid, xmin, "body", "tags", "author")
  *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'running shoes')
  *   DELETE FROM idx_16401.t_7342 WHERE ctid IN (4294967296, ...)
@@ -88,14 +99,50 @@ chdb_search_structure(const ChdbColumn* cols, int natts) {
     return buf.data;
 }
 
+/* `idx_<oid>.t_<generation>_tx_<fxid>`, a transaction's staging table. */
 char*
-chdb_search_create_sql(Relation index) {
-    ChdbColumn* cols = chdb_search_columns(index);
+chdb_search_staging_of(Oid indexoid, uint64 generation, uint64 fxid) {
+    return psprintf(CHDB_STORE_TABLE_FMT "_tx_" UINT64_FORMAT, indexoid, generation, fxid);
+}
+
+/*
+ * A table's UUID, from the index OID, the generation and, for a staging
+ * table, the transaction: 32 hex digits in the 8-4-4-4-12 groups. ClickHouse
+ * checks no version bits.
+ */
+static char*
+table_uuid(Oid indexoid, uint64 generation, uint64 fxid) {
+    return psprintf(
+        "%08x-%04x-%04x-%04x-%04x%08x",
+        indexoid,
+        (unsigned)(generation >> 48),
+        (unsigned)((generation >> 32) & 0xffff),
+        (unsigned)((generation >> 16) & 0xffff),
+        (unsigned)(generation & 0xffff),
+        (unsigned)(fxid & 0xffffffff)
+    );
+}
+
+/*
+ * `verb` (CREATE TABLE, or ATTACH TABLE IF NOT EXISTS) and the table's whole
+ * definition: the build's table for a zero `fxid`, else that transaction's
+ * staging table, which differs in name, UUID and key prefix alone.
+ */
+static char*
+table_sql(Relation index, const char* verb, uint64 fxid) {
+    ChdbColumn* cols  = chdb_search_columns(index);
+    Oid oid           = RelationGetRelid(index);
+    uint64 generation = chdb_meta_generation(index);
     StringInfoData buf;
 
     initStringInfo(&buf);
     appendStringInfo(
-        &buf, "CREATE TABLE %s (ctid UInt64, xmin UInt32", chdb_search_table_name(index)
+        &buf,
+        "%s %s UUID '%s' (ctid UInt64, xmin UInt32",
+        verb,
+        fxid ? chdb_search_staging_of(oid, generation, fxid)
+             : chdb_search_table_of(oid, generation),
+        table_uuid(oid, generation, fxid)
     );
     for (int i = 0; i < index->rd_att->natts; i++) {
         appendStringInfo(&buf, ", %s %s", cols[i].name, cols[i].type);
@@ -122,20 +169,22 @@ chdb_search_create_sql(Relation index) {
     }
     /*
      * The parts live on the index's callback object storage, whose blobs
-     * the worker holds (pagestore/), and are durable when the worker says a
-     * commit is, so that the rows a flush sends are safe before the COMMIT
-     * that follows it is acknowledged, as Postgres promises for its own
-     * data. The block columns let VACUUM's DELETE patch parts in place
-     * (vacuum.c) instead of rewriting them with a mutation, which the disk
-     * does not allow; a store from before they were set takes them with
-     * ALTER TABLE ... MODIFY SETTING, no REINDEX. One SETTINGS clause:
-     * ClickHouse rejects a second.
+     * the worker holds (pagestore/) in the index relation's pages, written
+     * ahead of the COMMIT that follows a flush in the WAL, so that the rows
+     * a flush sends are as safe as Postgres's own data. The block columns
+     * let VACUUM's DELETE patch parts in place (vacuum.c) instead of
+     * rewriting them with a mutation, which the disk does not allow; a
+     * store from before they were set takes them with ALTER TABLE ...
+     * MODIFY SETTING, no REINDEX. One SETTINGS clause: ClickHouse rejects a
+     * second.
      */
     appendStringInfo(
         &buf,
         ") ENGINE = MergeTree ORDER BY ctid SETTINGS " CHDB_STORE_DISK_FMT
         ", enable_block_number_column = 1, enable_block_offset_column = 1",
-        RelationGetRelid(index)
+        oid,
+        fxid ? psprintf(CHDB_STORE_STAGING_PREFIX_FMT, generation, fxid)
+             : psprintf(CHDB_STORE_KEY_PREFIX_FMT, generation)
     );
     if (chdb_search_wants_phrase_search(cols, index->rd_att->natts)) {
         /* ClickHouse gates the index argument behind a MergeTree setting. */
@@ -144,6 +193,27 @@ chdb_search_create_sql(Relation index) {
         );
     }
     return buf.data;
+}
+
+char*
+chdb_search_create_sql(Relation index) {
+    return table_sql(index, "CREATE TABLE", 0);
+}
+
+char*
+chdb_search_staging_sql(Relation index, uint64 fxid) {
+    return table_sql(index, "CREATE TABLE", fxid);
+}
+
+/*
+ * The statements that put the index's current table, or a transaction's
+ * staging table, back into an engine whose metadata does not have it: the
+ * parts are found by the disk under the key prefix, and a table the engine
+ * has is left alone.
+ */
+char*
+chdb_search_attach_sql(Relation index, uint64 fxid) {
+    return table_sql(index, "ATTACH TABLE IF NOT EXISTS", fxid);
 }
 
 /* `(ctid, xmin, a, b)`, the columns a Native INSERT names, in block order. */

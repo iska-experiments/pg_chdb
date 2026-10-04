@@ -34,7 +34,6 @@ SET enable_seqscan = off;
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 SELECT id FROM docs WHERE body @@? 'it''s a \back\slash';
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAnyTokens("body", 'it\'s a \\back\\slash')
@@ -91,12 +90,10 @@ SET client_min_messages = debug1;
 CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v columnar_ops, arr text_array_ops);
 DEBUG:  building index "types_idx" on table "types" serially
 DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
-DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "i2" Nullable(Int16), "i4" Nullable(Int32), "i8" Nullable(Int64), "f4" Nullable(Float32), "f8" Nullable(Float64), "n" Nullable(Decimal256(38)), "d" Nullable(Date32), "ts" Nullable(DateTime64(6, 'UTC')), "u" Nullable(UUID), "v" Nullable(String), "arr" Array(Nullable(String)), INDEX "arr_idx" "arr" TYPE text(tokenizer = array, preprocessor = lowerUTF8("arr"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N'), enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N UUID 'N' (ctid UInt64, xmin UInt32, "i2" Nullable(Int16), "i4" Nullable(Int32), "i8" Nullable(Int64), "f4" Nullable(Float32), "f8" Nullable(Float64), "n" Nullable(Decimal256(38)), "d" Nullable(Date32), "ts" Nullable(DateTime64(6, 'UTC')), "u" Nullable(UUID), "v" Nullable(String), "arr" Array(Nullable(String)), INDEX "arr_idx" "arr" TYPE text(tokenizer = array, preprocessor = lowerUTF8("arr"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'gN'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "i2", "i4", "i8", "f4", "f8", "n", "d", "ts", "u", "v", "arr") -- 0 rows
-DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \o /dev/null
 SELECT * FROM types WHERE i2 = 1::int2 AND i4 = 2 AND i8 = 3::int8 AND v = 'x' AND d = '2026-01-02';
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "i2" = 1 AND "i4" = 2 AND "i8" = 3 AND "d" = toDate32(20455) AND "v" = 'x'
 SELECT * FROM types WHERE i2 = 1 AND i8 = 2 AND i4 > 3::int8 AND f4 < 0.5 AND f8 >= 1::real;
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "i2" = 1 AND "i4" > 3 AND "i8" = 2 AND "f4" < toFloat64('0.5') AND "f8" >= toFloat32('1')
@@ -200,7 +197,6 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (1,2)) AS _distance FROM idx_N.t_N ORDER BY _distance
 SELECT id FROM docs WHERE body @@@ 'shoes' ORDER BY loc <-> '(1,2)', loc <-> '(3,4)' LIMIT 2;
 DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (1,2)) AS _distance1, L2Distance("loc", (3,4)) AS _distance2 FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes') ORDER BY _distance1, _distance2

@@ -16,12 +16,6 @@
  *                                 for count(*), is their number.
  *   chdb_search_stub.fail         reading the answer fails, as a lost worker
  *                                 would
- *   chdb_search_stub.meta         what the store says of the index's
- *                                 generation when the fail-safe check
- *                                 (meta.c) asks: empty, the default, agrees
- *                                 with the metapage; 'none' has neither
- *                                 table nor flush for it; a number is the
- *                                 WAL position of its last flush
  *   chdb_search_stub.tokens       what tokens() makes of any needle,
  *                                 comma-separated
  *   chdb_search_stub.frequencies  `token:n` pairs, comma-separated: the
@@ -48,7 +42,6 @@
 #include "stub.h"
 
 char* chdb_search_stub_ctids       = NULL;
-char* chdb_search_stub_meta        = NULL;
 char* chdb_search_stub_tokens      = NULL;
 char* chdb_search_stub_frequencies = NULL;
 static bool stub_fail              = false;
@@ -88,19 +81,6 @@ chdb_search_client_init(void) {
         NULL,
         &stub_fail,
         false,
-        PGC_USERSET,
-        0,
-        NULL,
-        NULL,
-        NULL
-    );
-    DefineCustomStringVariable(
-        "chdb_search_stub.meta",
-        "What the stub worker client's store says of the index's generation.",
-        "Empty agrees with the metapage; 'none' has no table and no flush for it; a "
-        "number is the WAL position of its last flush.",
-        &chdb_search_stub_meta,
-        "",
         PGC_USERSET,
         0,
         NULL,

@@ -8,8 +8,9 @@
  * object_access_hook sees every dropped relation, including those removed by
  * DROP TABLE and DROP SCHEMA ... CASCADE, and records indexes of this access
  * method, and it sees a dropped database, whose per-database directory
- * pg_chdb/<dboid>, and socket file off Linux, it removes at commit. Only
- * backends that loaded chdb_search run the hook, so the library belongs in
+ * pg_chdb/pgsql_tmp/<dboid>, and socket file off Linux, it removes at
+ * commit. Only backends that loaded chdb_search run the hook, so the
+ * library belongs in
  * shared_preload_libraries or session_preload_libraries; a backend that loads
  * it on demand inside a DROP says so in the log. A store the hook missed is
  * swept by the worker when it next starts (sweep.c): the idx_<oid> databases
@@ -32,7 +33,7 @@
 typedef struct Deferred {
     Oid indexoid;
     char* sql; /* NULL drops the whole store, unless dir is set */
-    bool dir;  /* remove the index's database's pg_chdb directory instead */
+    bool dir;  /* remove the index's database's engine directory instead */
     bool at_commit;
     SubTransactionId subid;
 } Deferred;
@@ -62,7 +63,7 @@ defer(Oid indexoid, const char* sql, bool at_commit) {
     MemoryContextSwitchTo(old);
 }
 
-/* Defers removal of a dropped database's pg_chdb directory and socket. */
+/* Defers removal of a dropped database's engine directory and socket. */
 static void
 defer_dir(Oid dboid) {
     MemoryContext old = MemoryContextSwitchTo(TopTransactionContext);

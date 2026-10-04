@@ -44,7 +44,7 @@ ok $worker, 'Should have a worker listed in pg_stat_activity';
 my $dboid = $node->safe_psql(postgres => "SELECT oid FROM pg_database WHERE datname = 'postgres'");
 like worker_socket($node, 'postgres'), qr{^\@pg_chdb/[0-9a-f]{16}/$dboid$},
     'Should listen on an abstract socket named for the data directory';
-ok !-e $node->data_dir . "/pg_chdb/$dboid.sock",
+ok !-e $node->data_dir . "/pg_chdb/pgsql_tmp/$dboid.sock",
     'Should leave no socket file in the data directory';
 ok engine_pid(), 'Should have an engine serving the worker';
 

@@ -12,7 +12,7 @@
  * kernel drops the name with the last descriptor, a crashed worker's too.
  * Having no file mode either, it lets in only peers of the server's own
  * user, which the data directory's mode let in before. Elsewhere the socket
- * is the file <dboid>.sock beside the stores.
+ * is the file <dboid>.sock beside the engines' directories (protocol.h).
  */
 
 #include "postgres.h"
@@ -24,6 +24,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "common/file_perm.h"
 #include "common/hashfn.h"
 #include "miscadmin.h"
 #include "postmaster/interrupt.h"
@@ -87,14 +88,16 @@ void
 chdb_search_listen(Oid dboid) {
     socklen_t len = chdb_search_socket_addr(dboid, &listen_addr);
 
-    /* The stores' directory, in the data directory's mode. */
-    if (MakePGDirectory(CHDB_SEARCH_DIR) < 0 && errno != EEXIST) {
+    /* The worker's directory, in the data directory's mode. */
+    char dir[MAXPGPATH];
+
+    /* pg_mkdir_p writes into the path it is given. */
+    strlcpy(dir, CHDB_SEARCH_CACHE_DIR, sizeof(dir));
+    if (pg_mkdir_p(dir, pg_dir_create_mode) < 0 && errno != EEXIST) {
         ereport(
             FATAL,
             errcode_for_file_access(),
-            errmsg(
-                "chdb_search: could not create directory \"%s\": %m", CHDB_SEARCH_DIR
-            )
+            errmsg("chdb_search: could not create directory \"%s\": %m", dir)
         );
     }
 
