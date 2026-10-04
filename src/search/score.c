@@ -156,11 +156,9 @@ needle_tokens(
     chdb_search_append_string(&lit, needle);
     initStringInfo(&sql);
     appendStringInfo(
-        &sql,
-        "SELECT tokens(%s, ",
-        chdb_search_preprocess(index, attno, col, lit.data, false)
+        &sql, "SELECT tokens(%s, ", chdb_search_preprocess(col, lit.data, false)
     );
-    chdb_search_append_string(&sql, chdb_search_tokenizer(index, attno, col));
+    chdb_search_append_string(&sql, chdb_search_tokenizer(col));
     appendStringInfoChar(&sql, ')');
 
     /* tokens() is tied to no table, so the request names no generation. */
@@ -325,14 +323,10 @@ chdb_search_score_expr(
             append_match(
                 &buf,
                 chdb_search_preprocess(
-                    index,
-                    key->sk_attno,
-                    col,
-                    col->name,
-                    col->kind == CHDB_COL_TEXT_ARRAY
+                    col, col->name, col->kind == CHDB_COL_TEXT_ARRAY
                 ),
                 token,
-                chdb_search_tokenizer(index, key->sk_attno, col)
+                chdb_search_tokenizer(col)
             );
             appendStringInfoString(&buf, ", 0)");
         }

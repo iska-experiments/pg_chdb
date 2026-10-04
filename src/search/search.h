@@ -71,12 +71,18 @@ typedef enum ChdbColumnKind {
     CHDB_COL_VECTOR,     /* chdb_vector's classes: Array(Float32), HNSW skip index */
 } ChdbColumnKind;
 
-/* One indexed column as it appears in the ClickHouse table. */
+/*
+ * One indexed column as it appears in the ClickHouse table. `options` are
+ * the operator class options of the attribute, from the relcache, which
+ * say how a text column is tokenized (textindex.c); NULL for a class that
+ * declares none.
+ */
 typedef struct ChdbColumn {
     char* name; /* ClickHouse identifier, always quoted */
     char* type; /* ClickHouse type */
     ChdbColumnKind kind;
-    Oid typid; /* Postgres type of the index attribute */
+    Oid typid;      /* Postgres type of the index attribute */
+    bytea* options; /* the attribute's operator class options, or NULL */
 } ChdbColumn;
 
 /* ---- gucs.c ---- */
@@ -124,25 +130,19 @@ extern PGDLLEXPORT Datum chdb_search_text_array_options(PG_FUNCTION_ARGS);
 
 /* ---- textindex.c ---- */
 extern char*
-chdb_search_skip_index_args(Relation index, int attno, const ChdbColumn* column);
+chdb_search_skip_index_args(const ChdbColumn* column);
 extern bool
-chdb_search_wants_phrase_search(Relation index, const ChdbColumn* cols);
+chdb_search_wants_phrase_search(const ChdbColumn* cols, int natts);
 /* The column's tokenizer as the DDL and tokens() spell it: `ngrams(3)`. */
 extern char*
-chdb_search_tokenizer(Relation index, int attno, const ChdbColumn* column);
+chdb_search_tokenizer(const ChdbColumn* column);
 /*
  * `expr` under the column's preprocessor, as a query evaluates it: element
  * by element when `array` says the expression is one, as a text[] column is
  * and its needle is not.
  */
 extern char*
-chdb_search_preprocess(
-    Relation index,
-    int attno,
-    const ChdbColumn* column,
-    const char* expr,
-    bool array
-);
+chdb_search_preprocess(const ChdbColumn* column, const char* expr, bool array);
 
 /* ---- score.c ---- */
 /* chdb.score(): a placeholder that raises wherever Postgres evaluates it. */

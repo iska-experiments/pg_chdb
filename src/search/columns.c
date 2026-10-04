@@ -153,6 +153,7 @@ ChdbColumn*
 chdb_search_columns(Relation index) {
     int natts        = index->rd_att->natts;
     ChdbColumn* cols = palloc0(sizeof(ChdbColumn) * natts);
+    bytea** options  = RelationGetIndexAttOptions(index, false);
 
     for (int i = 0; i < natts; i++) {
         Form_pg_attribute a = TupleDescAttr(index->rd_att, i);
@@ -183,7 +184,8 @@ chdb_search_columns(Relation index) {
             check_operators(index, i, a->atttypid);
             check_collation(index, i);
         }
-        cols[i].typid = a->atttypid;
+        cols[i].typid   = a->atttypid;
+        cols[i].options = options ? options[i] : NULL;
         cols[i].type =
             cols[i].kind == CHDB_COL_VECTOR
                 ? chdb_search_vector_type(index, i + 1)

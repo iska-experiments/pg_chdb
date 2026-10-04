@@ -113,9 +113,7 @@ chdb_search_create_sql(Relation index) {
             cols[i].name,
             cols[i].kind == CHDB_COL_VECTOR
                 ? chdb_search_vector_index_type(index, i + 1)
-                : psprintf(
-                      "text(%s)", chdb_search_skip_index_args(index, i + 1, &cols[i])
-                  )
+                : psprintf("text(%s)", chdb_search_skip_index_args(&cols[i]))
         );
     }
     /*
@@ -134,7 +132,7 @@ chdb_search_create_sql(Relation index) {
         "SETTINGS fsync_after_insert = 1, fsync_part_directory = 1, "
         "enable_block_number_column = 1, enable_block_offset_column = 1"
     );
-    if (chdb_search_wants_phrase_search(index, cols)) {
+    if (chdb_search_wants_phrase_search(cols, index->rd_att->natts)) {
         /* ClickHouse gates the index argument behind a MergeTree setting. */
         appendStringInfoString(
             &buf, ", allow_experimental_text_index_phrase_search = 1"
