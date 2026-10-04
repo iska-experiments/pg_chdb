@@ -190,6 +190,23 @@ SELECT body FROM pg_temp.store(:'tbl') WHERE body ~ 'Rebuilt|kept' ORDER BY body
 SELECT * FROM chdb_query('SELECT 42') AS (answer int);
 
 ----------------------------------------------------------------------------
+-- Columnar text filters: ClickHouse compares bytewise, as COLLATE "C" does
+----------------------------------------------------------------------------
+CREATE TABLE coll (id int, author text COLLATE "C");
+INSERT INTO coll VALUES (1, 'ann'), (2, 'Bob');
+CREATE INDEX coll_idx ON coll USING chdb (author columnar_ops);
+EXPLAIN (COSTS OFF) SELECT id FROM coll WHERE author >= 'a' ORDER BY id;
+SELECT id FROM coll WHERE author >= 'a' ORDER BY id;
+SELECT id FROM coll WHERE author < 'b' ORDER BY id;
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT id FROM coll WHERE author >= 'a' ORDER BY id;
+SELECT id FROM coll WHERE author < 'b' ORDER BY id;
+RESET enable_indexscan;
+SET enable_seqscan = off;
+DROP TABLE coll;
+
+----------------------------------------------------------------------------
 -- DROP INDEX drops the store at commit
 ----------------------------------------------------------------------------
 DROP INDEX prod_idx;

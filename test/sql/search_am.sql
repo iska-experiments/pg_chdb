@@ -61,7 +61,7 @@ CREATE TABLE docs (
     body text,
     title text,
     tags text[],
-    author text,
+    author text COLLATE "C",
     price numeric(10, 2),
     seen timestamptz,
     flag bool
@@ -112,6 +112,22 @@ CREATE INDEX ON docs USING chdb (body) WITH (vacuum_optimize_ratio = 2);
 CREATE INDEX ON docs USING chdb (id text_ops);
 CREATE INDEX ON docs USING chdb (body) INCLUDE (title);
 CREATE UNIQUE INDEX ON docs USING chdb (body);
+
+-- A text column filtered through the index needs a bytewise collation:
+-- ClickHouse compares strings bytewise and the scan does not recheck. Only
+-- C and POSIX count as bytewise, as for btree's text_pattern_ops, so the
+-- negative case takes any other collation initdb imported: libc's C.utf8
+-- (glibc 2.35 and later; it sorts by code point too) where there is one,
+-- else the first other libc or ICU collation, whatever the platform has.
+SELECT quote_ident(collname) AS noncoll FROM pg_collation
+ WHERE (collprovider = 'c' AND collcollate NOT IN ('C', 'POSIX') OR collprovider = 'i')
+   AND collencoding IN (-1, pg_char_to_encoding('UTF8'))
+ ORDER BY collname <> 'C.utf8', collprovider, collname LIMIT 1 \gset
+CREATE TABLE coll (author text COLLATE :noncoll, c_author text COLLATE "C");
+CREATE INDEX ON coll USING chdb (author columnar_ops);
+CREATE INDEX ON coll USING chdb ((author COLLATE "C") columnar_ops);
+CREATE INDEX ON coll USING chdb (c_author columnar_ops);
+DROP TABLE coll;
 
 -- Only permanent tables: an unlogged heap is reset by crash recovery while
 -- its store is not, and a temporary one is rebuilt and dropped by backends

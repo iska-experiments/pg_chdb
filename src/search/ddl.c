@@ -53,7 +53,9 @@
 #include <string.h>
 
 #include "catalog/pg_attribute.h"
+#include "catalog/pg_type_d.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_locale.h"
 
 #include "pg-clickhouse.h"
 
@@ -78,6 +80,38 @@ kind_of(Relation index, int i) {
         return CHDB_COL_TEXT_ARRAY;
     }
     return CHDB_COL_COLUMNAR;
+}
+
+/*
+ * ClickHouse compares String columns bytewise while Postgres orders text by
+ * its collation, and the scan does not recheck: under en_US `author >= 'a'`
+ * finds 'ann' and 'Bob' by seqscan but only 'ann' through the index, and a
+ * nondeterministic collation even breaks `=`. So a filterable text column
+ * needs a bytewise collation, as btree's text_pattern_ops does.
+ */
+static void
+check_text_collation(Relation index, int i, Oid typid) {
+    bool bytewise;
+
+    if (typid != TEXTOID && typid != VARCHAROID && typid != BPCHAROID &&
+        typid != NAMEOID) {
+        return;
+    }
+#if PG_VERSION_NUM >= 180000
+    bytewise = pg_newlocale_from_collation(index->rd_indcollation[i])->collate_is_c;
+#else
+    bytewise = lc_collate_is_c(index->rd_indcollation[i]);
+#endif
+    if (!bytewise) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+            errmsg(
+                "chdb columnar_ops on a text column requires a C or POSIX collation"
+            ),
+            errhint("Declare the column COLLATE \"C\" or index (col COLLATE \"C\").")
+        );
+    }
 }
 
 ChdbColumn*
@@ -111,8 +145,11 @@ chdb_search_columns(Relation index) {
             }
         }
 
-        cols[i].name  = pgch_quote_ch_ident(name);
-        cols[i].kind  = kind_of(index, i);
+        cols[i].name = pgch_quote_ch_ident(name);
+        cols[i].kind = kind_of(index, i);
+        if (cols[i].kind == CHDB_COL_COLUMNAR) {
+            check_text_collation(index, i, a->atttypid);
+        }
         cols[i].typid = a->atttypid;
         cols[i].type = pgch_ch_type_for(a->atttypid, a->atttypmod, a->attnotnull, NULL);
     }
