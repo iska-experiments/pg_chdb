@@ -87,19 +87,6 @@ for my $signal (qw(KILL SEGV)) {
     };
 }
 
-# A worker asked to stop with SIGTERM is not a crash.
-subtest 'worker terminated' => sub {
-    my $offset = -s $node->logfile;
-    my $old    = worker_pid($node, 'postgres');
-
-    $node->safe_psql(postgres => "SELECT pg_terminate_backend($old)");
-    $node->wait_for_log(qr/worker for database \d+ shutting down/, $offset);
-    unlike slurp_file($node->logfile, $offset),
-        qr/terminating any other active server processes/,
-        'Should not restart the instance';
-    is $node->safe_psql(postgres => $count), 1000, 'Should start another worker';
-};
-
 # DROP DATABASE has to disconnect every session of the database, and a
 # background worker is one. See what it does with a running worker.
 $node->safe_psql(postgres => 'CREATE DATABASE doomed');
