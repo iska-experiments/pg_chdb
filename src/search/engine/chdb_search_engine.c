@@ -46,7 +46,7 @@ serve_request(int fd) {
             break;
         default:
             /* Unknown commands carry unknown data, so the framing is gone. */
-            io_send_status(fd, "unknown command");
+            io_send_status(fd, CHDB_STATUS_ERROR, "unknown command");
             break;
         }
     }

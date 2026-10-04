@@ -9,7 +9,9 @@ LANGUAGE C STRICT;
 -- named idx_0. EXECUTE is revoked from PUBLIC below, so only the extension's
 -- owner (a superuser: the control file says superuser = true) or a role
 -- granted EXECUTE can call them.
-CREATE FUNCTION chdb_search_exec(TEXT) RETURNS VOID
+-- The generation is that of the store table the statement works on, as the
+-- access method would send it; zero, the default, for none.
+CREATE FUNCTION chdb_search_exec(TEXT, generation BIGINT DEFAULT 0) RETURNS VOID
 AS 'MODULE_PATHNAME', 'chdb_search_debug_exec'
 LANGUAGE C STRICT;
 
@@ -38,7 +40,7 @@ CREATE FUNCTION chdb_search_debug_kill_engine(INTEGER) RETURNS INTEGER
 AS 'MODULE_PATHNAME', 'chdb_search_debug_kill_engine'
 LANGUAGE C STRICT;
 
-REVOKE EXECUTE ON FUNCTION chdb_search_exec(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION chdb_search_exec(text, bigint) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_drop() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_query(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION chdb_search_copy_to(regclass, text) FROM PUBLIC;

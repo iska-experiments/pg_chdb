@@ -9,10 +9,13 @@
  * requests over a unix socket at $PGDATA/pg_chdb/<dboid>.sock and stream
  * Native blocks both ways. The client starts the worker on first use.
  *
- * Every request names the index it works on. Before running it the worker
- * creates the chDB database `idx_<indexoid>` if it is missing. Queries pass
- * through unchanged, so callers name the table in full: `idx_<indexoid>.t`.
- * The framing is documented in protocol.h.
+ * Every request names the index it works on and the store generation of the
+ * table it works on. Before running it the worker creates the chDB database
+ * `idx_<indexoid>` if it is missing and, for a non-zero generation, checks
+ * that `idx_<indexoid>.t_<generation>` exists, raising with a REINDEX hint if
+ * not, so a statement against a store that is gone or rebuilt fails clearly
+ * rather than in ClickHouse's words. Queries pass through unchanged, so
+ * callers name the table in full. The framing is documented in protocol.h.
  *
  * Every call returns or raises within chdb_search.worker_timeout when
  * interrupts are held (a commit or abort callback), where a cancel could not
@@ -37,27 +40,44 @@ extern void
 chdb_search_close(chdbSearchConn* conn);
 
 /*
- * Runs `sql`, which names the table as `idx_<indexoid>.t`.
- * Raises on failure with the worker's error text.
+ * Runs `sql`, which names the table as `idx_<indexoid>.t_<generation>`.
+ * `generation` is that table's, or zero for a statement that creates it,
+ * works in no table, or cleans up after an abort. Raises on failure with the
+ * worker's error text.
  */
 extern void
-chdb_search_exec(chdbSearchConn* conn, Oid indexoid, const char* sql);
+chdb_search_exec(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+);
 
 /*
  * Runs `sql`, whose Native blocks the caller reads from chdb_search_channel
  * until it returns zero, then calls chdb_search_finish.
  */
 extern void
-chdb_search_select(chdbSearchConn* conn, Oid indexoid, const char* sql);
+chdb_search_select(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+);
 
 /*
- * Starts `sql`, an `INSERT INTO idx_<indexoid>.t (cols)` with no FORMAT
+ * Starts `sql`, an `INSERT INTO idx_<indexoid>.t_<generation> (cols)` with no FORMAT
  * clause, which the worker supplies as Native; the caller then sends blocks
  * through chdb_search_channel and ends the stream with chdb_search_finish,
  * which waits for the worker's acknowledgement and raises on failure.
  */
 extern void
-chdb_search_insert(chdbSearchConn* conn, Oid indexoid, const char* sql);
+chdb_search_insert(
+    chdbSearchConn* conn,
+    Oid indexoid,
+    uint64 generation,
+    const char* sql
+);
 
 /*
  * Ends the request under way and reads its status, raising with the worker's

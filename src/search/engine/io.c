@@ -70,9 +70,8 @@ io_send_end(int fd) {
 }
 
 bool
-io_send_status(int fd, const char* err) {
-    uint8_t status = err ? 1 : 0;
-    uint32_t len   = err ? (uint32_t)strlen(err) : 0;
+io_send_status(int fd, uint8_t status, const char* err) {
+    uint32_t len = err ? (uint32_t)strlen(err) : 0;
 
     return io_send(fd, &status, sizeof(status)) && io_send(fd, &len, sizeof(len)) &&
            (len == 0 || io_send(fd, err, len));

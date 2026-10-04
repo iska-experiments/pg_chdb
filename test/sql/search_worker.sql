@@ -15,6 +15,13 @@ SELECT chdb_search_drop();
 
 SELECT chdb_search_exec('CREATE TABLE idx_0.t (id UInt64, body String) ENGINE = MergeTree ORDER BY id');
 
+-- A request names the store generation of the table it works on, zero for
+-- none. The worker checks that idx_0.t_<generation> exists before running it,
+-- so a statement against a store that is gone or rebuilt fails clearly.
+SELECT chdb_search_exec('SELECT 1', 7);
+SELECT chdb_search_exec('CREATE TABLE idx_0.t_7 (id UInt64) ENGINE = MergeTree ORDER BY id');
+SELECT chdb_search_exec('SELECT 1', 7);
+
 -- Streamed insert from a heap table, enough rows for several Native blocks.
 CREATE TABLE docs AS
 SELECT i::bigint AS id, 'row ' || i || ' ' || repeat('x', i % 50) AS body

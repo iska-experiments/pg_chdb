@@ -93,7 +93,10 @@ a ranker.
   * `CHDB_CMD_SELECT` stream Native blocks back (reuse `chdb_select_receive`).
   * `CHDB_CMD_INSERT` stream Native blocks in (reuse `chdb_copy_send`).
   Requests carry the index OID and a generation id (see
-  `chdb_search-storage.md`).
+  `chdb_search-storage.md`): for a non-zero generation the engine checks
+  that `idx_<oid>.t_<generation>` exists before running the request and
+  otherwise answers `CHDB_STATUS_NO_STORE`, which the client raises with a
+  REINDEX hint.
 * Store path Phase 0: `$PGDATA/pg_chdb/<dboid>/` holding one chDB database
   `idx_<indexrelid>` per index with table `t`. Phase 1: the same logical
   layout on the `pg_pages` disk whose config names the index relation.

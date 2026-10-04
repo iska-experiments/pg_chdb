@@ -25,14 +25,15 @@
 
 #define CHDB_SEARCH_DEBUG_INDEX 0
 
-/* Runs a statement in idx_0. */
+/* Runs a statement in idx_0, against the store generation given, zero for none. */
 PG_FUNCTION_INFO_V1(chdb_search_debug_exec);
 Datum
 chdb_search_debug_exec(PG_FUNCTION_ARGS) {
-    char* sql = text_to_cstring(PG_GETARG_TEXT_PP(0));
+    char* sql         = text_to_cstring(PG_GETARG_TEXT_PP(0));
+    uint64 generation = (uint64)PG_GETARG_INT64(1);
 
     chdbSearchConn* conn = chdb_search_connect();
-    chdb_search_exec(conn, CHDB_SEARCH_DEBUG_INDEX, sql);
+    chdb_search_exec(conn, CHDB_SEARCH_DEBUG_INDEX, generation, sql);
     chdb_search_close(conn);
 
     PG_RETURN_VOID();
@@ -57,7 +58,7 @@ chdb_search_debug_query(PG_FUNCTION_ARGS) {
     TupleDesc tupdesc = chdb_srf_tupdesc(fcinfo, "chdb_search", "chdb_search_query");
 
     chdbSearchConn* conn = chdb_search_connect();
-    chdb_search_select(conn, CHDB_SEARCH_DEBUG_INDEX, sql);
+    chdb_search_select(conn, CHDB_SEARCH_DEBUG_INDEX, 0, sql);
     Datum result = chdb_select_receive(
         sql, (ReturnSetInfo*)fcinfo->resultinfo, tupdesc, chdb_search_channel(conn)
     );
@@ -83,7 +84,7 @@ chdb_search_debug_copy_to(PG_FUNCTION_ARGS) {
     List* attnums  = CopyGetAttnums(desc, rel, NIL);
 
     chdbSearchConn* conn = chdb_search_connect();
-    chdb_search_insert(conn, CHDB_SEARCH_DEBUG_INDEX, sql);
+    chdb_search_insert(conn, CHDB_SEARCH_DEBUG_INDEX, 0, sql);
     uint64_t rows = chdb_copy_send(
         rel, pgch_structure_from_tupdesc(desc, NULL), attnums, chdb_search_channel(conn)
     );

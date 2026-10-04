@@ -13,8 +13,11 @@
 
 /* Sends the status and frees the error. */
 static bool
-reply(int fd, char* err) {
-    bool ok = io_send_status(fd, err);
+reply(int fd, char* err, bool no_store) {
+    uint8_t status = !err       ? CHDB_STATUS_OK
+                     : no_store ? CHDB_STATUS_NO_STORE
+                                : CHDB_STATUS_ERROR;
+    bool ok        = io_send_status(fd, status, err);
 
     free(err);
 
@@ -23,13 +26,14 @@ reply(int fd, char* err) {
 
 bool
 command_exec(int fd, const chdbSearchRequest* req) {
-    char* err = session_prepare(req);
+    bool no_store;
+    char* err = session_prepare(req, &no_store);
 
     if (!err) {
         err = session_run(req->query.data, req->query.len);
     }
 
-    return reply(fd, err);
+    return reply(fd, err, no_store);
 }
 
 bool
@@ -39,8 +43,9 @@ command_drop(int fd, const chdbSearchRequest* req) {
     if (!err) {
         char* sql = NULL;
 
-        if (asprintf(&sql, "DROP DATABASE IF EXISTS idx_%" PRIu32 " SYNC", req->index) <
-            0) {
+        if (asprintf(
+                &sql, "DROP DATABASE IF EXISTS " CHDB_STORE_DB_FMT " SYNC", req->index
+            ) < 0) {
             err = strdup("out of memory");
         } else {
             err = session_run(sql, strlen(sql));
@@ -48,12 +53,13 @@ command_drop(int fd, const chdbSearchRequest* req) {
         }
     }
 
-    return reply(fd, err);
+    return reply(fd, err, false);
 }
 
 bool
 command_select(int fd, const chdbSearchRequest* req) {
-    char* err = session_prepare(req);
+    bool no_store;
+    char* err = session_prepare(req, &no_store);
     bool lost = false;
 
     if (!err) {
@@ -98,12 +104,13 @@ command_select(int fd, const chdbSearchRequest* req) {
         return false;
     }
 
-    return reply(fd, err);
+    return reply(fd, err, no_store);
 }
 
 bool
 command_insert(int fd, const chdbSearchRequest* req) {
-    char* err                 = session_prepare(req);
+    bool no_store;
+    char* err                 = session_prepare(req, &no_store);
     chdb_insert_stream stream = NULL;
     bool live                 = false;
     char* buf                 = NULL;
@@ -177,5 +184,5 @@ command_insert(int fd, const chdbSearchRequest* req) {
         return false;
     }
 
-    return reply(fd, err);
+    return reply(fd, err, no_store);
 }

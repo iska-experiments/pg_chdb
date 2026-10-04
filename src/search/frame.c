@@ -1,9 +1,9 @@
 /*
- * Framing a request of protocol.h: the byte count, the index OID, then the
- * setup payload of src/setup.h as chdb_helper_build_setup writes it for
- * chdb_helper; and reading the status frame that answers it. client.c sends
- * the frame to the worker over its socket; sweep.c sends it from the worker
- * to its engine. See frame.h.
+ * Framing a request of protocol.h: the byte count, the index OID and store
+ * generation, then the setup payload of src/setup.h as chdb_helper_build_setup
+ * writes it for chdb_helper; and reading the status frame that answers it.
+ * client.c sends the frame to the worker over its socket; sweep.c sends it
+ * from the worker to its engine. See frame.h.
  */
 
 #include "postgres.h"
@@ -13,7 +13,13 @@
 #include "worker.h"
 
 void
-chdb_search_frame_request(StringInfo buf, chdbCmdType cmd, Oid index, const char* sql) {
+chdb_search_frame_request(
+    StringInfo buf,
+    chdbCmdType cmd,
+    Oid index,
+    uint64 generation,
+    const char* sql
+) {
     uint32_t len          = 0;
     int start             = buf->len;
     chdbHelperContext ctx = {
@@ -25,6 +31,7 @@ chdb_search_frame_request(StringInfo buf, chdbCmdType cmd, Oid index, const char
 
     appendBinaryStringInfo(buf, (char*)&len, sizeof(len)); /* patched below */
     appendBinaryStringInfo(buf, (char*)&index, sizeof(index));
+    appendBinaryStringInfo(buf, (char*)&generation, sizeof(generation));
     chdb_helper_build_setup(buf, &ctx, sql, NULL, NULL, 0);
     len = (uint32_t)(buf->len - start - sizeof(len));
     memcpy(buf->data + start, &len, sizeof(len));

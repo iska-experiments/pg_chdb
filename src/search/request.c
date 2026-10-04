@@ -59,7 +59,7 @@ slurp_request(chdbChannel* client, StringInfo raw, chdbSearchRequest* req) {
 
 static void
 send_status(chdbChannel* client, bool ok, const char* text) {
-    uint8_t status = ok ? 0 : 1;
+    uint8_t status = ok ? CHDB_STATUS_OK : CHDB_STATUS_ERROR;
     uint32_t len   = (uint32_t)strlen(text);
 
     chdb_channel_send_exact(client, &status, sizeof(status));
