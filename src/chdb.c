@@ -69,7 +69,7 @@ chdb_query(PG_FUNCTION_ARGS) {
         .max_threads = (uint16_t)chdb_max_threads,
         .max_parsers = (uint16_t)chdb_max_parsers,
     };
-    chdbHelper* helper = chdb_helper_start(&ctx, sql, NULL, NULL, 0);
+    chdbChannel* helper = chdb_helper_start(&ctx, sql, NULL, NULL, 0);
     return chdb_select_receive(
         sql, (ReturnSetInfo*)fcinfo->resultinfo, tupdesc, helper
     );
