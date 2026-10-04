@@ -42,8 +42,9 @@
  *
  * from the scan keys and order-by keys an index scan receives. Several
  * order-bys select _distance1, _distance2 and so on. Keys are ANDed. `limit`
- * is negative for none. Returns NULL when a key's argument is NULL, as the
- * operators are strict and the scan can return nothing.
+ * is negative for none. Returns NULL when a search key's argument is NULL,
+ * as the operators are strict and the scan can return nothing; a NULL
+ * order-by argument instead gives every row a NULL distance.
  */
 extern char*
 chdb_search_build_select(
