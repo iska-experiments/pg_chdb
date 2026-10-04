@@ -52,6 +52,7 @@ CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v c
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT * FROM types WHERE i2 = 1::int2 AND i4 = 2 AND i8 = 3::int8 AND v = 'x' AND d = '2026-01-02';
+SELECT * FROM types WHERE i2 = 1 AND i8 = 2 AND i4 > 3::int8 AND f4 < 0.5 AND f8 >= 1::real;
 SELECT * FROM types WHERE u = '00000000-0000-0000-0000-000000000001' AND arr @@= 'x';
 SELECT * FROM types WHERE f4 = 0.1::real;
 SELECT * FROM types WHERE f8 = 0.1 AND f4 > 'Infinity'::real;
