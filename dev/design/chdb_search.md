@@ -249,6 +249,43 @@ Then recovery and physical replication come from Postgres WAL, the
 generation check becomes a sanity check, and the local directory holds only
 chDB's own `tmp/` and `metadata/`, which are rebuilt from pages on start.
 
+### Phase 1 host contract (from the chdb-core review)
+
+The review of the callback disk fixed the host-side rules the worker must
+honour, and the supervisor/engine split turns out to be what makes them
+satisfiable:
+
+* **Threads.** The engine calls storage callbacks from pool and merge
+  threads while the thread inside `chdb_query` is blocked, so a callback
+  may never call back into libchdb or wait for the thread that is inside
+  it. A single-threaded Postgres process cannot both run `chdb_query` and
+  serve its own callbacks. Therefore libchdb runs only in the engine child
+  (`src/search/engine/`), whose callbacks forward page requests over the
+  socketpair, and the supervisor bgworker, which is never inside libchdb,
+  serves them from its event loop. Page requests are interleaved with the
+  response stream, so the relay answers some frames instead of forwarding
+  them. chdb-core follow-up 25 (an idle hook on the calling thread) would
+  remove the need for the split for other hosts; we do not depend on it.
+* **Durability.** `write_commit` is the only durability point the engine
+  exercises (the disk reports remote, so MergeTree never fsyncs). The
+  supervisor writes a blob's pages and its directory entry with
+  `GenericXLogFinish` before acknowledging the commit; WAL ordering then
+  gives durability in commit order. A failed `write_commit` releases the
+  handle and no abort follows, so the supervisor must drop the staged pages
+  itself on failure. `write_begin` can be called for a key that already
+  exists (rewrite), and zero-length blobs are legal.
+* **Process exit.** An open libchdb connection at `exit()` tears the engine
+  down from an atexit handler, which fires `write_abort`/`remove`
+  callbacks. The engine closes its connection before exiting on SIGTERM;
+  the supervisor closes its socket in `before_shmem_exit`, not after shared
+  memory is gone.
+* **Registration order.** Callbacks must be registered before the
+  `chdb_connect` that reopens a path holding tables on the disk, because
+  metadata load instantiates the disk at attach.
+* **Mutations.** `plain_rewritable` has no hard links, so VACUUM's deletes
+  use `lightweight_delete_mode = 'lightweight_update_force'` and the store
+  table enables block number and offset columns.
+
 ## Backups and replication
 
 The index must behave like any other Postgres index under WAL-G backups,
