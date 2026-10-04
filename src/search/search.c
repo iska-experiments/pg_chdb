@@ -19,7 +19,6 @@ int chdb_max_memory  = 0;
 int chdb_max_threads = 0;
 int chdb_max_parsers = 0;
 
-char* chdb_search_libchdb_path = NULL;
 int chdb_search_worker_timeout = 30;
 
 void
@@ -30,18 +29,6 @@ _PG_init(void) {
         return;
     }
 
-    DefineCustomStringVariable(
-        "chdb_search.libchdb_path",
-        "Library the chdb_search worker loads chDB from.",
-        "Passed to dlopen, so a bare name is searched for like any shared library.",
-        &chdb_search_libchdb_path,
-        "libchdb.so",
-        PGC_SIGHUP,
-        0,
-        NULL,
-        NULL,
-        NULL
-    );
     DefineCustomIntVariable(
         "chdb_search.worker_timeout",
         "Seconds to wait for the chdb_search worker to start.",

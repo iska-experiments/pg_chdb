@@ -1,11 +1,14 @@
 /*
  * The chdb_search background worker's lifecycle: one per database, claiming
- * its registry slot, opening the chDB store and socket, serving until told to
- * stop. See protocol.h for the framing and dev/design/chdb_search.md for why
- * there is a worker at all.
+ * its registry slot, opening its socket, serving until told to stop. The chDB
+ * store is held by the chdb_search_engine child it supervises. See protocol.h
+ * for the framing and dev/design/chdb_search.md for why there is a worker at
+ * all.
  */
 
 #include "postgres.h"
+
+#include <signal.h>
 
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
@@ -13,7 +16,7 @@
 #include "postmaster/interrupt.h"
 #include "storage/ipc.h"
 
-#include "engine.h"
+#include "engine_proc.h"
 #include "registry.h"
 #include "serve.h"
 #include "worker.h"
@@ -24,7 +27,7 @@ static bool slot_claimed;
 static void
 worker_exit(int code pg_attribute_unused(), Datum arg pg_attribute_unused()) {
     chdb_search_unlisten();
-    chdb_search_close_store();
+    engine_stop();
     if (slot_claimed) {
         chdb_search_free_slot(worker_dboid, MyProcPid);
     }
@@ -36,6 +39,8 @@ chdb_search_worker_main(Datum arg) {
 
     pqsignal(SIGHUP, SignalHandlerForConfigReload);
     pqsignal(SIGTERM, SignalHandlerForShutdownRequest);
+    /* The engine is our child, and its death is read with waitpid. */
+    pqsignal(SIGCHLD, SIG_DFL);
     BackgroundWorkerUnblockSignals();
     BackgroundWorkerInitializeConnectionByOid(worker_dboid, InvalidOid, 0);
 
@@ -61,9 +66,7 @@ chdb_search_worker_main(Datum arg) {
     }
     slot_claimed = true;
 
-    chdb_search_load_libchdb();
     chdb_search_listen(worker_dboid);
-    chdb_search_open_store(worker_dboid);
     ereport(LOG, errmsg("chdb_search: worker for database %u listening", worker_dboid));
 
     chdb_search_serve();

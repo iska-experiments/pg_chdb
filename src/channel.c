@@ -11,6 +11,7 @@
 
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
+#include "postmaster/interrupt.h"
 #include "storage/latch.h"
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
@@ -27,6 +28,11 @@ chdb_channel_close_fd(int* fd) {
         close(*fd);
         *fd = -1;
     }
+}
+
+bool
+chdb_channel_place_fd(int fd, int target) {
+    return fd == target ? fcntl(fd, F_SETFD, 0) == 0 : dup2(fd, target) == target;
 }
 
 void
@@ -175,6 +181,10 @@ chdb_channel_try_write(chdbChannel* ch, int fd, const void* p, size_t len) {
 
     while (len) {
         CHECK_FOR_INTERRUPTS();
+        if (ShutdownRequestPending) {
+            errno = ECANCELED;
+            return false;
+        }
         ssize_t put = write(fd, at, len);
 
         if (put > 0) {
@@ -206,7 +216,7 @@ static size_t
 read_some(chdbChannel* ch, void* buf, size_t len) {
     for (;;) {
         CHECK_FOR_INTERRUPTS();
-        if (ch->data < 0) {
+        if (ch->data < 0 || ShutdownRequestPending) {
             ch->fail(ch, ch->recv_what, 0);
         }
 

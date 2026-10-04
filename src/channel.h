@@ -11,8 +11,9 @@
  * side carries its own copy of the waiting, interrupt and cleanup code.
  *
  * The descriptors are nonblocking. Every wait is on the latch, so a cancel or
- * a shutdown gets through, and the error pipe is drained whenever the data
- * channel would block, since a full pipe stalls the peer.
+ * a shutdown gets through, a background worker's ShutdownRequestPending among
+ * them, and the error pipe is drained whenever the data channel would block,
+ * since a full pipe stalls the peer.
  *
  * A channel is either plain, where end of stream is end of data, or chunked:
  * uint32 byte count and that many bytes, ended by a zero count. The chunked
@@ -65,6 +66,13 @@ chdb_channel_prepare_fd(int fd);
 /* Closes `*fd` if open and sets it to -1. */
 extern void
 chdb_channel_close_fd(int* fd);
+
+/*
+ * Puts `fd` at `target` for a program about to be exec'd, which also clears
+ * close-on-exec. A descriptor already in place only needs to stay open.
+ */
+extern bool
+chdb_channel_place_fd(int fd, int target);
 
 /*
  * Reads up to `len` bytes of data, returning zero at the end of the stream.

@@ -143,12 +143,6 @@ reserve_fd(int fd) {
     return high;
 }
 
-/* dup2, except that a descriptor already in place only needs to stay open. */
-static bool
-place_fd(int fd, int target) {
-    return fd == target ? fcntl(fd, F_SETFD, 0) == 0 : dup2(fd, target) == target;
-}
-
 /*
  * Everything between the fork and the exec runs in a process that still holds
  * the backend's Postgres state, so it may only _exit.
@@ -164,10 +158,14 @@ exec_helper(chdbHelper* h, const char* program, chdbHelperContext* ctx) {
     null          = reserve_fd(null);
 
     /* The channel the query does not use must not reach the backend's own. */
-    if (!place_fd(ctx->cmd == CHDB_CMD_INSERT ? h->data_peer : null, STDIN_FILENO) ||
-        !place_fd(ctx->cmd == CHDB_CMD_INSERT ? null : h->data_peer, STDOUT_FILENO) ||
-        !place_fd(h->err_peer, STDERR_FILENO) ||
-        !place_fd(h->setup_peer, CHDB_SETUP_FD)) {
+    if (!chdb_channel_place_fd(
+            ctx->cmd == CHDB_CMD_INSERT ? h->data_peer : null, STDIN_FILENO
+        ) ||
+        !chdb_channel_place_fd(
+            ctx->cmd == CHDB_CMD_INSERT ? null : h->data_peer, STDOUT_FILENO
+        ) ||
+        !chdb_channel_place_fd(h->err_peer, STDERR_FILENO) ||
+        !chdb_channel_place_fd(h->setup_peer, CHDB_SETUP_FD)) {
         _exit(126);
     }
 
