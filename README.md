@@ -90,6 +90,27 @@ CREATE TABLE reviews () WITH (
 
 See the [chdb_hook documentation](doc/chdb_hook.md) for details.
 
+### chdb_search Extension
+
+The `chdb_search` extension gives a table a ClickHouse full-text index. A
+background worker per database owns the [chDB] store, and queries match exact
+tokens, with no BM25 ranking:
+
+```sql
+CREATE EXTENSION chdb_search;
+
+CREATE INDEX docs_idx ON docs USING chdb (
+    body text_ops (tokenizer = 'splitByNonAlpha', preprocessor = 'lowerUTF8')
+);
+
+SELECT id FROM docs WHERE body @@@ 'postgres clickhouse';
+```
+
+It requires PostgreSQL 17 or higher, and the server must be able to load
+libchdb, via `LD_LIBRARY_PATH` or the `chdb_search.libchdb_path` setting. The
+index access method is under development; today the extension provides the
+worker. See the [chdb_search documentation](doc/chdb_search.md) for details.
+
 Benchmarking Formats
 --------------------
 
