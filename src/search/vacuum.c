@@ -1,11 +1,15 @@
 /*
  * VACUUM. The store holds every ctid ever inserted, so ambulkdelete asks the
- * callback about each one and removes the dead ones with a lightweight
- * DELETE. amvacuumcleanup runs OPTIMIZE ... FINAL when enough rows died to be
- * worth rewriting parts: lightweight deletes only mask rows until a merge.
- * It also sweeps the tables of other generations, which a rebuild leaves
- * behind (see ddl.c), and the staging tables of transactions that are over
- * (see staging.c).
+ * callback about each one and removes the dead ones with a DELETE run as a
+ * lightweight update: ClickHouse patches the parts holding the rows, found
+ * by the block number and offset columns the table keeps (ddl.c), and never
+ * rewrites a part with a mutation, which the Phase 1 plain_rewritable disk
+ * rejects ("Mutations are not supported for immutable disk") and which the
+ * default mode falls back to. amvacuumcleanup runs OPTIMIZE ... FINAL when
+ * enough rows died to be worth rewriting parts: the patches only mask rows
+ * until a merge. It also sweeps the tables of other generations, which a
+ * rebuild leaves behind (see ddl.c), and the staging tables of transactions
+ * that are over (see staging.c).
  */
 
 #include "postgres.h"
@@ -46,7 +50,9 @@ delete_batch(
     for (size_t i = 0; i < n; i++) {
         appendStringInfo(&buf, "%s" UINT64_FORMAT, i ? "," : "", dead[i]);
     }
-    appendStringInfoChar(&buf, ')');
+    appendStringInfoString(
+        &buf, ") SETTINGS lightweight_delete_mode = 'lightweight_update_force'"
+    );
     chdb_search_run(indexoid, generation, buf.data);
 }
 
