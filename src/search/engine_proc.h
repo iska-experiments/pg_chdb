@@ -17,6 +17,11 @@
 extern char*
 engine_ensure(Oid dboid);
 
+/* engine_spawn.c hands over the child it forked: its pid and the worker's socket ends.
+ */
+extern void
+engine_attach(pid_t pid, int fd, int page_fd);
+
 /* The engine's pid, or 0 when none runs. */
 extern pid_t
 engine_pid(void);
@@ -46,5 +51,17 @@ engine_death(void);
 /* Lets an idle engine close its store and exit, killing it if it will not. */
 extern void
 engine_stop(void);
+
+/*
+ * The engine's page channel, on which it asks for its blobs (see
+ * pagestore/pagestore.h): its descriptor, for the event loop to watch, -1
+ * when there is none; and the answering of one request when it is readable,
+ * false when the channel broke, which an engine does not survive.
+ */
+extern int
+engine_page_fd(void);
+
+extern bool
+engine_serve_page(void);
 
 #endif /* CHDB_SEARCH_ENGINE_PROC_H */

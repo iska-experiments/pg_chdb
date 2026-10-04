@@ -19,6 +19,7 @@
 #include "storage/ipc.h"
 
 #include "engine_proc.h"
+#include "pagestore/pagestore.h"
 #include "registry.h"
 #include "serve.h"
 #include "sweep.h"
@@ -74,6 +75,9 @@ chdb_search_worker_main(Datum arg) {
     }
     slot_claimed = true;
 
+    /* The engine the sweep starts asks for its blobs at once. */
+    chdb_pagestore_init();
+
     /* What drops without the library left behind goes before anything is served. */
     PG_TRY();
     { chdb_search_sweep(worker_dboid); }
@@ -92,6 +96,9 @@ chdb_search_worker_main(Datum arg) {
 
     chdb_search_serve();
 
+    /* Here, not in worker_exit: the engine's last page requests are served meanwhile.
+     */
+    engine_stop();
     ereport(
         LOG, errmsg("chdb_search: worker for database %u shutting down", worker_dboid)
     );

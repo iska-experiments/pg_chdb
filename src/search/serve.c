@@ -33,6 +33,7 @@
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
 
+#include "engine_proc.h"
 #include "protocol.h"
 #include "request.h"
 #include "serve.h"
@@ -132,17 +133,25 @@ peer_allowed(int fd) {
     return true;
 }
 
-/* WL_SOCKET_ACCEPT is WL_SOCKET_READABLE, so user_data tells the listener apart. */
+/*
+ * WL_SOCKET_ACCEPT is WL_SOCKET_READABLE, so user_data tells the listener
+ * apart, and the engine's page channel, which it asks on for its blobs while
+ * no request runs, for the merges it does in the background.
+ */
 #define LISTENER ((void*)(intptr_t)-1)
+#define PAGES ((void*)(intptr_t)-2)
 
 /* Rebuilt on every change, as WaitEventSets cannot drop a socket. */
 static WaitEventSet*
-build_wait_set(const int* clients, int nclients) {
-    WaitEventSet* set = CreateWaitEventSet(NULL, nclients + 3);
+build_wait_set(const int* clients, int nclients, int page_fd) {
+    WaitEventSet* set = CreateWaitEventSet(NULL, nclients + 4);
 
     AddWaitEventToSet(set, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
     AddWaitEventToSet(set, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET, NULL, NULL);
     AddWaitEventToSet(set, WL_SOCKET_ACCEPT, listen_fd, NULL, LISTENER);
+    if (page_fd >= 0) {
+        AddWaitEventToSet(set, WL_SOCKET_READABLE, page_fd, NULL, PAGES);
+    }
     for (int i = 0; i < nclients; i++) {
         AddWaitEventToSet(
             set, WL_SOCKET_READABLE, clients[i], NULL, (void*)(intptr_t)i
@@ -163,11 +172,12 @@ void
 chdb_search_serve(void) {
     int clients[CHDB_SEARCH_MAX_CLIENTS] = { 0 };
     int nclients                         = 0;
+    int page_fd                          = engine_page_fd();
 
     MemoryContext request_cxt = AllocSetContextCreate(
         TopMemoryContext, "chdb_search request", ALLOCSET_DEFAULT_SIZES
     );
-    WaitEventSet* set = build_wait_set(clients, nclients);
+    WaitEventSet* set = build_wait_set(clients, nclients, page_fd);
 
     while (!ShutdownRequestPending) {
         WaitEvent event;
@@ -191,6 +201,8 @@ chdb_search_serve(void) {
             } else if (fd >= 0) {
                 close(fd);
             }
+        } else if ((event.events & WL_SOCKET_READABLE) && event.user_data == PAGES) {
+            engine_serve_page();
         } else if (event.events & WL_SOCKET_READABLE) {
             int i = (int)(intptr_t)event.user_data;
 
@@ -201,9 +213,14 @@ chdb_search_serve(void) {
             }
         }
 
+        /* A request may have started the engine, or found it gone. */
+        if (engine_page_fd() != page_fd) {
+            page_fd = engine_page_fd();
+            rebuild = true;
+        }
         if (rebuild) {
             FreeWaitEventSet(set);
-            set = build_wait_set(clients, nclients);
+            set = build_wait_set(clients, nclients, page_fd);
         }
     }
 }
