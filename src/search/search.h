@@ -94,6 +94,8 @@ extern bytea*
 chdb_search_amoptions(Datum reloptions, bool validate);
 extern double
 chdb_search_index_optimize_ratio(Relation index);
+
+/* ---- textindex.c ---- */
 extern char*
 chdb_search_skip_index_args(
     Relation index,
@@ -101,7 +103,6 @@ chdb_search_skip_index_args(
     const char* col,
     ChdbColumnKind kind
 );
-
 extern bool
 chdb_search_wants_phrase_search(Relation index);
 
