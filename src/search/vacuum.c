@@ -20,6 +20,7 @@
 #include "access/xact.h"
 #include "catalog/pg_type_d.h"
 #include "commands/vacuum.h"
+#include "storage/bufmgr.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
@@ -32,7 +33,13 @@
 
 typedef struct VacuumStats {
     IndexBulkDeleteResult base;
-    double scanned;
+    /*
+     * Rows the last call found live. A VACUUM whose dead TIDs overflow
+     * maintenance_work_mem calls ambulkdelete once per round, and each round
+     * reads the whole store, so a count summed across them would be several
+     * times the index's size; tuples_removed is cumulative, as Postgres has it.
+     */
+    double live;
 } VacuumStats;
 
 static void
@@ -76,15 +83,20 @@ chdb_search_ambulkdelete(
 
     bool skip;
 
-    /* The result outlives this call, the working memory does not. */
-    if (!vs) {
-        vs = palloc0(sizeof(*vs));
-    }
-    /* Deleting against a store this server cannot trust would corrupt it. */
+    /*
+     * Deleting against a store this server cannot trust would corrupt it. In
+     * skip mode the store is left alone, and so are the statistics: a result
+     * for a store that was never read would put its row count at zero, where
+     * none keeps the heap's estimate (amvacuumcleanup).
+     */
     chdb_search_check_available(index, &skip);
     if (skip) {
         MemoryContextDelete(cxt);
-        return &vs->base;
+        return stats;
+    }
+    /* The result outlives this call, the working memory does not. */
+    if (!vs) {
+        vs = palloc0(sizeof(*vs));
     }
     old = MemoryContextSwitchTo(cxt);
 
@@ -96,9 +108,11 @@ chdb_search_ambulkdelete(
         oid, generation, chdb_search_build_select(index, NULL, 0, NULL, 0, -1), 0, cxt
     );
 
+    vs->live = 0;
     while (chdb_search_stream_next(s, &tid)) {
-        vs->scanned++;
-        if (callback(&tid, callback_state)) {
+        if (!callback(&tid, callback_state)) {
+            vs->live++;
+        } else {
             if (ndead == cap) {
                 cap  = cap ? cap * 2 : 1024;
                 dead = dead ? repalloc_huge(dead, cap * sizeof(uint64))
@@ -115,6 +129,7 @@ chdb_search_ambulkdelete(
         vacuum_delay_point(false);
     }
     vs->base.tuples_removed += ndead;
+    vs->base.num_pages = RelationGetNumberOfBlocks(index);
 
     MemoryContextSwitchTo(old);
     MemoryContextDelete(cxt);
@@ -230,18 +245,26 @@ chdb_search_amvacuumcleanup(IndexVacuumInfo* info, IndexBulkDeleteResult* stats)
     }
     sweep_tables(info->index);
     if (!vs) {
-        /* No dead heap tuples, so ambulkdelete was skipped and nothing to merge. */
+        /*
+         * No dead heap tuples, so ambulkdelete was skipped, or it left an
+         * unavailable store alone: nothing to merge, and the heap's estimate
+         * stands in for a count of the store's rows.
+         */
         vs                        = palloc0(sizeof(*vs));
+        vs->base.num_pages        = RelationGetNumberOfBlocks(info->index);
         vs->base.num_index_tuples = info->num_heap_tuples;
         vs->base.estimated_count  = true;
         return &vs->base;
     }
 
-    vs->base.num_index_tuples = vs->scanned - vs->base.tuples_removed;
-    if (vs->base.tuples_removed > 0 && vs->scanned > 0) {
+    /* What the store held before this VACUUM: the live rows plus the removed. */
+    double held = vs->live + vs->base.tuples_removed;
+
+    vs->base.num_index_tuples = vs->live;
+    if (vs->base.tuples_removed > 0 && held > 0) {
         double ratio = chdb_search_index_optimize_ratio(info->index);
 
-        if (vs->base.tuples_removed / vs->scanned >= ratio) {
+        if (vs->base.tuples_removed / held >= ratio) {
             uint64 generation = chdb_meta_generation(info->index);
 
             chdb_search_run(

@@ -19,6 +19,8 @@ DELETE FROM docs WHERE id = 2;
 SET client_min_messages = debug1;
 VACUUM docs;
 RESET client_min_messages;
+-- The catalog gets the index's one page and the rows the store holds live.
+SELECT relpages, reltuples FROM pg_class WHERE relname = 'docs_idx';
 -- Past the index's ratio, the parts are merged after the delete.
 ALTER INDEX docs_idx SET (vacuum_optimize_ratio = 0.1);
 DELETE FROM docs WHERE id = 1;
@@ -37,7 +39,10 @@ RESET client_min_messages;
 RESET chdb_search.vacuum_optimize_ratio;
 
 -- A store the fail-safe check refuses (see search_stub_scan) is not deleted
--- from either: VACUUM raises, or in skip mode leaves the store alone.
+-- from either: VACUUM raises, or in skip mode leaves the store alone, and
+-- the catalog's figures for it as they were rather than counting a store it
+-- did not read.
+SELECT reltuples AS before FROM pg_class WHERE relname = 'docs_idx' \gset
 SET chdb_search_stub.ctids = '3,4';
 DELETE FROM docs WHERE id = 3;
 SET chdb_search_stub.meta = '1';
@@ -46,6 +51,7 @@ SET chdb_search.unavailable_index = skip;
 SET client_min_messages = debug1;
 VACUUM docs;
 RESET client_min_messages;
+SELECT relpages, reltuples = :before AS kept FROM pg_class WHERE relname = 'docs_idx';
 RESET chdb_search.unavailable_index;
 RESET chdb_search_stub.meta;
 RESET chdb_search_stub.ctids;
