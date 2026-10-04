@@ -1,5 +1,8 @@
 MODULE_big   = chdb_search
-OBJS         = ../native.o ../channel.o $(subst .c,.o, $(wildcard *.c))
+# The worker client, or with CHDB_SEARCH_STUB=1 a per-backend fake that logs
+# and discards everything, so the access method builds and tests on its own.
+CLIENT       = $(if $(CHDB_SEARCH_STUB),client_stub.c,client.c)
+OBJS         = ../native.o ../channel.o $(subst .c,.o, $(filter-out client.c client_stub.c,$(wildcard *.c)) $(CLIENT))
 PGCH_DIR     = ../../vendor/pg-clickhouse-c
 CH_C_DIR     = $(PGCH_DIR)/clickhouse-c
 PG_CFLAGS    = -Wno-declaration-after-statement -Wall -Werror

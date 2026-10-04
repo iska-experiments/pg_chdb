@@ -51,7 +51,7 @@ PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chd
                -DCHC_ERR_MSG_LEN=4096
 
 # Clean up generated files.
-EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc sql/chdb_search--0.1.sql src/search/chdb_search$(DLSUFFIX) src/search/*.o src/search/*.bc src/helper/chdb_helper src/helper/*.o src/search/engine/chdb_search_engine src/search/engine/*.o test/schedule*
+EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc src/helper/chdb_helper src/helper/*.o src/search/chdb_search$(DLSUFFIX) src/search/*.o src/search/*.bc sql/chdb_search--*.sql src/search/engine/chdb_search_engine src/search/engine/*.o test/schedule*
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -73,8 +73,11 @@ uninstall: uninstall-libchdb
 endif
 endif
 
+SEARCH_VERSION := $(shell sed -n "s/^default_version *= *'\(.*\)'/\1/p" chdb_search.control)
+SEARCH_MODULE  := src/search/chdb_search$(DLSUFFIX)
+
 # Require the versioned SQL script.
-all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper $(ENGINE) src/hook/chdb_hook$(DLSUFFIX) src/search/chdb_search$(DLSUFFIX)
+all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper $(ENGINE) src/hook/chdb_hook$(DLSUFFIX) $(SEARCH_MODULE) sql/chdb_search--$(SEARCH_VERSION).sql
 
 # PGXS tracks no header dependencies, and the vendored libraries are all header.
 # *.bc compiles same sources, so needs same headers.
@@ -102,22 +105,24 @@ uninstall-hook:
 install: install-hook
 uninstall: uninstall-hook
 
-# Search module: the chdb_search extension and its worker. It has its own
-# control file and script, so it installs through a sub-make of its own.
-SEARCH_MODULE := src/search/chdb_search$(DLSUFFIX)
+# Search module: the chdb_search extension, its worker and the chdb index
+# access method. It has its own control file and script, so it installs
+# through a sub-make of its own. Pass CHDB_SEARCH_STUB=1 to link the
+# per-backend fake in src/search/client_stub.c instead of the worker client,
+# for building and testing the access method without a worker.
 $(SEARCH_MODULE): $(wildcard src/search/*.c src/search/*.h) $(OBJS) src/version.h
-	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR)
+	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)
 
-sql/chdb_search--0.1.sql: sql/chdb_search.sql
+sql/chdb_search--$(SEARCH_VERSION).sql: sql/chdb_search.sql chdb_search.control
 	cp $< $@
 
-install-search: $(SEARCH_MODULE) sql/chdb_search--0.1.sql
+install-search: $(SEARCH_MODULE) sql/chdb_search--$(SEARCH_VERSION).sql
 	$(INSTALL_SHLIB) $< '$(DESTDIR)$(pkglibdir)/'
 	$(MKDIR_P) '$(DESTDIR)$(datadir)/extension'
-	$(INSTALL_DATA) chdb_search.control sql/chdb_search--0.1.sql '$(DESTDIR)$(datadir)/extension/'
+	$(INSTALL_DATA) chdb_search.control sql/chdb_search--$(SEARCH_VERSION).sql '$(DESTDIR)$(datadir)/extension/'
 uninstall-search:
 	rm -f $(DESTDIR)$(pkglibdir)/chdb_search$(DLSUFFIX)
-	rm -f $(DESTDIR)$(datadir)/extension/chdb_search.control $(DESTDIR)$(datadir)/extension/chdb_search--0.1.sql
+	rm -f $(DESTDIR)$(datadir)/extension/chdb_search.control $(DESTDIR)$(datadir)/extension/chdb_search--$(SEARCH_VERSION).sql
 install: install-search
 uninstall: uninstall-search
 
