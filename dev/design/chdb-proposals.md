@@ -101,3 +101,26 @@ cross-process visibility.
 Postgres users scale reads by adding backends; a per-database worker that
 serialises all searches undoes that. Read-only attach would let each backend
 run its own searches against committed parts while the worker only ingests.
+
+## Status and follow-ups (2026-10-03)
+
+Proposal 1 is implemented on chdb-core branch `callback-object-storage`
+(iskakaushik/chdb-core) and open as a draft PR against chdb-io/chdb-core.
+The review of that branch left these follow-ups for the chDB team, in the
+order we need them:
+
+1. An optional idle hook on the thread inside `chdb_query`, so a
+   single-threaded host can serve callbacks itself. pg_chdb does not need it
+   because libchdb runs in the engine child, but other hosts will.
+2. Fail fast when a callback re-enters `chdb_query` (today: deadlock or UB).
+3. Fence callbacks after `chdb_unregister_object_storage` so a host that has
+   torn down its state can stop late calls from background merges.
+4. Late-bind unregistered callback disks at attach, removing the
+   register-before-reopen rule.
+5. `chdb_shutdown()` returns an error after any MergeTree insert because
+   `GlobalThreadPool::shutdownAndJoin` finds a parked thread; pre-existing.
+6. Upstream ClickHouse: a `__trash/` prefix for `removeRecursive` on plain
+   rewritable disks so interrupted removals can be swept.
+
+Proposal 2 (read-only attach) is unchanged and still a request for
+discussion.
