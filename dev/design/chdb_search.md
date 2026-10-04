@@ -35,17 +35,16 @@ a ranker.
 ## Architecture
 
 ```
- backend (chdb_search.so)                 chdb_search worker (per database)
- ┌──────────────────────────┐   unix      ┌────────────────────────────────┐
- │ index AM  (amhandler)    │  socket     │ accept loop, one thread/conn   │
- │ insert buffer → precommit├────────────►│ libchdb session  --path=STORE  │
- │ scan: ctid stream        │◄────────────┤ Native blocks in/out           │
- │ CustomScan / agg pushdown│             │ pg_pages disk callbacks        │
- └──────────────────────────┘             │   (Phase 1) → shared buffers   │
-                                          └────────────────────────────────┘
+ backend (chdb_search.so)          chdb_search worker (supervisor)    chdb_search_engine
+ ┌──────────────────────────┐ unix ┌─────────────────────────────┐ socket ┌───────────────────┐
+ │ index AM  (amhandler)    │socket│ accept loop, relays frames  │  pair  │ libchdb session   │
+ │ insert buffer → precommit├─────►│ owns registry slot + socket ├───────►│  --path=STORE     │
+ │ scan: ctid stream        │◄─────┤ restarts the engine on death│◄───────┤ Native blocks     │
+ │ CustomScan / agg pushdown│      │ pg_pages callbacks (Phase 1)│        │ (crash-isolated)  │
+ └──────────────────────────┘      └─────────────────────────────┘        └───────────────────┘
 ```
 
-### Worker (`src/search/worker.c`, `src/search/client.c`)
+### Worker (`src/search/{worker,serve,request,relay,engine_proc}.c`, `src/search/engine/`, `src/search/client.c`)
 
 * Registered on demand with `RegisterDynamicBackgroundWorker` by the first
   backend in a database that needs it (CREATE INDEX, insert flush, scan).
@@ -54,11 +53,39 @@ a ranker.
   `chdb_search` shmem hash sized by `max_databases` GUC, default 64, attached
   with `shmem_request_hook` when preloaded; without preload a dynamic DSA
   registry via `GetNamedDSMSegment` (PG17+)).
-* The worker links libchdb directly (unlike today's forked helper). A libchdb
-  crash takes the worker down, Postgres restarts it, backends get an error
-  for the in-flight request only. Postmaster is isolated because the worker
-  holds no buffer pins across libchdb calls in Phase 0; in Phase 1 the page
-  callbacks pin/lock only inside the callback.
+* **Supervisor and engine.** The worker never loads libchdb. libchdb aborts or
+  segfaults when an allocation fails, and a signal death of a shared-memory
+  background worker makes the postmaster run crash recovery for the whole
+  cluster, which would defeat the isolation `chdb_helper` gives COPY. So the
+  worker is a supervisor: it owns the registry slot, the socket and (Phase 1)
+  the page callbacks, and it forks `chdb_search_engine` (installed beside
+  `chdb_helper` and set up the same way) on the first request. The engine
+  opens the store once, keeps the connection for its life, and serves the
+  same framing as the client protocol over a socketpair; it dies with the
+  worker (`PR_SET_PDEATHSIG`) so the store lock is released. The worker
+  forwards frames in both directions without interpreting Native blocks,
+  whole chunks at a time. If the engine dies, `waitpid` and the socketpair's
+  EOF tell the worker, which ends any data the client is owed and reports the
+  signal in the status frame; the next request respawns the engine. A crash
+  therefore costs the request in flight only, the client connection and the
+  worker survive, and the postmaster never notices. Settings (`max_memory`,
+  `max_threads`, `max_parsing_threads`) travel in every request and the
+  engine applies them when they change. Engine stderr is the Postgres log.
+  A request arriving after the engine died idle is the one that finds out and
+  fails; there is no silent retry, since the supervisor cannot tell a request
+  the engine never read from one it half ran.
+  `chdb_search_engine_pid()` and `chdb_search_debug_kill_engine(signo)`
+  (EXECUTE revoked from PUBLIC) ask the worker for the engine's pid and
+  signal it; the test uses them to prove that a SIGSEGV leaves the backend,
+  the worker and the postmaster's start time unchanged.
+* **Phase 1 consequence.** The page callbacks (read, write, list, remove blob)
+  must run in the worker, which has shared buffers; the engine has none. They
+  will cross the socketpair in the other direction, as requests from the
+  engine to the supervisor interleaved with the response stream of the
+  request in flight, which the relay answers rather than forwards (the host
+  contract below fixes the rules). Not implemented; the framing has no
+  engine-initiated frame yet. Each callback is a round trip, so the blob
+  cache of Phase 1 has to sit in the engine process.
 * Listens on `$PGDATA/pg_chdb/<dboid>.sock`. Wire protocol reuses the setup
   payload of `src/setup.h` with new commands:
   * `CHDB_CMD_EXEC` run DDL/DML, reply status.
