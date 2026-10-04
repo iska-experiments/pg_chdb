@@ -19,6 +19,40 @@
 
 #include "search.h"
 
+bool
+chdb_search_store_unavailable(Relation index pg_attribute_unused()) {
+    /*
+     * Phase 0: a server in recovery has only a store copied as files, which a
+     * backup, a standby or pg_rewind leaves stale, and its per-database worker
+     * does not start until recovery ends. The generation and LSN checks
+     * against the worker (follow-up) will catch a store that is stale without
+     * the server being in recovery.
+     */
+    return RecoveryInProgress();
+}
+
+void
+chdb_search_check_available(Relation index, bool* skip) {
+    *skip = false;
+    if (!chdb_search_store_unavailable(index)) {
+        return;
+    }
+    if (chdb_search_unavailable_index == CHDB_UNAVAILABLE_SKIP) {
+        *skip = true;
+        return;
+    }
+    ereport(
+        ERROR,
+        errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+        errmsg(
+            "chdb index \"%s\" is not available on this server",
+            RelationGetRelationName(index)
+        ),
+        errdetail("Its store is not current on a server in recovery."),
+        errhint("REINDEX the index once the server is out of recovery.")
+    );
+}
+
 static ChdbMetaPageData*
 meta_of(Page page) {
     return (ChdbMetaPageData*)PageGetContents(page);

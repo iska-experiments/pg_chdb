@@ -137,6 +137,24 @@ REVOKE CREATE ON SCHEMA public FROM chdb_search_user;
 DROP ROLE chdb_search_user;
 
 ----------------------------------------------------------------------------
+-- chdb_search.unavailable_index: the fail-safe GUC (its default and values)
+----------------------------------------------------------------------------
+SHOW chdb_search.unavailable_index;
+SET chdb_search.unavailable_index = skip;
+SET chdb_search.unavailable_index = error;
+SET chdb_search.unavailable_index = bogus;
+-- Not in recovery, so the store is available and a scan is unaffected either way.
+SET enable_seqscan = off;
+\o /dev/null
+SET chdb_search.unavailable_index = skip;
+SELECT id FROM docs WHERE body @@@ 'running shoes';
+SET chdb_search.unavailable_index = error;
+SELECT id FROM docs WHERE body @@@ 'running shoes';
+\o
+RESET chdb_search.unavailable_index;
+RESET enable_seqscan;
+
+----------------------------------------------------------------------------
 -- Planning: a chdb index scan, or a bitmap scan when forced
 ----------------------------------------------------------------------------
 SET enable_seqscan = off;

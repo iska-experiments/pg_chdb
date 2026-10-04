@@ -16,6 +16,13 @@ int chdb_search_flush_threshold_kb       = 64 * 1024;
 int chdb_search_max_buffer_kb            = 1024 * 1024;
 double chdb_search_vacuum_optimize_ratio = 0.2;
 bool chdb_search_mask_oids               = false;
+int chdb_search_unavailable_index        = CHDB_UNAVAILABLE_ERROR;
+
+static const struct config_enum_entry unavailable_index_options[] = {
+    { "error", CHDB_UNAVAILABLE_ERROR, false },
+    { "skip",  CHDB_UNAVAILABLE_SKIP,  false },
+    { NULL,    0,                      false },
+};
 
 /* Prefixes whose run of digits the mask replaces: OID, generation, xid. */
 static const char* const masked_prefixes[] = { "idx_", ".t_", "_tx_" };
@@ -113,6 +120,20 @@ chdb_search_am_init(void) {
         NULL,
         &chdb_search_mask_oids,
         false,
+        PGC_USERSET,
+        0,
+        NULL,
+        NULL,
+        NULL
+    );
+    DefineCustomEnumVariable(
+        "chdb_search.unavailable_index",
+        "What a scan does when a chdb index's store is not available on this server.",
+        "error raises so a broken index is never silent; skip lets the planner use "
+        "another path.",
+        &chdb_search_unavailable_index,
+        CHDB_UNAVAILABLE_ERROR,
+        unavailable_index_options,
         PGC_USERSET,
         0,
         NULL,

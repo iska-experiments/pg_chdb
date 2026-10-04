@@ -201,7 +201,16 @@ chdb_search_amrescan(
 static void
 start(IndexScanDesc scan) {
     ScanOpaque* so = scan->opaque;
-    char* sql      = chdb_search_build_select(
+    bool skip;
+
+    /* Never answer from a store this server cannot prove current. */
+    chdb_search_check_available(scan->indexRelation, &skip);
+    if (skip) {
+        so->started = true;
+        return;
+    }
+
+    char* sql = chdb_search_build_select(
         scan->indexRelation,
         scan->keyData,
         scan->numberOfKeys,
