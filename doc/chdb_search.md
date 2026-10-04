@@ -7,58 +7,40 @@ chdb_search 0.1.0
 # CREATE EXTENSION chdb_search;
 CREATE EXTENSION
 
-# CREATE INDEX docs_idx ON docs USING chdb (
-    body   text_ops (tokenizer = 'splitByNonAlpha', preprocessor = 'lowerUTF8'),
-    author columnar_ops
-) WITH (store_columns = 'created_at');
+# CREATE INDEX docs_idx ON docs USING chdb (body, author columnar_ops);
 CREATE INDEX
 
-# SELECT id FROM docs WHERE body @@@ 'postgres clickhouse' LIMIT 10;
+# SELECT id FROM docs WHERE body @@@ 'postgres clickhouse' AND author = 'ann';
  id
 ----
   7
- 42
-(2 rows)
+(1 row)
 ```
-
-> [!NOTE]
-> The index access method, operators, and functions below are specified by
-> the [design] and arrive with the access method; sections that depend on it
-> are marked **Requires the access method**. Today the extension provides the
-> worker and the [debug functions](#debug-functions) only.
 
 ## Description
 
 The chdb_search extension gives a Postgres table a [ClickHouse full-text
-index][text index] served by [chDB]. A `chdb` index stores the indexed
-columns in a ClickHouse MergeTree table with a `text` skip index and answers
-`WHERE` predicates over tokens, so a query for rows that contain all, any, or
-a phrase of some tokens reads the index rather than scanning the heap.
+index][text index] served by [chDB]. A `chdb` index keeps the indexed columns
+in a ClickHouse MergeTree table with a `text` skip index and answers `WHERE`
+predicates over tokens, so a query for rows that contain all, any, one or a
+phrase of some tokens reads the index, not the heap, and filters the plain
+columns stored beside the text there too.
 
-The index is a filter, not a ranker. There is no BM25 and no relevance score:
-a row matches exactly when the tokens the index derives from it contain the
-tokens of the query. Order results by columns, or by vector distance with the
-`chdb_vector` extension.
-
-chDB allows one process per store, so backends never load libchdb. A
-background worker per database owns the store, and backends talk to it over a
-Unix socket. See [How It Works](chdb_search-internals.md#how-it-works).
+The index is a filter, not a ranker: a row matches exactly when the tokens
+the index derives from it contain the tokens of the query, and there is no
+relevance score. Order results by columns, or by vector distance with the
+[chdb_vector] extension. chDB allows one process per store, so a background
+worker per database owns the store and backends talk to it over a Unix
+socket; libchdb itself runs in a child of the worker, so a crash in it costs
+one request. See [The Worker and the Engine](#the-worker-and-the-engine).
 
 ## Installation
 
 chdb_search requires PostgreSQL 17 or later and the [chDB] library, libchdb,
 v26.9.0 or later. Build and install it with the rest of the distribution (see
-the README). The server, not just the build, must be able to load libchdb, as
-the worker `dlopen`s it at startup. Either:
-
-*   Put the directory containing `libchdb.so` on the library path of the
-    server process, for example `LD_LIBRARY_PATH=/usr/local/lib` in its
-    service environment, or install it where `ldconfig` finds it; or
-*   Set [`chdb_search.libchdb_path`](#chdb_searchlibchdb_path) to its full
-    path in `postgresql.conf` and reload.
-
-If the library cannot be loaded the worker exits with `FATAL: chdb_search:
-could not load "libchdb.so"` and a hint naming both settings.
+the README). It installs the `chdb_search_engine` program beside
+`chdb_helper`; the engine links libchdb, so a dynamic build needs the server
+to find `libchdb.so` through `ldconfig` or its `LD_LIBRARY_PATH`.
 
 Then create the extension as a superuser in each database that needs it:
 
@@ -66,216 +48,284 @@ Then create the extension as a superuser in each database that needs it:
 CREATE EXTENSION chdb_search;
 ```
 
-The extension needs no `shared_preload_libraries` entry. The first backend
-that needs a worker starts it on demand.
+The extension installs into the `chdb` schema, which every role may use. Put
+it on the `search_path`, or write `OPERATOR(chdb.@@@)` and `chdb.text_ops`.
+The worker needs no `shared_preload_libraries` entry: the first backend that
+needs one starts it. Preloading the library is still advisable, as it is
+what lets a `DROP` remove an index's store; see [Dropping](#dropping).
 
 ## Creating an Index
 
-**Requires the access method.**
-
 ```sql
 CREATE INDEX name ON table USING chdb (
-    column opclass [ (option = value [, ...]) ] [, ...]
-) [ WITH (store_columns = 'column [, ...]') ];
+    column [ opclass [ (option = value [, ...]) ] ] [, ...]
+) [ WITH (vacuum_optimize_ratio = fraction) ];
 ```
 
-One `chdb` index per table backs one MergeTree table. Each column names an
-operator class that decides how it is indexed, and options for that column
-in parentheses after the class.
+One `chdb` index backs one MergeTree table. Each column names an operator
+class that decides how it is indexed, with options for that column in
+parentheses after the class. Only permanent tables can be indexed, the
+column names `ctid` and `xmin` are reserved by the ClickHouse table, and a
+text column in `columnar_ops` needs the `"C"` or `"POSIX"` collation, as
+ClickHouse compares bytes.
 
 ### Operator Classes
 
-| Operator class   | Column type | Indexed as                                       |
-| ---------------- | ----------- | ------------------------------------------------ |
-| `text_ops`       | `text`      | ClickHouse `text` index over the tokenized value |
-| `text_array_ops` | `text[]`    | `text` index with the `array` tokenizer          |
-| `columnar_ops`   | any mapped  | stored, filterable, aggregatable; no text index  |
-| `vector_*_ops`   | `vector`    | HNSW; provided by the `chdb_vector` extension    |
+| Class            | Type     | Indexed as                                    |
+| ---------------- | -------- | --------------------------------------------- |
+| `text_ops`       | `text`   | `text` skip index over the tokenized value    |
+| `text_array_ops` | `text[]` | `text` index with the `array` tokenizer       |
+| `columnar_ops`   | see text | stored and filterable, no text index          |
+| `vector_*_ops`   | `vector` | HNSW; provided by the [chdb_vector] extension |
 
-`columnar_ops` columns, and those listed in `store_columns`, are kept in the
-ClickHouse table so equality, `IN`, and `LIKE 'x%'` filters and aggregates
-can be answered without the heap.
+`text_ops` and `text_array_ops` are the defaults for their types; every
+other type defaults to `columnar_ops`, which admits the types whose
+comparison operators (`=`, `<`, `<=`, `>`, `>=`) are in its family: `int2`,
+`int4`, `int8`, `float4`, `float8`, `numeric`, `bool`, `date`, `timestamp`,
+`timestamptz`, `uuid`, `text` and the types binary coercible to them, such as
+`varchar`; a type with none is refused. The comparisons are pushed down
+with a text predicate as one ClickHouse query.
 
 ### Per-Column Options
 
-Options are operator class parameters, so each column has its own.
+Options are operator class parameters of `text_ops`, so each column has its
+own. `text_array_ops` takes none: each element is one token, lowercased.
 
-| Option             | Applies to  | Values                                   |
-| ------------------ | ----------- | ---------------------------------------- |
-| `tokenizer`        | `text_ops`  | `splitByNonAlpha` (default), `splitByString`, `splitByRegexp`, `ngrams`, `sparseGrams`, `icu`, `asciiCJK`, `array` |
-| `preprocessor`     | `text_ops`  | `none` (default), `lower`, `lowerUTF8`, `caseFoldUTF8`, `extractTextFromHTML` |
-| `ngram_size`       | `ngrams`    | integer, the n of the n-grams            |
-| `support_phrase_search` | `text_ops` | `true` to allow `has_phrase`, `@@~`  |
-| `raw_preprocessor` | `text_ops`  | a ClickHouse expression; superuser only  |
+*   `tokenizer`: `splitByNonAlpha` (the default), `splitByString`,
+    `splitByRegexp`, `ngrams`, `sparseGrams`, `icu`, `asciiCJK` or `array`.
+*   `tokenizer_arg`: the locale of `icu` or the pattern of `splitByRegexp`,
+    which require it, or the separator characters of `splitByString`.
+*   `preprocessor`: `lowerUTF8` (the default), `lower`, `caseFoldUTF8`,
+    `extractTextFromHTML` or `none`.
+*   `raw_preprocessor`: a ClickHouse expression used instead of
+    `preprocessor`. Superusers only.
+*   `ngram_size`: the n of `ngrams`, from 1 to 8; defaults to 3.
+*   `support_phrase_search`: `true` to allow `@@~` and `has_phrase`.
 
-Tokenizers and preprocessors come from a fixed allowlist so that an index
-definition cannot run arbitrary ClickHouse expressions. `raw_preprocessor` is
-the escape hatch: it is passed to ClickHouse as written and is accepted only
-from a superuser. It cannot be combined with `preprocessor`.
+Tokenizers and preprocessors come from a fixed allowlist, so an index
+definition cannot run arbitrary ClickHouse expressions; `raw_preprocessor`
+is the escape hatch, spliced into the DDL as written, for superusers only.
 
 ```sql
 CREATE INDEX docs_idx ON docs USING chdb (
-    body      text_ops (tokenizer = 'splitByNonAlpha',
-                        preprocessor = 'lowerUTF8',
-                        support_phrase_search = true),
-    title     text_ops (tokenizer = 'ngrams', ngram_size = 3),
-    tags      text_array_ops,
-    author    columnar_ops
-) WITH (store_columns = 'created_at');
+    body  text_ops (tokenizer = 'ngrams', ngram_size = 3,
+                    support_phrase_search = true),
+    title text_ops (tokenizer = 'splitByString', tokenizer_arg = ' ,'),
+    price
+) WITH (vacuum_optimize_ratio = 0.5);
 ```
 
 ## Functions and Operators
 
-**Requires the access method.** All functions live in the `chdb` schema.
-Each has a plain Postgres implementation, so a sequential scan and the heap
-recheck return the same rows as the index, and a ClickHouse translation the
-index uses.
+All functions live in the `chdb` schema. Each has a Postgres implementation,
+so a sequential scan and the heap recheck return the same rows as the index,
+and a ClickHouse translation the index uses.
 
-| Operator  | Function                       | ClickHouse        |
-| --------- | ------------------------------ | ----------------- |
+| Operator        | Function                          | ClickHouse     |
+| --------------- | --------------------------------- | -------------- |
 | `col @@@ 'a b'` | `chdb.has_all_tokens(col, 'a b')` | `hasAllTokens` |
 | `col @@? 'a b'` | `chdb.has_any_tokens(col, 'a b')` | `hasAnyTokens` |
-| none      | `chdb.has_token(col, 'a')`     | `hasToken`        |
-| `col @@~ 'a b'` | `chdb.has_phrase(col, 'a b')` | `hasPhrase`    |
-| none      | `chdb.tokens(text [, tokenizer, args])` | `tokens` |
+| `col @@= 'a'`   | `chdb.has_token(col, 'a')`        | `hasToken`     |
+| `col @@~ 'a b'` | `chdb.has_phrase(col, 'a b')`     | `hasPhrase`    |
+| none            | `chdb.tokens(text)`               | `tokens`       |
+
+The first three also take a `text[]` left argument, where the needle is one
+element and all, any and one mean the same. `@@~` needs
+`support_phrase_search` on the column and does not apply to arrays.
+`chdb.tokens()` shows what the default tokenizer, run in the worker, makes
+of a string.
 
 ```sql
--- Rows containing both tokens, in any order.
-SELECT id FROM docs WHERE body @@@ 'postgres clickhouse';
-
--- Rows containing at least one.
-SELECT id FROM docs WHERE body @@? 'postgres clickhouse';
-
--- A single token.
-SELECT id FROM docs WHERE chdb.has_token(body, 'postgres');
-
--- The tokens in order; needs support_phrase_search on the column.
-SELECT id FROM docs WHERE body @@~ 'full text search';
-
--- What would the tokenizer make of this? Runs in the worker.
-SELECT chdb.tokens('Hello, World!');
+SELECT id FROM docs WHERE body @@@ 'postgres clickhouse'; -- both, any order
+SELECT id FROM docs WHERE body @@? 'postgres clickhouse'; -- at least one
+SELECT id FROM docs WHERE body @@= 'postgres';            -- one token
+SELECT id FROM docs WHERE body @@~ 'full text search';    -- in order
 ```
 
-Matching is exact on tokens: `postgres` does not match `postgresql`. Use an
-`ngrams` or `sparseGrams` tokenizer for substring-like matching.
+Matching is exact on tokens: `postgres` does not match `postgresql`, and a
+needle without tokens matches nothing. The Postgres implementations know
+ClickHouse's default pipeline only, `lowerUTF8` then `splitByNonAlpha`,
+lowercasing by Unicode whatever the cluster's locale. An index built with
+another tokenizer or preprocessor answers differently, so for such a column
+the operators are meaningful through the index only.
 
-### Debug Functions
+## Consistency
 
-These superuser-only functions talk to the worker about a scratch chDB
-database named `idx_0`. They exist to test the worker before the access
-method does and are not an interface.
+*   **Flush at commit.** Inserts are buffered per transaction and sent to
+    the worker at pre-commit; `COMMIT` returns once the worker has them, and
+    fails if the flush fails. An abort, or a rolled back savepoint, drops
+    its rows.
+*   **Read after commit.** Once `COMMIT` returns, every later query sees the
+    rows. A transaction does not see its own uncommitted rows through the
+    index, while a sequential scan does, so plan choice decides what a query
+    in the inserting transaction returns.
+*   **Visibility through the heap.** The index returns tuple ids and the
+    executor fetches each from the heap, so the rows of aborted transactions
+    and the old versions that linger in the store until `VACUUM` are never
+    returned. Postgres MVCC decides what a query sees.
+*   **Large transactions.** Past
+    [`chdb_search.flush_threshold`](#chdb_searchflush_threshold) a
+    transaction flushes early into a staging table that commit merges and
+    abort drops. Rows inserted inside a savepoint cannot be staged, so their
+    buffer grows until commit, up to
+    [`chdb_search.max_buffer`](#chdb_searchmax_buffer). `PREPARE
+    TRANSACTION` is refused for a transaction that changed a chdb index.
+
+## VACUUM
+
+`VACUUM` removes the dead heap tuples from the index with a lightweight
+`DELETE`, and runs `OPTIMIZE TABLE ... FINAL` when the dead fraction of the
+rows it read exceeds
+[`chdb_search.vacuum_optimize_ratio`](#chdb_searchvacuum_optimize_ratio) or
+the index's own `vacuum_optimize_ratio` option; until then stale entries
+cost space and a heap visit, not correctness. It also drops the tables of
+superseded builds and the staging tables of transactions that are over.
+
+## Availability
+
+The store is derived data under the data directory, in this phase neither
+WAL-logged nor replicated. Before a scan, a commit's flush or `VACUUM`'s
+deletes, the index proves that this server can serve its store: the server
+is not in recovery, and the store's record of its last flush agrees with the
+index's. A standby, a restore from a backup, a `pg_rewind`, a copied or a
+missing store fail that proof, and
+[`chdb_search.unavailable_index`](#chdb_searchunavailable_index) decides:
+by default the statement fails with `chdb index "name" is not available on
+this server` and names the `REINDEX` that rebuilds the store; in `skip` mode
+the planner takes another path, a commit keeps its rows from the store, and
+the index moves on so that the store can never match it again.
+
+Every build writes a new **generation**: a random id in the index's one
+WAL-logged page that names the store table, `idx_<oid>.t_<generation>`. A
+`REINDEX`, `TRUNCATE` or table rewrite builds the new generation beside the
+old, so a rollback leaves a valid index, and `VACUUM` sweeps the loser. A
+request for a generation the store no longer has fails with `chdb index
+"name" does not match its store`; `REINDEX INDEX` rebuilds it.
+
+## Dropping
+
+`DROP INDEX`, and the `DROP TABLE`, `DROP SCHEMA ... CASCADE` or `DROP
+DATABASE` that takes an index with it, removes the index's store when the
+transaction commits, if the dropping session has the library loaded; put
+`chdb_search` in `session_preload_libraries` or `shared_preload_libraries`
+to make that every session. A store the drop missed is swept when the
+database's worker next starts, and a session that loaded the library on
+demand inside a `DROP` says so in the log.
+
+The worker is a session of its database: `DROP DATABASE` refuses while it
+runs, `DROP DATABASE ... WITH (FORCE)` stops it and proceeds.
+
+## The Worker and the Engine
+
+The worker for a database appears in `pg_stat_activity` with `backend_type`
+`chdb_search worker`, connected to that database. It listens on
+`$PGDATA/pg_chdb/<database oid>.sock` and keeps its store in
+`$PGDATA/pg_chdb/<database oid>/`. It starts when a backend first needs it
+and, if it dies, restarts five seconds later or when a backend next asks. At
+most 64 databases can have a worker at once.
+
+The worker never loads libchdb. It forks `chdb_search_engine` on the first
+request, and that process opens the store and runs every statement. If the
+engine dies, the request that finds it dead fails with `chDB engine (pid N)
+was terminated by signal 11: Segmentation fault`, the worker logs the death,
+and the next request starts a new engine; the backend, the worker and the
+rest of the instance are untouched. The worker itself attaches to shared
+memory, so a signal death of the worker is a crash of the instance, as of a
+backend: the postmaster runs crash recovery, the engine dies with its
+parent, and the next call finds a new worker over the same store.
+
+The worker serves one request at a time, so a request can wait behind
+another backend's index build or `OPTIMIZE`; a wait inside a commit or abort
+callback, where it cannot be cancelled, is bounded by
+[`chdb_search.worker_timeout`](#chdb_searchworker_timeout). The [internals]
+describe the protocol, the store's layout and the sweeps.
+
+## Settings
+
+### `chdb_search.flush_threshold`
+
+```sql
+SET chdb_search.flush_threshold = '256MB';
+```
+
+Bytes of insert buffer per index above which a transaction stages its rows
+in ClickHouse. Takes the memory units of `postgresql.conf`; at least `64kB`.
+Defaults to `64MB`.
+
+### `chdb_search.max_buffer`
+
+Bytes of insert buffer per index above which an insert fails: a ceiling for
+rows that cannot be staged early, so that a transaction gets an error rather
+than the backend an OOM kill. `0` means no limit. Defaults to `1GB`.
+
+### `chdb_search.vacuum_optimize_ratio`
+
+Fraction of dead index entries above which `VACUUM` runs `OPTIMIZE TABLE
+... FINAL`, from `0` to `1`. An index's `vacuum_optimize_ratio` option
+overrides it. Defaults to `0.2`.
+
+### `chdb_search.unavailable_index`
+
+What a scan, a commit or a `VACUUM` does with a chdb index whose store is
+not available on this server (see [Availability](#availability)): `error`
+raises, so a broken index is never silent; `skip` lets the planner use
+another path and leaves the store alone. Defaults to `error`.
+
+### `chdb_search.worker_timeout`
+
+Seconds a backend waits for a worker to start, and for a busy worker to
+answer where the wait cannot be cancelled. From `1` to `3600`; defaults to
+`30`.
+
+### `chdb_search.mask_oids`
+
+Replaces index OIDs, store generations, transaction ids and WAL positions
+by `N` in the ClickHouse statements the index logs at `DEBUG1`, for tests.
+Defaults to `off`.
+
+### Resource Limits
+
+`chdb_search.max_memory`, `chdb_search.max_threads` and
+`chdb_search.max_parsing_threads` are the same settings as
+[`chdb.max_memory`], [`chdb.max_threads`] and [`chdb.max_parsing_threads`]
+under the `chdb_search` prefix, with the same units, limits and superuser
+requirement; they travel with every request and apply to the engine's query.
+
+## Debug Functions
+
+These superuser-only functions exist to test the worker and the store, and
+are not an interface. The first five talk to the worker about a scratch chDB
+database named `idx_0`.
 
 *   `chdb_search_version()` returns the library version.
-*   `chdb_search_exec(sql)` runs a statement in `idx_0`.
+*   `chdb_search_exec(sql)` runs a statement in `idx_0`; `chdb_search_drop()`
+    drops `idx_0`, idempotently.
 *   `chdb_search_query(sql) AS (...)` runs a query and returns its rows; a
     column definition list is required.
 *   `chdb_search_copy_to(regclass, insert_sql)` streams a heap table into an
     `INSERT`, returning the rows sent.
-*   `chdb_search_drop()` drops `idx_0`; it is idempotent.
-
-## Consistency
-
-**Requires the access method.**
-
-*   **Flush at commit.** `INSERT`s are buffered per transaction and sent to
-    the worker as one block at pre-commit. If the flush fails, the
-    transaction fails. An abort drops the buffer, and a rolled back
-    subtransaction drops its rows.
-*   **Read-after-commit.** Once `COMMIT` returns, every later query sees the
-    rows. A transaction does not see its own uncommitted rows through the
-    index; use a sequential scan or commit first.
-*   **Visibility through the heap.** The index returns tuple ids, and the
-    executor rechecks each against the heap, so entries from aborted
-    transactions or deleted rows are never returned. Postgres MVCC, not
-    ClickHouse, decides what a query sees.
-
-## VACUUM
-
-**Requires the access method.** `VACUUM` removes dead heap tuples from the
-index with a lightweight `DELETE`, and runs `OPTIMIZE TABLE ... FINAL` when
-the dead fraction exceeds
-[`chdb_search.vacuum_optimize_ratio`](#chdb_searchvacuum_optimize_ratio).
-Until then stale entries cost space and a heap visit but not correctness.
-
-## The Worker
-
-The worker for a database appears in `pg_stat_activity` with `backend_type`
-`chdb_search worker`, connected to that database:
-
-```sql
-SELECT pid, datname FROM pg_stat_activity
- WHERE backend_type = 'chdb_search worker';
-```
-
-It listens on `$PGDATA/pg_chdb/<database oid>.sock` and keeps its store in
-`$PGDATA/pg_chdb/<database oid>/`. It starts when a backend first needs it
-and restarts five seconds after dying. See
-[The Worker](chdb_search-internals.md#the-worker) for what a crash does.
-
-## Settings
-
-### `chdb_search.libchdb_path`
-
-```ini
-chdb_search.libchdb_path = '/usr/local/lib/libchdb.so'
-```
-
-The library the worker loads chDB from, as `dlopen` takes it: a bare name is
-searched for on the library path. Defaults to `libchdb.so`. Set in
-`postgresql.conf`; a reload applies it to the next worker start.
-
-### `chdb_search.worker_timeout`
-
-```sql
-SET chdb_search.worker_timeout = 60;
-```
-
-Seconds a backend waits for a worker to start. Defaults to `30`.
-
-### `chdb_search.max_memory`
-
-The memory budget, in megabytes, for a worker query, applied as chDB
-`max_memory_usage`. Superuser only. Defaults to `0`, leaving it to chDB.
-
-### `chdb_search.max_threads`
-
-The thread budget for a worker query, applied as `max_threads`. Superuser
-only. Defaults to `0`, leaving it to chDB.
-
-### `chdb_search.max_parsing_threads`
-
-The thread budget for parallel data parsing in a worker query. Superuser
-only. Defaults to `0`.
-
-### Planned Settings
-
-The [design] lists these for the access method; they do not exist yet.
-
-*   `chdb_search.flush_threshold`: transaction buffer size, 64 MiB by
-    default, past which rows are flushed early into a staging table.
-*   `chdb_search.vacuum_optimize_ratio`: dead fraction that triggers
-    `OPTIMIZE`, `0.2` by default.
-*   `chdb_search.enable_custom_scan` and
-    `chdb_search.enable_aggregate_pushdown`: switch the planner features on
-    and off.
-*   `chdb_search.hnsw_candidate_list_size` (256) and
-    `chdb_search.vector_rescoring` (off): vector search, with `chdb_vector`.
+*   `chdb_search_store_table(regclass)` names an index's store table,
+    `idx_<oid>.t_<generation>`, for reading it with `chdb_search_query`.
+*   `chdb_search_metapage(regclass)` returns the index's magic, version,
+    generation and the WAL position of its last flush.
+*   `chdb_search_engine_pid()` returns the pid of the worker's engine, or
+    `NULL` before the first request, and
+    `chdb_search_debug_kill_engine(signal)` sends it a signal, as a crash
+    would.
 
 ## Limitations
 
-*   One process per store: a store path cannot be opened by two processes,
-    so a database's worker is the only reader and writer, and reads do not
-    scale with backends.
-*   No physical replication in Phase 0: the store is a local directory under
-    `$PGDATA/pg_chdb`, not WAL-logged pages, so a standby has no index data.
-    Restoring from backup or `pg_rewind` marks indexes invalid until rebuilt.
-*   The Postgres-side fallback of the operators tokenizes only with the
-    default `splitByNonAlpha` tokenizer. For any other tokenizer the answer
-    comes from the index, so the operators need one to be usable.
-*   At most 64 databases can have a worker at once.
-*   Linux and macOS, as for the rest of the distribution.
-
-See [the internals](chdb_search-internals.md) for the design behind these.
+*   One process per store: a database's worker is the only reader and
+    writer, so reads do not scale with backends, and at most 64 databases
+    can have a worker at once.
+*   No replication in this phase: the store is a directory under
+    `$PGDATA/pg_chdb`, not WAL-logged pages, so a standby has no index data,
+    and a restore from backup or `pg_rewind` makes indexes unavailable until
+    rebuilt. The next phase keeps the store in index pages.
+*   A transaction does not see its own inserts through the index, and
+    `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
+*   The Postgres implementations of the operators tokenize as the default
+    pipeline does; other tokenizers are usable through the index only.
 
 ## Authors
 
@@ -290,4 +340,9 @@ Copyright (c) 2026, ClickHouse
     "chDB - fast, reliable, and scalable in-process database"
   [text index]: https://clickhouse.com/docs/engines/table-engines/mergetree-family/textindexes
     "ClickHouse Docs: Full-text search with text indexes"
-  [design]: ../dev/design/chdb_search.md "chdb_search design notes"
+  [chdb_vector]: ./chdb_vector.md "chdb_vector Docs"
+  [internals]: ./chdb_search-internals.md "chdb_search Internals"
+  [`chdb.max_memory`]: ./chdb.md#chdbmax_memory "chdb Docs: chdb.max_memory"
+  [`chdb.max_threads`]: ./chdb.md#chdbmax_threads "chdb Docs: chdb.max_threads"
+  [`chdb.max_parsing_threads`]: ./chdb.md#chdbmax_parsing_threads
+    "chdb Docs: chdb.max_parsing_threads"

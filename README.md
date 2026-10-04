@@ -99,17 +99,13 @@ tokens, with no BM25 ranking:
 ```sql
 CREATE EXTENSION chdb_search;
 
-CREATE INDEX docs_idx ON docs USING chdb (
-    body text_ops (tokenizer = 'splitByNonAlpha', preprocessor = 'lowerUTF8')
-);
+CREATE INDEX docs_idx ON docs USING chdb (body, author columnar_ops);
 
-SELECT id FROM docs WHERE body @@@ 'postgres clickhouse';
+SELECT id FROM docs WHERE body @@@ 'postgres clickhouse' AND author = 'ann';
 ```
 
-It requires PostgreSQL 17 or higher, and the server must be able to load
-libchdb, via `LD_LIBRARY_PATH` or the `chdb_search.libchdb_path` setting. The
-index access method is under development; today the extension provides the
-worker. See the [chdb_search documentation](doc/chdb_search.md) for details.
+It requires PostgreSQL 17 or higher. See the [chdb_search
+documentation](doc/chdb_search.md) for details.
 
 Benchmarking Formats
 --------------------
