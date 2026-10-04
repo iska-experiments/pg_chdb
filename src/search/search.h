@@ -168,7 +168,6 @@ chdb_search_forget_statement(Oid indexoid, const char* sql);
 /* ---- scan.c ---- */
 #include "pg-clickhouse-decode.h"
 
-
 /*
  * A running `SELECT ctid[, distances]` against the worker. Column 0 decodes to
  * int8 (the packed TID), the rest to float8.

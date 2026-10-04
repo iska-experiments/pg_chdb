@@ -52,7 +52,7 @@ build_callback(
         size_t len;
         void* block = chdb_rowwriter_take(bs->rw, &len);
 
-        chdb_search_send(bs->conn, block, len);
+        chdb_channel_write(chdb_search_channel(bs->conn), block, len);
         pfree(block);
     }
     CHECK_FOR_INTERRUPTS();
@@ -95,7 +95,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
             size_t len;
             void* block = chdb_rowwriter_take(bs.rw, &len);
 
-            chdb_search_send(bs.conn, block, len);
+            chdb_channel_write(chdb_search_channel(bs.conn), block, len);
             pfree(block);
         }
         chdb_search_finish(bs.conn);
