@@ -361,8 +361,13 @@ SELECT author, count(*), avg(price) FROM docs WHERE body @@@ 'shoes'
     transaction flushes early into a staging table that commit merges and
     abort drops. Rows inserted inside a savepoint cannot be staged, so their
     buffer grows until commit, up to
-    [`chdb_search.max_buffer`](#chdb_searchmax_buffer). `PREPARE
-    TRANSACTION` is refused for a transaction that changed a chdb index.
+    [`chdb_search.max_buffer`](#chdb_searchmax_buffer).
+*   **Two-phase commit.** `PREPARE TRANSACTION` flushes as `COMMIT` does, so
+    the rows of a prepared transaction are in the store before its fate is
+    decided: `ROLLBACK PREPARED` leaves them dead in the heap, hidden until
+    `VACUUM` removes them from the store, and `COMMIT PREPARED` makes them
+    searchable. A transaction that created or dropped a chdb index cannot be
+    prepared, as its store build or drop cannot be carried past `PREPARE`.
 
 ## VACUUM
 

@@ -3,7 +3,8 @@
 # Two-phase commit with prepared transactions enabled: a store drop or build
 # cannot be carried past PREPARE and is refused by the access method, not by
 # the setting, while transactions it has nothing to carry for prepare and
-# commit as before.
+# commit as before. Buffered rows are flushed at PREPARE as at COMMIT, which
+# t/search_twophase.pl covers.
 
 use v5.34;
 use strict;
@@ -57,16 +58,6 @@ like $err, qr/cannot PREPARE a transaction that created or dropped a chdb index/
     'Should refuse to prepare a CREATE INDEX';
 ok $node->log_contains(qr/chdb_search drop: idx_\d+/, $offset),
     'Should drop the new store with the transaction';
-
-# Buffered rows are refused by the buffer.
-($out, $err) = ('', '');
-$node->psql(postgres => q{
-    BEGIN;
-    INSERT INTO docs VALUES (3, 'prepared shoes');
-    PREPARE TRANSACTION 'r';
-}, stdout => \$out, stderr => \$err);
-like $err, qr/cannot PREPARE a transaction that changed a chdb index/,
-    'Should refuse to prepare buffered rows';
 
 # A rebuild whose PREPARE fails after the access method let it through drops
 # the generation it wrote with the transaction. search_am_rebuild meets this

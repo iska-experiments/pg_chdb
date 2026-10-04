@@ -249,12 +249,17 @@ CREATE INDEX docs_prep ON docs USING chdb (title text_ops);
 PREPARE TRANSACTION 'q';
 ERROR:  cannot PREPARE a transaction that created or dropped a chdb index
 SET client_min_messages = debug1;
-\echo -- buffered rows are refused by the buffer
--- buffered rows are refused by the buffer
+\echo -- buffered rows are flushed at PREPARE as at COMMIT; the setting then refuses
+-- buffered rows are flushed at PREPARE as at COMMIT; the setting then refuses
 BEGIN;
 INSERT INTO docs (id, body) VALUES (16, 'x');
 PREPARE TRANSACTION 'r';
-ERROR:  cannot PREPARE a transaction that changed a chdb index
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+ERROR:  prepared transactions are disabled
 \echo -- a rebuild may be prepared: the abort would only have dropped a table VACUUM sweeps
 -- a rebuild may be prepared: the abort would only have dropped a table VACUUM sweeps
 -- (The setting refuses it here, and the abort drops the generation the
@@ -359,7 +364,6 @@ COMMIT;
 DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
-DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows

@@ -115,7 +115,7 @@ BEGIN;
 CREATE INDEX docs_prep ON docs USING chdb (title text_ops);
 PREPARE TRANSACTION 'q';
 SET client_min_messages = debug1;
-\echo -- buffered rows are refused by the buffer
+\echo -- buffered rows are flushed at PREPARE as at COMMIT; the setting then refuses
 BEGIN;
 INSERT INTO docs (id, body) VALUES (16, 'x');
 PREPARE TRANSACTION 'r';

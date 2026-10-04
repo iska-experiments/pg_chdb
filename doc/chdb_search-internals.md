@@ -157,9 +157,11 @@ warning past the threshold and failing past `chdb_search.max_buffer`.
 `ambuild` streams the heap in 8 MiB blocks through the same writer
 (`build.c`). A `REINDEX` or `TRUNCATE` in the same transaction discards the
 rows buffered for the old generation, or sets them aside inside a savepoint
-that may yet roll the rebuild back. `PREPARE TRANSACTION` is refused when the
-transaction changed a chdb index: a store drop or build cannot be carried
-past it.
+that may yet roll the rebuild back. `PREPARE TRANSACTION` flushes as commit
+does, since `COMMIT PREPARED` and `ROLLBACK PREPARED` run no callback: a
+rollback leaves rows the heap hides and `VACUUM` removes. A transaction that
+created or dropped a chdb index cannot be prepared, as the store drop or
+build cannot be carried past it.
 
 Drops are deferred to the end of the transaction (`drop.c`): an
 `object_access_hook` records every dropped relation that is a chdb index,

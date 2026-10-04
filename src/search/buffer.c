@@ -3,9 +3,10 @@
  *
  * aminsert never talks to the worker. It appends (ctid, xmin, values) to a
  * per-backend, per-index buffer in TopTransactionContext. At
- * XACT_EVENT_PRE_COMMIT each buffer goes to the worker as Native blocks and
- * the call waits for the acknowledgement, so a committed row is searchable as
- * soon as COMMIT returns. Abort drops the buffers.
+ * XACT_EVENT_PRE_COMMIT, or XACT_EVENT_PRE_PREPARE, each buffer goes to the
+ * worker as Native blocks and the call waits for the acknowledgement, so a
+ * committed row is searchable as soon as COMMIT returns. Abort drops the
+ * buffers.
  *
  * Subtransactions. A rolled-back savepoint must take its rows with it: each
  * buffer keeps a mark per subtransaction level that has inserted, and
@@ -236,19 +237,14 @@ xact_callback(XactEvent event, void* arg) {
     ListCell* lc;
 
     switch (event) {
+    /*
+     * PREPARE flushes as commit does: COMMIT PREPARED and ROLLBACK PREPARED
+     * run no callback of ours, so the rows must be in the store before the
+     * transaction's fate is decided. A rollback then leaves rows whose heap
+     * tuples are dead, as an abort after pre-commit does; the heap fetch
+     * hides them and VACUUM removes them.
+     */
     case XACT_EVENT_PRE_PREPARE:
-        foreach (lc, pending) {
-            Pending* p = lfirst(lc);
-
-            if (chdb_rowwriter_rows(p->rw) || p->staging) {
-                ereport(
-                    ERROR,
-                    errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("cannot PREPARE a transaction that changed a chdb index")
-                );
-            }
-        }
-        break;
     case XACT_EVENT_PRE_COMMIT:
         foreach (lc, pending) {
             Pending* p = lfirst(lc);
