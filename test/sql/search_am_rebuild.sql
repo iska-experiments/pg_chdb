@@ -62,6 +62,42 @@ RESET client_min_messages;
 VACUUM docs;
 
 ----------------------------------------------------------------------------
+-- A rebuild takes over the rows the transaction had buffered for the index
+----------------------------------------------------------------------------
+SET client_min_messages = debug1;
+\echo -- the build scan indexes the row, so COMMIT sends it to docs_title only
+BEGIN;
+INSERT INTO docs (id, body) VALUES (9, 'running shoes');
+REINDEX INDEX docs_idx;
+COMMIT;
+\echo -- TRUNCATE rebuilds both indexes: nothing is sent at COMMIT
+BEGIN;
+INSERT INTO docs (id, body) VALUES (10, 'running shoes again');
+TRUNCATE docs;
+COMMIT;
+\echo -- a rebuild rolled back to a savepoint gives the rows back
+BEGIN;
+INSERT INTO docs (id, body) VALUES (11, 'kept running');
+SAVEPOINT s;
+REINDEX INDEX docs_idx;
+INSERT INTO docs (id, body) VALUES (12, 'rolled back with the rebuild');
+ROLLBACK TO s;
+COMMIT;
+\echo -- a released one keeps them
+BEGIN;
+INSERT INTO docs (id, body) VALUES (13, 'taken by the rebuild');
+SAVEPOINT s;
+REINDEX INDEX docs_idx;
+RELEASE s;
+INSERT INTO docs (id, body) VALUES (14, 'sent to the new table');
+COMMIT;
+\echo -- control: one insert per index
+BEGIN;
+INSERT INTO docs (id, body) VALUES (15, 'control');
+COMMIT;
+RESET client_min_messages;
+
+----------------------------------------------------------------------------
 -- DROP INDEX drops the whole store at commit, a rolled-back one does not
 ----------------------------------------------------------------------------
 SET client_min_messages = debug1;

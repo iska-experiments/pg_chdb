@@ -175,6 +175,9 @@ chdb_search_u64_to_tid(uint64 v, ItemPointer tid);
 
 extern void
 chdb_search_init_insert(void);
+/* A rebuild of the index takes over the rows buffered for it. */
+extern void
+chdb_search_discard_pending(Oid indexoid);
 extern bool
 chdb_search_aminsert(
     Relation index,
