@@ -7,3 +7,6 @@ PG_CPPFLAGS += -DCHDB_NO_FILE_SCHEME=1
 endif
 
 include ../module.mk
+
+# PGXS tracks no header dependencies; the vendored ones are module.mk's.
+$(OBJS): $(wildcard *.h)

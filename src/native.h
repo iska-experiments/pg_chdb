@@ -12,6 +12,16 @@
 #include "channel.h"
 
 /*
+ * clickhouse-c copies what it raises through chc_err.msg, whose size the
+ * Makefiles set with -DCHC_ERR_MSG_LEN; a module built with another size
+ * would read the structs of the objects it links from native.o wrong.
+ */
+StaticAssertDecl(
+    CHC_ERR_MSG_LEN == CHDB_CHANNEL_ERR_MAX,
+    "CHC_ERR_MSG_LEN must match the channel's error buffer"
+);
+
+/*
  * A block source over the Native blocks `helper` streams, for pgch_reader_init,
  * allocated in the current memory context, which decoded blocks live in.
  */
