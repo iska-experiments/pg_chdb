@@ -166,7 +166,7 @@ chdb_copy(chdbCopyContext* ctx) {
         .max_threads = ctx->max_threads,
         .max_parsers = ctx->max_parsers,
     };
-    chdbHelper* helper =
+    chdbChannel* helper =
         chdb_helper_start(&hcx, ch_query.data, names, values, param_count);
     uint64_t num_rows =
         ctx->cmd_type == CHDB_CMD_SELECT
@@ -208,7 +208,7 @@ chdb_describe(chdbCopyContext* ctx) {
         .max_threads = describe.max_threads,
         .max_parsers = describe.max_parsers,
     };
-    chdbHelper* helper =
+    chdbChannel* helper =
         chdb_helper_start(&hcx, ch_query.data, names, values, param_count);
     List* columns = chdb_native_describe(helper);
 

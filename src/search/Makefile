@@ -1,5 +1,5 @@
 MODULE_big   = chdb_search
-OBJS         = ../native.o $(subst .c,.o, $(wildcard *.c))
+OBJS         = ../native.o ../channel.o $(subst .c,.o, $(wildcard *.c))
 PGCH_DIR     = ../../vendor/pg-clickhouse-c
 CH_C_DIR     = $(PGCH_DIR)/clickhouse-c
 PG_CFLAGS    = -Wno-declaration-after-statement -Wall -Werror

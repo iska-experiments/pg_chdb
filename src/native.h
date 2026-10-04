@@ -7,7 +7,7 @@
 #include "nodes/pg_list.h"
 #include "utils/relcache.h"
 
-#include "helper.h"
+#include "channel.h"
 
 /* Source column name and ClickHouse type returned by DESCRIBE */
 typedef struct chdbDescribedColumn {
@@ -20,7 +20,7 @@ typedef struct chdbDescribedColumn {
  * Return chdbDescribedColumn list in caller memory context
  */
 extern List*
-chdb_native_describe(chdbHelper* helper);
+chdb_native_describe(chdbChannel* helper);
 
 /*
  * Scans the `attnums` columns of `rel` into `helper` as Native blocks carrying
@@ -28,7 +28,7 @@ chdb_native_describe(chdbHelper* helper);
  * against. Returns the rows sent.
  */
 extern uint64_t
-chdb_copy_send(Relation rel, const char* structure, List* attnums, chdbHelper* helper);
+chdb_copy_send(Relation rel, const char* structure, List* attnums, chdbChannel* helper);
 
 /*
  * Inserts the rows `helper` streams as Native blocks into the `attnums` columns
@@ -43,7 +43,7 @@ chdb_copy_receive(
     List* rtable,
     List* rteperminfos,
     uint16_t encoding_check,
-    chdbHelper* helper
+    chdbChannel* helper
 );
 
 /*
@@ -56,7 +56,7 @@ chdb_select_receive(
     char* query,
     ReturnSetInfo* rsinfo,
     TupleDesc tupdesc,
-    chdbHelper* helper
+    chdbChannel* helper
 );
 
 #endif /* CHDB_NATIVE_H */

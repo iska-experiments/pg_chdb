@@ -89,7 +89,8 @@ chdb_search_debug_query(PG_FUNCTION_ARGS) {
 
     chdbSearchConn* conn = chdb_search_connect();
     chdb_search_select(conn, CHDB_SEARCH_DEBUG_INDEX, sql);
-    Datum result = chdb_select_receive(sql, rsinfo, tupdesc, chdb_search_helper(conn));
+    Datum result = chdb_select_receive(sql, rsinfo, tupdesc, chdb_search_channel(conn));
+    chdb_search_finish(conn);
     chdb_search_close(conn);
 
     return result;
@@ -122,7 +123,7 @@ chdb_search_debug_copy_to(PG_FUNCTION_ARGS) {
     chdbSearchConn* conn = chdb_search_connect();
     chdb_search_insert(conn, CHDB_SEARCH_DEBUG_INDEX, sql);
     uint64_t rows = chdb_copy_send(
-        rel, pgch_structure_from_tupdesc(desc, NULL), attnums, chdb_search_helper(conn)
+        rel, pgch_structure_from_tupdesc(desc, NULL), attnums, chdb_search_channel(conn)
     );
     chdb_search_finish(conn);
     chdb_search_close(conn);

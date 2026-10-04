@@ -17,10 +17,11 @@
 
 #include "postgres.h"
 
+#include "../channel.h"
 #include "nodes/pg_list.h"
 #include "utils/relcache.h"
 
-/* Commands: CHDB_CMD_SELECT and _INSERT of src/setup.h, plus _EXEC and _DROP. */
+#include "../setup.h"
 #include "protocol.h"
 
 typedef struct chdbSearchConn chdbSearchConn;
@@ -41,26 +42,20 @@ extern void
 chdb_search_exec(chdbSearchConn* conn, Oid indexoid, const char* sql);
 
 /*
- * Runs `sql` and returns a stream of Native blocks. The caller reads it with
- * chdb_search_recv until it returns zero, then calls chdb_search_finish.
+ * Runs `sql`, whose Native blocks the caller reads from chdb_search_channel
+ * until it returns zero, then calls chdb_search_finish.
  */
 extern void
 chdb_search_select(chdbSearchConn* conn, Oid indexoid, const char* sql);
 
-extern size_t
-chdb_search_recv(chdbSearchConn* conn, void* buf, size_t len);
-
 /*
  * Starts `sql`, an `INSERT INTO idx_<indexoid>.t (cols)` with no FORMAT
  * clause, which the worker supplies as Native; the caller then sends blocks
- * with chdb_search_send and ends the stream with chdb_search_finish, which
+ * through chdb_search_channel and ends the stream with chdb_search_finish, which
  * waits for the worker's acknowledgement and raises on failure.
  */
 extern void
 chdb_search_insert(chdbSearchConn* conn, Oid indexoid, const char* sql);
-
-extern void
-chdb_search_send(chdbSearchConn* conn, const void* buf, size_t len);
 
 extern void
 chdb_search_finish(chdbSearchConn* conn);
@@ -70,12 +65,11 @@ extern void
 chdb_search_drop(chdbSearchConn* conn, Oid indexoid);
 
 /*
- * Adapts the connection for the Native streaming code of native.h, which
- * reads and writes through a chdbHelper. Use after chdb_search_select or
- * chdb_search_insert; finish the stream with chdb_search_finish.
+ * The channel of the connection, for the Native streaming code of native.h.
+ * Use after chdb_search_select or chdb_search_insert; finish the stream with
+ * chdb_search_finish.
  */
-struct chdbHelper;
-extern struct chdbHelper*
-chdb_search_helper(chdbSearchConn* conn);
+extern chdbChannel*
+chdb_search_channel(chdbSearchConn* conn);
 
 #endif /* CHDB_SEARCH_CLIENT_H */
