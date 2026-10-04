@@ -90,7 +90,6 @@ chdb_search_handler(PG_FUNCTION_ARGS) {
     am->amoptsprocnum           = 1;
     am->amcanorder              = false;
     am->amcanorderbyop          = true; /* distance order-bys, from chdb_vector */
-    am->amcanhash               = false;
     am->amcanbackward           = false;
     am->amcanunique             = false;
     am->amcanmulticol           = true;
@@ -108,6 +107,7 @@ chdb_search_handler(PG_FUNCTION_ARGS) {
     am->amparallelvacuumoptions = 0;
     am->amkeytype               = InvalidOid;
 #if PG_VERSION_NUM >= 180000
+    am->amcanhash            = false;
     am->amconsistentequality = false;
     am->amconsistentordering = false;
 #endif
@@ -120,7 +120,6 @@ chdb_search_handler(PG_FUNCTION_ARGS) {
     am->amvacuumcleanup        = chdb_search_amvacuumcleanup;
     am->amcanreturn            = NULL;
     am->amcostestimate         = chdb_search_costestimate;
-    am->amgettreeheight        = NULL;
     am->amoptions              = chdb_search_amoptions;
     am->amproperty             = NULL;
     am->ambuildphasename       = NULL;
@@ -137,6 +136,7 @@ chdb_search_handler(PG_FUNCTION_ARGS) {
     am->aminitparallelscan     = NULL;
     am->amparallelrescan       = NULL;
 #if PG_VERSION_NUM >= 180000
+    am->amgettreeheight     = NULL;
     am->amtranslatestrategy = NULL;
     am->amtranslatecmptype  = NULL;
 #endif

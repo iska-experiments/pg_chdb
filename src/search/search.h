@@ -11,12 +11,39 @@
 #include "access/genam.h"
 #include "access/itup.h"
 #include "access/reloptions.h"
+#include "catalog/pg_opfamily.h"
+#include "commands/vacuum.h"
 #include "lib/stringinfo.h"
 #include "utils/rel.h"
+#include "utils/syscache.h"
 
 #include "client.h"
 #include "pg-clickhouse-encode.h"
 #include "pg-clickhouse.h"
+
+/*
+ * PostgreSQL 17: get_opfamily_name and the vacuum_delay_point argument came
+ * with 18. commands/vacuum.h above declares the 17 form before the macro.
+ */
+#if PG_VERSION_NUM < 180000
+#define vacuum_delay_point(is_analyze) vacuum_delay_point()
+static inline char*
+get_opfamily_name(Oid opfid, bool missing_ok) {
+    HeapTuple tup = SearchSysCache1(OPFAMILYOID, ObjectIdGetDatum(opfid));
+
+    if (!HeapTupleIsValid(tup)) {
+        if (!missing_ok) {
+            elog(ERROR, "cache lookup failed for operator family %u", opfid);
+        }
+        return NULL;
+    }
+
+    char* name = pstrdup(NameStr(((Form_pg_opfamily)GETSTRUCT(tup))->opfname));
+
+    ReleaseSysCache(tup);
+    return name;
+}
+#endif
 
 /* GUCs, defined in gucs.c. */
 extern int chdb_search_flush_threshold_kb;
