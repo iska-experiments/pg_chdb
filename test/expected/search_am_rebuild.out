@@ -118,6 +118,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
 SET enable_seqscan = off;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
@@ -156,6 +157,7 @@ DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "bod
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 3 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 COMMIT;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- TRUNCATE rebuilds both indexes: nothing is sent at COMMIT
@@ -191,8 +193,10 @@ INSERT INTO docs (id, body) VALUES (12, 'rolled back with the rebuild');
 ROLLBACK TO s;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
 COMMIT;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- a released one keeps them
@@ -211,6 +215,7 @@ INSERT INTO docs (id, body) VALUES (14, 'sent to the new table');
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- control: one insert per index
@@ -218,6 +223,7 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 BEGIN;
 INSERT INTO docs (id, body) VALUES (15, 'control');
 COMMIT;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows

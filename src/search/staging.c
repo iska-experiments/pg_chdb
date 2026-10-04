@@ -75,13 +75,23 @@ chdb_search_stage_rows(Pending* p) {
     send_rows(p, p->staging);
 }
 
-void
-chdb_search_drop_staging(Pending* p) {
-    chdb_search_run(
-        p->indexoid, p->generation, psprintf("DROP TABLE IF EXISTS %s", p->staging)
-    );
+/* Drops the staging table with `run`, and forgets the drop registered for abort. */
+static void
+drop_staging(Pending* p, void (*run)(Oid, uint64, const char*)) {
+    run(p->indexoid, p->generation, psprintf("DROP TABLE IF EXISTS %s", p->staging));
     chdb_search_forget_statement(p->indexoid, p->staging);
     p->staging = NULL;
+}
+
+void
+chdb_search_drop_staging(Pending* p) {
+    drop_staging(p, chdb_search_run);
+}
+
+/* What a failed drop leaves, the sweep in vacuum.c removes once it is stale. */
+void
+chdb_search_abandon_staging(Pending* p) {
+    drop_staging(p, chdb_search_try_run);
 }
 
 void

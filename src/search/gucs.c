@@ -25,10 +25,13 @@ static const struct config_enum_entry unavailable_index_options[] = {
 };
 
 /*
- * Prefixes whose run of digits the mask replaces: OID, generation, xid, and
- * the generation and LSN of a meta row, a list of numbers.
+ * Prefixes whose run of digits the mask replaces: OID, generation (in a
+ * table name, a literal and a predicate), xid, and the generation and LSN of
+ * a meta row, a list of numbers.
  */
-static const char* const masked_prefixes[] = { "idx_", ".t_", "_tx_", "VALUES (" };
+static const char* const masked_prefixes[] = {
+    "idx_", ".t_", "'t_", "_tx_", "generation = ", "VALUES (",
+};
 
 /*
  * Logs a ClickHouse statement at DEBUG1, so tests can assert on what was

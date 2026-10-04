@@ -231,6 +231,7 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 SET enable_seqscan = off;
 \o /dev/null
 SELECT * FROM kw WHERE inf = 1 AND nan < 2 AND "constraint" = 'x';
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "constraint" = 'x' AND "inf" = toFloat64('1') AND "nan" < toFloat64('2')
 \o
 RESET enable_seqscan;
@@ -298,6 +299,7 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 SET enable_seqscan = off;
 \o /dev/null
 SELECT body FROM mine WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
@@ -310,6 +312,7 @@ SET client_min_messages = debug1;
 SET enable_seqscan = off;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;

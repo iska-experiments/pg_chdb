@@ -34,8 +34,10 @@ INSERT INTO docs VALUES (3, 'committed row', 'T', '{a}', 'cy', 1, now(), true);
 \echo -- nothing is sent before COMMIT
 -- nothing is sent before COMMIT
 COMMIT;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- rolled back

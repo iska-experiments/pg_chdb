@@ -36,6 +36,7 @@ DELETE FROM docs WHERE id = 2;
 CALL pg_temp.wait_removable();
 SET client_min_messages = debug1;
 VACUUM docs;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N
 DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (2)
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
@@ -46,6 +47,7 @@ DELETE FROM docs WHERE id = 1;
 CALL pg_temp.wait_removable();
 SET client_min_messages = debug1;
 VACUUM docs;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N
 DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (1)
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
@@ -62,5 +64,22 @@ VACUUM docs;
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 RESET client_min_messages;
 RESET chdb_search.vacuum_optimize_ratio;
+-- A store the fail-safe check refuses (see search_stub_scan) is not deleted
+-- from either: VACUUM raises, or in skip mode leaves the store alone.
+SET chdb_search_stub.ctids = '3,4';
+DELETE FROM docs WHERE id = 3;
+CALL pg_temp.wait_removable();
+SET chdb_search_stub.meta = '1';
+VACUUM docs;
+ERROR:  chdb index "docs_idx" is not available on this server
+SET chdb_search.unavailable_index = skip;
+SET client_min_messages = debug1;
+VACUUM docs;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
+RESET client_min_messages;
+RESET chdb_search.unavailable_index;
+RESET chdb_search_stub.meta;
+RESET chdb_search_stub.ctids;
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
