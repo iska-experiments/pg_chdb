@@ -279,6 +279,30 @@ extension_control_path = '/usr/local/extras/postgresql/share:$system'
 dynamic_library_path   = '/usr/local/extras/postgresql/lib:$libdir'
 ```
 
+Building Against pg_chdb
+------------------------
+
+`make install` also installs what another extension needs to reuse pg_chdb's
+transport (the channel to a chDB process, the Native block codec, the setup
+payload and the process spawn): `libpgchdb.a` into `pkglibdir`, and the
+headers, `module.mk`, `rules.mk`, `libchdb.mk` and a generated `chdb.mk` into
+`$(pg_config --includedir-server)/extension/chdb`. A dependant's Makefile
+includes `chdb.mk`, links `$(CHDB_LIB)` and includes `module.mk` last:
+
+```make
+PG_CONFIG ?= pg_config
+include $(shell $(PG_CONFIG) --includedir-server)/extension/chdb/chdb.mk
+MODULE_big  = my_module
+OBJS        = my_module.o
+SHLIB_LINK += $(CHDB_LIB)
+include $(CHDB_INCLUDEDIR)/module.mk
+```
+
+Each module links its own copy of the archive, compiled with the server's
+hidden symbol visibility, so `chdb.so`, `chdb_hook.so` and a dependant load
+side by side with nothing shared between them but what Postgres shares: the
+ClickHouse type hook of `native_writer.h` lives in a rendezvous variable.
+
 Authors
 -------
 

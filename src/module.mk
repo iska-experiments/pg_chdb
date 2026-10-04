@@ -4,11 +4,16 @@
 # defines, then PGXS. The includer sets MODULE_big and OBJS first, as PGXS
 # wants, appends its own PG_CPPFLAGS, and includes this file last: pgxs.mk
 # fixes CPPFLAGS and CFLAGS as it is read.
-TOP      := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))..)
+#
+# Installed with the headers, it serves modules built against pg_chdb
+# elsewhere too, whose chdb.mk sets PGCH_DIR to the headers installed beside
+# it.
 # Header-only dependencies, vendored as submodules. clickhouse-c comes from
 # pg-clickhouse-c's own pin, its signatures naming clickhouse-c types, so a
 # second checkout on the include path would silently win.
-PGCH_DIR  = $(TOP)/vendor/pg-clickhouse-c
+ifndef PGCH_DIR
+PGCH_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))..)/vendor/pg-clickhouse-c
+endif
 CH_C_DIR  = $(PGCH_DIR)/clickhouse-c
 
 # Suppress the pre-C99 warning, error on the others.

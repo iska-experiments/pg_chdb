@@ -1,0 +1,23 @@
+# How to build a module against pg_chdb @VERSION@, written by its make install.
+# A dependant's Makefile includes this file before anything else of pg_chdb's,
+# then $(CHDB_INCLUDEDIR)/module.mk for the flags and PGXS:
+#
+#   PG_CONFIG ?= pg_config
+#   include $(shell $(PG_CONFIG) --includedir-server)/extension/chdb/chdb.mk
+#   ...
+#   SHLIB_LINK += $(CHDB_LIB)
+#   include $(CHDB_INCLUDEDIR)/module.mk
+#
+# The headers keep the names they have in pg_chdb's src/ (channel.h,
+# native.h, spawn.h, ...); module.h includes a version.h the dependant
+# generates. libpgchdb.a holds the transport's objects built with the
+# server's -fvisibility=hidden, so each module linking it carries a private
+# copy that no other module's symbols can interpose.
+CHDB_VERSION    := @VERSION@
+CHDB_INCLUDEDIR := @INCLUDEDIR@
+CHDB_LIB        := @PKGLIBDIR@/libpgchdb.a
+# The vendored pg-clickhouse-c and clickhouse-c headers pg_chdb was built
+# with, which module.mk puts on the include path.
+PGCH_DIR        := $(CHDB_INCLUDEDIR)/vendor/pg-clickhouse-c
+PG_CPPFLAGS     += -I$(CHDB_INCLUDEDIR)
+include $(CHDB_INCLUDEDIR)/rules.mk

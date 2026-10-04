@@ -1,9 +1,8 @@
 # Named, not globbed: the control files of the other modules live here too.
 EXTENSION    = chdb
-# The default_version a control file names, so a module's versioned script
-# always matches its control file.
-ctl_version  = $(shell grep -m 1 'default_version' $(1).control | \
-               sed -e "s/[[:space:]]*default_version[[:space:]]*=[[:space:]]*'\([^']*\)',\{0,1\}/\1/")
+# ctl_version, ext_module and libchdb_program, shared with the modules built
+# against pg_chdb elsewhere.
+include src/rules.mk
 EXTVERSION   = $(call ctl_version,$(EXTENSION))
 DISTVERSION  = $(shell grep -m 1 '^[[:space:]]\{2\}"version":' META.json | \
                sed -e 's/[[:space:]]*"version":[[:space:]]*"\([^"]*\)",\{0,1\}/\1/')
@@ -92,56 +91,41 @@ uninstall-hook:
 install: install-hook
 uninstall: uninstall-hook
 
-# An extension module of its own: built by a sub-make under src/<name>/ and
-# installed here like chdb_hook, with its control file and versioned script.
-# Eval it below this point, once PGXS has set DLSUFFIX:
-#   $(eval $(call ext_module,chdb_<name>,<extra prerequisites>,<sub-make arguments>))
-define ext_module
-$(1)_VERSION := $$(call ctl_version,$(1))
-$(1)_SO := src/$(patsubst chdb_%,%,$(1))/$(1)$$(DLSUFFIX)
-$$($(1)_SO): $$(wildcard $$(dir $$($(1)_SO))*.c $$(dir $$($(1)_SO))*.h) $(2)
-	@$$(MAKE) -C $$(dir $$@) all $(3)
-sql/$(1)--$$($(1)_VERSION).sql: sql/$(1).sql
-	cp $$< $$@
-install-$(patsubst chdb_%,%,$(1)): $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
-	$$(INSTALL_SHLIB) $$< '$$(DESTDIR)$$(pkglibdir)/'
-	$$(MKDIR_P) '$$(DESTDIR)$$(datadir)/extension'
-	$$(INSTALL_DATA) $(1).control sql/$(1)--$$($(1)_VERSION).sql '$$(DESTDIR)$$(datadir)/extension/'
-uninstall-$(patsubst chdb_%,%,$(1)):
-	rm -f $$(DESTDIR)$$(pkglibdir)/$(1)$$(DLSUFFIX)
-	rm -f $$(DESTDIR)$$(datadir)/extension/$(1).control $$(DESTDIR)$$(datadir)/extension/$(1)--$$($(1)_VERSION).sql
-all: $$($(1)_SO) sql/$(1)--$$($(1)_VERSION).sql
-install: install-$(patsubst chdb_%,%,$(1))
-uninstall: uninstall-$(patsubst chdb_%,%,$(1))
-EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc
-endef
-
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
 	git submodule update --init --recursive
 
-# A program linking libchdb: built by a sub-make beside its sources against
-# libchdb.mk, installed into pkglibdir beside the library that starts it.
-# Write beside the live copy and rename over it: install unlinks its target
-# first, so a COPY starting in that moment finds no helper. rename leaves no
-# such gap.
-#   $(eval $(call libchdb_program,<short name>,<path>,<extra prerequisites>))
-define libchdb_program
-$(2): $$(wildcard $$(dir $(2))*.c $$(dir $(2))*.h) $(3)
-	@$$(MAKE) -C $$(dir $$@) all LIBCHDB_DIR=$$(LIBCHDB_DIR) LIBCHDB_BUILD=$$(LIBCHDB_BUILD)
-install-$(1): $(2)
-	@to=$$(DESTDIR)$$(pkglibdir)/$$(notdir $(2)); \
-	  $$(INSTALL_PROGRAM) $$< $$$$to.new && mv -f $$$$to.new $$$$to
-uninstall-$(1):
-	rm -f $$(DESTDIR)$$(pkglibdir)/$$(notdir $(2))
-all: $(2)
-install: install-$(1)
-uninstall: uninstall-$(1)
-EXTRA_CLEAN += $(2) $$(dir $(2))*.o
-endef
-
 # chdb_helper answers one COPY.
 $(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
+
+# What extensions built against pg_chdb link and include: the objects every
+# module here links but chdb.o, archived as libpgchdb.a into pkglibdir, and
+# the headers, the Makefiles they are built with and the vendored headers,
+# under the server's include directory in extension/chdb, where PGXS's
+# HEADERS would put a module's own. chdb.mk names where they went.
+CHDB_LIB       := src/libpgchdb.a
+CHDB_HEADERS   := $(addprefix src/,channel.h gucs.h helper.h module.h native.h \
+                  native_insert.h native_writer.h setup.h spawn.h srf.h)
+CHDB_MAKEFILES := $(addprefix src/,libchdb.mk module.mk rules.mk)
+chdb_incdir     = $(includedir_server)/extension/chdb
+$(CHDB_LIB): $(filter-out src/chdb.o,$(OBJS))
+	rm -f $@ && $(AR) $(AROPT) $@ $^
+all: $(CHDB_LIB)
+EXTRA_CLEAN += $(CHDB_LIB)
+
+install-headers: $(CHDB_LIB)
+	$(MKDIR_P) '$(DESTDIR)$(chdb_incdir)/vendor/pg-clickhouse-c/clickhouse-c'
+	$(INSTALL_DATA) $(CHDB_HEADERS) $(CHDB_MAKEFILES) '$(DESTDIR)$(chdb_incdir)/'
+	$(INSTALL_DATA) $(wildcard $(PGCH_DIR)/*.h) '$(DESTDIR)$(chdb_incdir)/vendor/pg-clickhouse-c/'
+	$(INSTALL_DATA) $(wildcard $(CH_C_DIR)/*.h) '$(DESTDIR)$(chdb_incdir)/vendor/pg-clickhouse-c/clickhouse-c/'
+	sed -e 's|@VERSION@|$(DISTVERSION)|' -e 's|@INCLUDEDIR@|$(chdb_incdir)|' \
+	    -e 's|@PKGLIBDIR@|$(pkglibdir)|' src/chdb.mk.in > '$(DESTDIR)$(chdb_incdir)/chdb.mk'
+	$(INSTALL_STLIB) $(CHDB_LIB) '$(DESTDIR)$(pkglibdir)/'
+uninstall-headers:
+	rm -rf '$(DESTDIR)$(chdb_incdir)' '$(DESTDIR)$(pkglibdir)/$(notdir $(CHDB_LIB))'
+install: install-headers
+uninstall: uninstall-headers
+.PHONY: install-headers uninstall-headers
 
 .PHONY: test/schedule$(MAX_CONCURRENT_TESTS)
 test/schedule$(MAX_CONCURRENT_TESTS): schedule = $(if $(TESTS),$(patsubst test/sql/%.sql,%,$(TESTS)),)
