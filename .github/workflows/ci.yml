@@ -51,6 +51,12 @@ jobs:
         with:
           version: ${{ matrix.pg.version }}
           packages: ${{ case(matrix.pg.os == 'linux', 'libkrb5-dev libipc-run-perl', 'krb5 cpanminus') }}
+      # The action installs its packages before apt.postgresql.org.sh -p purges
+      # every PostgreSQL package to install the server asked for, so pgvector,
+      # which depends on that server, is installed after it.
+      - name: Install pgvector
+        if: matrix.pg.os == 'linux'
+        run: sudo apt-get install -y postgresql-${{ matrix.pg.version }}-pgvector
       - name: Install IPC::Run on macOS
         if: matrix.pg.os == 'macos'
         run: cpanm --notest IPC::Run
