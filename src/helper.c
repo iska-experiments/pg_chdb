@@ -14,9 +14,6 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#ifdef __linux__
-#include <sys/prctl.h>
-#endif
 
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
@@ -25,6 +22,7 @@
 #include "channel.h"
 #include "helper.h"
 #include "setup.h"
+#include "spawn.h"
 
 /* The program that links libchdb, installed beside the extension library. */
 #define CHDB_HELPER_PROGRAM "chdb_helper"
@@ -143,15 +141,10 @@ reserve_fd(int fd) {
     return high;
 }
 
-/* dup2, except that a descriptor already in place only needs to stay open. */
-static bool
-place_fd(int fd, int target) {
-    return fd == target ? fcntl(fd, F_SETFD, 0) == 0 : dup2(fd, target) == target;
-}
-
 /*
  * Everything between the fork and the exec runs in a process that still holds
- * the backend's Postgres state, so it may only _exit.
+ * the backend's Postgres state, so it may only _exit. The helper's own setup
+ * is spawn.c's.
  */
 static void
 exec_helper(chdbHelper* h, const char* program, chdbHelperContext* ctx) {
@@ -164,21 +157,17 @@ exec_helper(chdbHelper* h, const char* program, chdbHelperContext* ctx) {
     null          = reserve_fd(null);
 
     /* The channel the query does not use must not reach the backend's own. */
-    if (!place_fd(ctx->cmd == CHDB_CMD_INSERT ? h->data_peer : null, STDIN_FILENO) ||
-        !place_fd(ctx->cmd == CHDB_CMD_INSERT ? null : h->data_peer, STDOUT_FILENO) ||
-        !place_fd(h->err_peer, STDERR_FILENO) ||
-        !place_fd(h->setup_peer, CHDB_SETUP_FD)) {
+    if (!chdb_spawn_place_fd(
+            ctx->cmd == CHDB_CMD_INSERT ? h->data_peer : null, STDIN_FILENO
+        ) ||
+        !chdb_spawn_place_fd(
+            ctx->cmd == CHDB_CMD_INSERT ? null : h->data_peer, STDOUT_FILENO
+        ) ||
+        !chdb_spawn_place_fd(h->err_peer, STDERR_FILENO) ||
+        !chdb_spawn_place_fd(h->setup_peer, CHDB_SETUP_FD)) {
         _exit(126);
     }
-
-    /* Postgres ignores SIGPIPE; ClickHouse wants the default disposition. */
-    signal(SIGPIPE, SIG_DFL);
-#ifdef __linux__
-    prctl(PR_SET_PDEATHSIG, SIGKILL);
-#endif
-
-    execv(argv[0], argv);
-    _exit(127);
+    chdb_spawn_exec(argv, MyProcPid);
 }
 
 /* Hands the helper its setup payload, then closes the channel it arrived on. */
