@@ -6,7 +6,7 @@
  * options support function, so each column carries its own tokenizer. Names
  * that reach ClickHouse DDL are checked against allowlists here, because
  * they are spliced into the statement; raw_preprocessor is the escape hatch
- * and needs a superuser.
+ * and needs a superuser. textindex.c renders the options into the DDL.
  */
 
 #include "postgres.h"
@@ -14,12 +14,11 @@
 #include <string.h>
 
 #include "fmgr.h"
-#include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 
-#include "query.h"
+#include "options.h"
 #include "search.h"
 
 typedef struct ChdbIndexOptions {
@@ -27,21 +26,7 @@ typedef struct ChdbIndexOptions {
     double vacuum_optimize_ratio; /* negative: use the GUC */
 } ChdbIndexOptions;
 
-typedef struct ChdbTextOptions {
-    int32 vl_len_;
-    int tokenizer; /* string offsets, zero for unset */
-    int tokenizer_arg;
-    int preprocessor;
-    int raw_preprocessor;
-    int ngram_size; /* zero for unset */
-    bool support_phrase_search;
-} ChdbTextOptions;
-
 static relopt_kind chdb_relopt_kind;
-
-#define DEFAULT_TOKENIZER "splitByNonAlpha"
-#define DEFAULT_PREPROCESSOR "lowerUTF8"
-#define DEFAULT_NGRAM_SIZE 3
 
 static const char* const tokenizers[] = {
     "splitByNonAlpha", "splitByString", "splitByRegexp", "ngrams",
@@ -239,75 +224,6 @@ chdb_search_text_options(PG_FUNCTION_ARGS) {
     PG_RETURN_VOID();
 }
 
-/*
- * The arguments of `TYPE text(...)` for the column, from its operator class
- * options. Only the allowlisted names (or the superuser's raw expression)
- * reach the statement, and `col` is already a quoted identifier.
- */
-char*
-chdb_search_skip_index_args(
-    Relation index,
-    int attno,
-    const char* col,
-    ChdbColumnKind kind
-) {
-    bytea** all        = RelationGetIndexAttOptions(index, false);
-    ChdbTextOptions* o = all ? (ChdbTextOptions*)all[attno - 1] : NULL;
-    StringInfoData buf;
-
-    initStringInfo(&buf);
-    if (kind == CHDB_COL_TEXT_ARRAY) {
-        /* Elements compare in lower case, as chdb.has_token(text[], text) does. */
-        appendStringInfo(
-            &buf, "tokenizer = array, preprocessor = %s(%s)", DEFAULT_PREPROCESSOR, col
-        );
-        return buf.data;
-    }
-
-    const char* tok =
-        (o && o->tokenizer) ? GET_STRING_RELOPTION(o, tokenizer) : DEFAULT_TOKENIZER;
-    const char* pre = (o && o->preprocessor) ? GET_STRING_RELOPTION(o, preprocessor)
-                                             : DEFAULT_PREPROCESSOR;
-
-    if (strcmp(tok, "icu") == 0 || strcmp(tok, "splitByRegexp") == 0) {
-        /* The argument is a literal, escaped like any other string. */
-        appendStringInfo(&buf, "tokenizer = %s(", tok);
-        chdb_search_append_string(&buf, GET_STRING_RELOPTION(o, tokenizer_arg));
-        appendStringInfoChar(&buf, ')');
-    } else if (strcmp(tok, "splitByString") == 0 && o && o->tokenizer_arg) {
-        /* Each character is one separator. */
-        appendStringInfoString(&buf, "tokenizer = splitByString([");
-        for (const char* c = GET_STRING_RELOPTION(o, tokenizer_arg); *c;
-             c += pg_mblen(c)) {
-            if (c != GET_STRING_RELOPTION(o, tokenizer_arg)) {
-                appendStringInfoString(&buf, ", ");
-            }
-            chdb_search_append_string(&buf, pnstrdup(c, pg_mblen(c)));
-        }
-        appendStringInfoString(&buf, "])");
-    } else if (strcmp(tok, "ngrams") == 0) {
-        appendStringInfo(
-            &buf,
-            "tokenizer = ngrams(%d)",
-            o && o->ngram_size ? o->ngram_size : DEFAULT_NGRAM_SIZE
-        );
-    } else {
-        appendStringInfo(&buf, "tokenizer = %s", tok);
-    }
-
-    if (o && o->raw_preprocessor) {
-        appendStringInfo(
-            &buf, ", preprocessor = %s", GET_STRING_RELOPTION(o, raw_preprocessor)
-        );
-    } else if (strcmp(pre, "none") != 0) {
-        appendStringInfo(&buf, ", preprocessor = %s(%s)", pre, col);
-    }
-    if (o && o->support_phrase_search) {
-        appendStringInfoString(&buf, ", support_phrase_search = 1");
-    }
-    return buf.data;
-}
-
 /* Support function 1 of the classes without options: declares none. */
 PG_FUNCTION_INFO_V1(chdb_search_no_options);
 Datum
@@ -316,20 +232,4 @@ chdb_search_no_options(PG_FUNCTION_ARGS) {
      * CopyIndexAttOptions. */
     init_local_reloptions((local_relopts*)PG_GETARG_POINTER(0), sizeof(int32));
     PG_RETURN_VOID();
-}
-
-/* Whether any text column asks for phrase search, which needs a table setting. */
-bool
-chdb_search_wants_phrase_search(Relation index) {
-    bytea** all = RelationGetIndexAttOptions(index, false);
-
-    for (int i = 0; all && i < index->rd_att->natts; i++) {
-        ChdbTextOptions* o = (ChdbTextOptions*)all[i];
-
-        /* Other operator classes have option structs without the field. */
-        if (o && VARSIZE(o) >= sizeof(ChdbTextOptions) && o->support_phrase_search) {
-            return true;
-        }
-    }
-    return false;
 }
