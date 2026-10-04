@@ -7,6 +7,9 @@
 CREATE EXTENSION chdb_search;
 SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
+-- The index access method's own scans are under test: the custom scan,
+-- which has tests of its own, is kept out of the plans.
+SET chdb_search.enable_custom_scan = off;
 CREATE TABLE docs (id int PRIMARY KEY, body text, loc point);
 INSERT INTO docs VALUES (1, 'Running shoes', '(1,1)'), (2, 'Walking boots', '(2,2)'), (3, 'Trail shoes', '(3,3)');
 CREATE INDEX docs_idx ON docs USING chdb (body);

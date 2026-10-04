@@ -10,6 +10,9 @@ CREATE EXTENSION chdb_search;
 CREATE EXTENSION chdb_vector;
 SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
+-- The index access method's own scans are under test: the custom scan,
+-- which has tests of its own, is kept out of the plans.
+SET chdb_search.enable_custom_scan = off;
 -- The classes: one ORDER BY operator each, and the two support functions the
 -- access method tells them by (function 1 is its options function).
 SELECT opcname, amvalidate(c.oid), amopstrategy, amoppurpose, amopopr::regoperator

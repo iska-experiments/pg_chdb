@@ -6,6 +6,9 @@ SET client_min_messages = warning;
 CREATE EXTENSION chdb_search;
 SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
+-- The index access method's own scans are under test: the custom scan,
+-- which has tests of its own, is kept out of the plans.
+SET chdb_search.enable_custom_scan = off;
 
 CREATE TABLE prod (id int PRIMARY KEY, body text, tags text[], price numeric(10, 2));
 INSERT INTO prod VALUES

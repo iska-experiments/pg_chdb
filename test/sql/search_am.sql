@@ -15,6 +15,9 @@ RESET client_min_messages;
 SELECT extnamespace::regnamespace FROM pg_extension WHERE extname = 'chdb_search';
 SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
+-- The index access method's own scans are under test: the custom scan,
+-- which has tests of its own, is kept out of the plans.
+SET chdb_search.enable_custom_scan = off;
 
 SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
 
