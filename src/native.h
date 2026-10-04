@@ -7,7 +7,16 @@
 #include "nodes/pg_list.h"
 #include "utils/relcache.h"
 
+#include "pg-clickhouse-decode.h"
+
 #include "channel.h"
+
+/*
+ * A block source over the Native blocks `helper` streams, for pgch_reader_init,
+ * allocated in the current memory context, which decoded blocks live in.
+ */
+extern pgch_block_source
+chdb_native_source(chdbChannel* helper);
 
 /* Source column name and ClickHouse type returned by DESCRIBE */
 typedef struct chdbDescribedColumn {
