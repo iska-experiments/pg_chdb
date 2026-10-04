@@ -40,6 +40,9 @@ else ifeq ($(ARCH),x86_64)
 endif
 
 CLANG_FORMAT ?= clang-format
+# Every source of ours, for the formatter and the linter: the modules under
+# src/ included, and the generated version.h left out.
+SOURCES      := $(filter-out src/version.h,$(shell find src -name '*.[ch]' | sort))
 
 # Binary dependency on specific version (for now) of libchdb. Optionally
 # download locally by setting BUNDLE_LIBCHDB and compile statically with
@@ -208,7 +211,7 @@ uninstall-libchdb:
 	rm -f $(DESTDIR)/usr/local/lib/libchdb.so
 
 .PHONY: format # Format .c and .h files to project standard in .clang-format.
-format: $(wildcard src/*.c src/*.h src/helper/*.c src/search/*.c src/search/*.h src/search/engine/*.c src/search/engine/*.h)
+format: $(SOURCES)
 	@$(CLANG_FORMAT) --style=file:.clang-format -i $^
 
 .PHONY: type-table # Regenerate the data type tables of doc/chdb_hook.md.
@@ -219,7 +222,7 @@ type-table:
 
 .PHONY: clang-tidy # Run clang-tidy static analysis (requires compile_commands.json)
 clang-tidy: compile_commands.json
-	run-clang-tidy -p . $(wildcard src/*.c src/*.h src/helper/*.c)
+	run-clang-tidy -p . $(SOURCES)
 
 .PHONY: lint # Lint the project
 lint: .pre-commit-config.yaml

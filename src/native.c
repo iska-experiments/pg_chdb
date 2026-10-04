@@ -222,7 +222,12 @@ append_slot(pgch_writer* w, TupleTableSlot* slot, List* attnums) {
 }
 
 uint64_t
-chdb_copy_send(Relation rel, const char* structure, List* attnums, chdbChannel* helper) {
+chdb_copy_send(
+    Relation rel,
+    const char* structure,
+    List* attnums,
+    chdbChannel* helper
+) {
     pgch_writer* w   = writer_for(structure, list_length(attnums));
     nativeSink* sink = sink_for(helper);
     MemoryContext rowcxt =
