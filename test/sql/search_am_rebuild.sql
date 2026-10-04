@@ -131,6 +131,14 @@ ROLLBACK;
 RESET client_min_messages;
 
 ----------------------------------------------------------------------------
+-- DROP INDEX CONCURRENTLY drops the store once, after its last internal commit
+----------------------------------------------------------------------------
+CREATE INDEX docs_cic ON docs USING chdb (body text_ops);
+SET client_min_messages = debug1;
+DROP INDEX CONCURRENTLY docs_cic;
+RESET client_min_messages;
+
+----------------------------------------------------------------------------
 -- DROP INDEX drops the whole store at commit, a rolled-back one does not
 ----------------------------------------------------------------------------
 SET client_min_messages = debug1;
