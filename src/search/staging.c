@@ -5,10 +5,11 @@
  * the table and drops. The buffer itself is buffer.c's.
  *
  * The staging table is named by the full transaction id. Its only cleanup
- * from this backend is the drop registered for abort, which a crash or OOM
+ * from this backend is the drop buffer.c runs at abort, which a crash or OOM
  * kill skips; the VACUUM sweep in vacuum.c then removes it once the
  * transaction is over, and a 32-bit xid come round after wraparound would
- * have found it in the way.
+ * have found it in the way. The drops name no generation: they clean up
+ * after a build whose table may be gone already.
  */
 
 #include "postgres.h"
@@ -61,11 +62,10 @@ chdb_search_stage_rows(Pending* p) {
         );
         MemoryContextSwitchTo(old);
 
-        char* drop = psprintf("DROP TABLE IF EXISTS %s", p->staging);
-
-        /* Registered first, so a CREATE that fails halfway is undone too. */
-        chdb_search_drop_statement_on_abort(p->indexoid, drop);
-        chdb_search_run(p->indexoid, p->generation, drop);
+        /* Named before it is made, so a CREATE that fails halfway is dropped too. */
+        chdb_search_run(
+            p->indexoid, 0, psprintf("DROP TABLE IF EXISTS %s", p->staging)
+        );
         chdb_search_run(
             p->indexoid,
             p->generation,
@@ -75,11 +75,10 @@ chdb_search_stage_rows(Pending* p) {
     send_rows(p, p->staging);
 }
 
-/* Drops the staging table with `run`, and forgets the drop registered for abort. */
+/* Drops the staging table with `run`. */
 static void
 drop_staging(Pending* p, void (*run)(Oid, uint64, const char*)) {
-    run(p->indexoid, p->generation, psprintf("DROP TABLE IF EXISTS %s", p->staging));
-    chdb_search_forget_statement(p->indexoid, p->staging);
+    run(p->indexoid, 0, psprintf("DROP TABLE IF EXISTS %s", p->staging));
     p->staging = NULL;
 }
 
@@ -106,7 +105,7 @@ chdb_search_flush_pending(Pending* p) {
         chdb_search_run(
             p->indexoid, p->generation, psprintf("DROP TABLE %s", p->staging)
         );
-        chdb_search_forget_statement(p->indexoid, p->staging);
+        p->staging = NULL;
     } else {
         send_rows(p, p->table);
     }

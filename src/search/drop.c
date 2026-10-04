@@ -1,7 +1,7 @@
 /*
  * Statements deferred to the end of a transaction: dropping a store when its
- * index is dropped (on commit) or its build rolls back (on abort), dropping a
- * staging table on abort.
+ * index is dropped (on commit) or the table its build made when the build
+ * rolls back (on abort).
  *
  * The drop is not done where DROP INDEX runs: the transaction can still roll
  * back, and the store would be gone with the index still in the catalog.
@@ -84,20 +84,6 @@ chdb_search_drop_on_abort(Oid indexoid) {
 void
 chdb_search_drop_statement_on_abort(Oid indexoid, const char* sql) {
     defer(indexoid, sql, false);
-}
-
-/* The statement ran to completion, so there is nothing left to undo. */
-void
-chdb_search_forget_statement(Oid indexoid, const char* sql) {
-    ListCell* lc;
-
-    foreach (lc, deferred) {
-        Deferred* d = lfirst(lc);
-
-        if (d->indexoid == indexoid && d->sql && strstr(d->sql, sql)) {
-            deferred = foreach_delete_current(deferred, lc);
-        }
-    }
 }
 
 static void

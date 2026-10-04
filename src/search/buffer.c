@@ -14,8 +14,8 @@
  *
  * Large transactions. Past chdb_search.flush_threshold a top-level
  * transaction flushes its buffer into a staging table <table>_tx_<xid>
- * instead, which pre-commit copies into the table and drops (abort drops it
- * too); staging.c does the sending. Inside a savepoint nothing is flushed
+ * instead, which pre-commit copies into the table and drops, and the abort
+ * callback here drops; staging.c does the sending. Inside a savepoint nothing is flushed
  * early, because rows already sent could not be taken back, so the buffer
  * grows until COMMIT: it warns once past the threshold and fails past
  * chdb_search.max_buffer, since an error inside the savepoint can be caught
@@ -191,9 +191,25 @@ chdb_search_aminsert(
     return false;
 }
 
+/*
+ * The list and buffers live in TopTransactionContext, which is going away.
+ * An abort drops the staging tables first, warning rather than failing past
+ * the point where failing would help; what a failed drop leaves, the sweep
+ * in vacuum.c removes once the transaction is seen to be over.
+ */
 static void
-reset_pending(void) {
-    /* The list and buffers live in TopTransactionContext, which is going away. */
+reset_pending(bool aborted) {
+    ListCell* lc;
+
+    if (aborted) {
+        foreach (lc, pending) {
+            Pending* p = lfirst(lc);
+
+            if (p->staging) {
+                chdb_search_abandon_staging(p);
+            }
+        }
+    }
     pending = NIL;
 }
 
@@ -266,9 +282,11 @@ xact_callback(XactEvent event, void* arg) {
         }
         break;
     case XACT_EVENT_COMMIT:
-    case XACT_EVENT_ABORT:
     case XACT_EVENT_PREPARE:
-        reset_pending();
+        reset_pending(false);
+        break;
+    case XACT_EVENT_ABORT:
+        reset_pending(true);
         break;
     default:
         break;

@@ -316,8 +316,6 @@ extern void
 chdb_search_drop_on_abort(Oid indexoid);
 extern void
 chdb_search_drop_statement_on_abort(Oid indexoid, const char* sql);
-extern void
-chdb_search_forget_statement(Oid indexoid, const char* sql);
 
 /* ---- scan.c, vacuum.c ---- */
 extern IndexScanDesc
