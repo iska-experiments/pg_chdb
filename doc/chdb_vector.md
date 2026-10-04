@@ -124,4 +124,5 @@ Copyright (c) 2026, ClickHouse
   [pgvector]: https://github.com/pgvector/pgvector
     "Open-source vector similarity search for Postgres"
   [chdb_search]: ./chdb_search.md "chdb_search Docs"
-  [custom scan]: ./chdb_search.md#the-custom-scan "chdb_search Docs: The Custom Scan"
+  [custom scan]: ./chdb_search-queries.md#the-custom-scan
+    "chdb_search Queries: The Custom Scan"

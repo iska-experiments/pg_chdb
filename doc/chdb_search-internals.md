@@ -78,6 +78,37 @@ nothing still advances `flushed_lsn`, so the store can never match again
 short of a `REINDEX`. The worker checks the generation every request
 carries as well, and answers `NO_STORE` for a table it does not have.
 
+## Backups and Replication
+
+The store is a directory, so Postgres backs it up and replicates it as files,
+not as pages, and the [fail-safe](chdb_search-queries.md#availability) decides
+what a copy is worth. The tests in `t/` prove each case:
+
+*   **Base backups and point-in-time recovery.** `pg_basebackup` copies the
+    store with the rest of the data directory (off Linux, warning that it
+    skips the worker's socket file). A restore brings the heap to its
+    recovery target and the store back as the backup took it, so an index
+    flushed between the two is refused until `REINDEX` rebuilds it from the
+    restored heap.
+*   **Streaming replication.** A standby has the copy its base backup took
+    and starts no worker: a search through a chdb index fails with `Its
+    store is not current on a server in recovery`, or in `skip` mode is
+    planned without the index. Promotion makes the server ask the store,
+    which is as far behind as a restore's; `REINDEX` rebuilds it, and the
+    promoted server indexes new rows as any primary.
+*   **Logical replication.** A subscriber's table keeps its own chdb index
+    through ordinary inserts, so the table sync and the apply worker flush
+    to the subscriber's store at their commits, and replicated rows are
+    searchable there once applied. The publisher's store is not involved.
+*   **WAL-G.** `backup-push`, `wal-push`, `backup-fetch` and `wal-fetch`
+    back up and restore the store as above, workers running: on Linux a
+    worker's socket is a name in the abstract namespace, not a file, so the
+    tar WAL-G makes of the data directory meets no socket (tar has none).
+    Elsewhere the worker listens on `pg_chdb/<database oid>.sock`, which
+    `backup-push` fails on with `sockets not supported`; stop the database's
+    worker first (`pg_terminate_backend()` on its `pg_stat_activity` row),
+    which removes the socket, and it restarts on the next request.
+
 ## The Worker
 
 *   **Start.** The first backend in a database that needs a worker claims a
@@ -260,6 +291,28 @@ carries as its child, so the answer is always the snapshot's.
 *   **Phase 1**: a chDB disk whose blobs live in index relation pages
     written with generic WAL by the worker, upstreamed to chDB as a callback
     object storage. Crash recovery and replication then come from Postgres.
+
+## Debug Functions
+
+These superuser-only functions exist to test the worker and the store, and
+are not an interface. The first five talk to the worker about a scratch chDB
+database named `idx_0`.
+
+*   `chdb_search_version()` returns the library version.
+*   `chdb_search_exec(sql)` runs a statement in `idx_0`; `chdb_search_drop()`
+    drops `idx_0`, idempotently.
+*   `chdb_search_query(sql) AS (...)` runs a query and returns its rows; a
+    column definition list is required.
+*   `chdb_search_copy_to(regclass, insert_sql)` streams a heap table into an
+    `INSERT`, returning the rows sent.
+*   `chdb_search_store_table(regclass)` names an index's store table,
+    `idx_<oid>.t_<generation>`, for reading it with `chdb_search_query`.
+*   `chdb_search_metapage(regclass)` returns the index's magic, version,
+    generation and the WAL position of its last flush.
+*   `chdb_search_engine_pid()` returns the pid of the worker's engine, or
+    `NULL` before the first request, and
+    `chdb_search_debug_kill_engine(signal)` sends it a signal, as a crash
+    would.
 
 ## Testing
 

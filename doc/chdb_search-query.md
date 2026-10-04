@@ -111,7 +111,7 @@ SELECT 'or(term(''a''), phrase(''b c'', 1))'::chdb.query;
 The index evaluates the tree as one ClickHouse expression, each leaf as its
 operator renders it. The Postgres implementation walks the tree with the
 same per-leaf implementations. `boost` changes nothing in the filter; it
-multiplies the weight [`chdb.score()`](chdb_search.md#relevance-score)
+multiplies the weight [`chdb.score()`](chdb_search-queries.md#relevance-score)
 gives the tokens of the leaves below it. A NULL text never matches, a `!`
 included,
 as the operator is strict; a NULL `text[]` reads as the empty array, which
