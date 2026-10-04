@@ -34,6 +34,18 @@ jobs:
       - name: Checkout the Repository
         uses: actions/checkout@v7
         with: { submodules: recursive }
+      # The homelab image has no PGDG packages, so the postgresql-common that
+      # pgxn/postgres-action installs is Ubuntu's 257, whose
+      # apt.postgresql.org.sh still calls PostgreSQL 17 the development
+      # version and installs it from noble-pgdg-snapshot against an
+      # incompatible libpq5. GitHub-hosted images ship postgresql-common from
+      # PGDG, so do the same here before the action runs the script.
+      - name: Install postgresql-common from PGDG
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-common
       - name: Start Postgres ${{ matrix.pg.version }}
         uses: pgxn/postgres-action@v0
         with:
