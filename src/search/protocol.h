@@ -21,6 +21,13 @@
  *                      exists before running it; zero for a statement that
  *                      creates that table, works in no table, or cleans up
  *                      after an abort
+ *              uint32  tablespace OID and
+ *              uint32  relfilenumber of the index relation as the backend
+ *                      sees it, which the worker holds the index's blobs in
+ *                      (pagestore/routes.h): a build's relation is in no
+ *                      catalog the worker can read, so the backend says.
+ *                      Zero when the backend has no relation to name, as
+ *                      a drop after commit has not.
  *              then the setup payload of src/setup.h verbatim, as
  *              chdb_helper_build_setup writes it for chdb_helper: command,
  *              limits, query and parameters. The command is CHDB_CMD_SELECT,
@@ -107,6 +114,8 @@
 typedef struct chdbSearchRequest {
     uint32_t index;        /* the index OID */
     uint64_t generation;   /* of the table the query works on, zero for none */
+    uint32_t tablespace;   /* the index relation's locator, zero for none */
+    uint32_t relnumber;
     chdbHelperContext ctx; /* command and limits */
     chdbSetupStr query;
     uint16_t nparams;
@@ -120,6 +129,8 @@ chdb_search_decode_request(const char* frame, size_t len, chdbSearchRequest* req
 
     return chdb_setup_take(&cur, &req->index, sizeof(req->index)) &&
            chdb_setup_take(&cur, &req->generation, sizeof(req->generation)) &&
+           chdb_setup_take(&cur, &req->tablespace, sizeof(req->tablespace)) &&
+           chdb_setup_take(&cur, &req->relnumber, sizeof(req->relnumber)) &&
            chdb_setup_parse_head(&cur, &req->ctx, &req->query, &req->nparams);
 }
 

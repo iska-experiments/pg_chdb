@@ -11,21 +11,23 @@
 #include "postgres.h"
 
 #include "lib/stringinfo.h"
+#include "storage/relfilelocator.h"
 
 #include "../channel.h"
 #include "../setup.h"
 
 /*
  * Appends a whole request to `buf`: its byte count, then `cmd` against index
- * `index` and store generation `generation` with the chDB settings of the
- * GUCs, carrying `sql` and no parameters. Raises if the frame would exceed
- * what the other side takes.
+ * `index`, whose relation is at `loc` (NULL for none), and store generation
+ * `generation` with the chDB settings of the GUCs, carrying `sql` and no
+ * parameters. Raises if the frame would exceed what the other side takes.
  */
 extern void
 chdb_search_frame_request(
     StringInfo buf,
     chdbCmdType cmd,
     Oid index,
+    const RelFileLocator* loc,
     uint64 generation,
     const char* sql
 );

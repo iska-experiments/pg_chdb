@@ -19,6 +19,8 @@
 #include "storage/latch.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
+#include "utils/relcache.h"
 #include "utils/timestamp.h"
 #include "utils/wait_event.h"
 
@@ -170,7 +172,13 @@ chdb_search_close(chdbSearchConn* conn) {
 
 /* ---- requests ------------------------------------------------------------ */
 
-/* Sends the request frame of protocol.h. */
+/*
+ * Sends the request frame of protocol.h, naming the index's relation as
+ * this backend sees it, which may be one its own transaction created and
+ * the worker could not find. Outside a transaction, in a commit or abort
+ * callback, the relcache cannot be asked; those requests drop or clean up,
+ * and the worker needs no relation for that.
+ */
 static void
 send_request(
     chdbSearchConn* conn,
@@ -180,6 +188,8 @@ send_request(
     const char* sql
 ) {
     StringInfoData buf;
+    RelFileLocator loc;
+    bool located = false;
 
     conn->cmd           = cmd;
     conn->index         = index;
@@ -187,8 +197,17 @@ send_request(
     conn->ch.chunk_left = 0;
     conn->ch.data_ended = false;
 
+    if (OidIsValid(index) && IsTransactionState()) {
+        Relation rel = RelationIdGetRelation(index);
+
+        if (RelationIsValid(rel)) {
+            loc     = rel->rd_locator;
+            located = true;
+            RelationClose(rel);
+        }
+    }
     initStringInfo(&buf);
-    chdb_search_frame_request(&buf, cmd, index, generation, sql);
+    chdb_search_frame_request(&buf, cmd, index, located ? &loc : NULL, generation, sql);
     chdb_channel_send_exact(&conn->ch, buf.data, buf.len);
     pfree(buf.data);
 }
