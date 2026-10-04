@@ -6,6 +6,7 @@
 -- checked by search_e2e.
 \set VERBOSITY terse
 CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
 CREATE TABLE docs (
     id int PRIMARY KEY,

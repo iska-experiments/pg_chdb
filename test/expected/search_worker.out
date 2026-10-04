@@ -10,6 +10,7 @@ SHOW chdb_search.worker_timeout;
 (1 row)
 
 RESET chdb_search.worker_timeout;
+SET search_path = public, chdb;
 SELECT chdb_search_version() ~ '^\d+\.\d+\.\d+$';
  ?column? 
 ----------
