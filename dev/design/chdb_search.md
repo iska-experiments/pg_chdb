@@ -24,8 +24,8 @@ a ranker.
 | 3 | **One multi-column access method** `chdb`. One index per table backs one MergeTree table with text and vector skip indexes. Opclasses choose text vs vector per column. |
 | 4 | Vector opclasses live in a separate **`chdb_vector`** extension that requires pgvector. `chdb_search` has no pgvector dependency. |
 | 5 | Writes are **buffered per transaction and flushed at pre-commit** as one Native block. Read-after-commit consistency. |
-| 6 | **No relevance score** in v1. Filter exactly, order by columns or vector distance. |
-| 7 | Scope: index AM **plus CustomScan** (score-free top-N, LIMIT pushdown, snippets later) **plus aggregate pushdown** (`count(*)`, `GROUP BY` over indexed columns). |
+| 6 | **IDF-weighted overlap score**, not BM25. ClickHouse stores no term frequencies, so `chdb.score()` sums the inverse document frequency of the query tokens each row contains; document frequencies come from the text index itself. Deterministic `ORDER BY chdb.score(k) DESC LIMIT n` through the CustomScan. Real BM25 waits on an upstream change (proposal 3). |
+| 7 | Scope: index AM **plus CustomScan** (score, top-N, LIMIT pushdown, snippets later) **plus aggregate pushdown** (`count(*)`, `GROUP BY` over indexed columns). |
 | 8 | **Crash safety through Postgres pages**: a chDB disk type whose blobs live in index-relation pages written with generic WAL by the worker. Upstream PR to chdb-core. Phase 0 uses a local directory so end-to-end works before that lands. |
 | 9 | Tokenizer/preprocessor options are a **curated allowlist**; a `raw_preprocessor` escape hatch is superuser-only. |
 | 10 | New extensions target **PostgreSQL 17+** (18 preferred for `extension_control_path`). `chdb` and `chdb_hook` keep 15+. |
@@ -160,6 +160,39 @@ documented.
   only if the heap's visibility map says the pages are all-visible;
   otherwise the path is not generated (same rule as index-only scans).
 
+### Relevance score (`src/search/score.c`, CustomScan only)
+
+`chdb.score(k)` is a placeholder function, like ParadeDB's `pdb.score(key)`:
+`k` is any column of the indexed table and only binds the call to that
+relation. Outside a chdb CustomScan it raises "chdb.score() needs a chdb
+index scan". Inside one, the planner hook replaces it with a column the scan
+computes in ClickHouse:
+
+```sql
+WITH q AS (SELECT tokens({needle:String}) AS toks)              -- same tokenizer as the index
+SELECT ctid,
+       arraySum(arrayMap(t -> idf(t) * hasToken(body, t), toks)) AS score
+  FROM idx_N.t, q
+ WHERE hasAnyTokens(body, {needle:String})
+ ORDER BY score DESC
+ LIMIT {k:UInt64}
+```
+
+`idf(t) = log((N - df(t) + 0.5) / (df(t) + 0.5) + 1)`, the BM25 idf term.
+`N` is `count()` of the table and `df(t)` is `count() WHERE hasToken(body, t)`;
+both are answered from the text index alone (`ReadFromTextIndexCount`), one
+tiny query per distinct token, cached per statement. The score is therefore a
+weighted count of matched query terms: a row matching two rare terms
+outranks one matching two common ones, and ties are broken by `ctid` for
+determinism. With several text columns in the index the per-column scores
+are summed; `chdb.score(k, 'body')` restricts to one column.
+
+What this does not do: term frequency, document length normalisation,
+phrase proximity. ClickHouse's posting lists hold row ids only, so true BM25
+needs the upstream change in `dev/design/chdb-proposals.md` (proposal 3,
+term frequencies and document lengths in the text index). The function
+signature and the planner plumbing stay the same when that lands.
+
 ### Write path (`src/search/insert.c`)
 
 `aminsert` appends `(ctid, values)` to a per-backend, per-index buffer in
@@ -231,7 +264,7 @@ chDB's own `tmp/` and `metadata/`, which are rebuilt from pages on start.
 | A | chdb-core `pg-pages-disk` | callback object storage + `chdb_register_object_storage` + example | – |
 | B | pg_chdb `search-worker` | bgworker, socket protocol, client API in `src/search/client.h` | – |
 | C | pg_chdb `search-am` | AM, SQL script, options, insert buffer, scans, vacuum | B's client.h |
-| D | pg_chdb `search-planner` | CustomScan, aggregate pushdown | C's query builder |
+| D | pg_chdb `search-planner` | CustomScan, `chdb.score()`, aggregate pushdown | C's query builder |
 | E | pg_chdb `chdb-vector` | `chdb_vector` extension, opclasses, cast | C |
 | F | pg_chdb `search-tests` | pg_regress + TAP tests, docs in `doc/chdb_search.md` | C |
 
