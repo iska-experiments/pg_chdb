@@ -1,0 +1,542 @@
+-- The chdb_search aggregate scan, end to end: a GROUP BY or aggregate query
+-- over a table with a chdb index, every clause of which the store applies,
+-- is planned as one ClickHouse statement that computes the groups and the
+-- aggregates, when the heap's visibility map says every page is all-visible;
+-- when the heap cannot vouch for the store at execution, the node runs the
+-- plan Postgres would have run instead, so the answer is always the heap's.
+-- The server needs libchdb on its library path, for chdb_search_engine;
+-- search_stub_aggregates covers the plans with the stub client.
+\set VERBOSITY terse
+SET client_min_messages = warning;
+CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
+SET chdb_search.mask_oids = on;
+CREATE TABLE docs (
+    id int PRIMARY KEY, body text, tags text[], author text COLLATE "C",
+    price numeric(10, 2), qty int, weight float4, ratio float8, big int8,
+    sold date, seen timestamptz, ok bool
+);
+INSERT INTO docs VALUES
+    (1, 'Running shoes for runners', '{Sport,shoes}', 'ann', 49.90, 3, 1.5, 0.25,
+     10000000000, '2026-01-01', '2026-01-01 10:00+00', true),
+    (2, 'Walking boots', '{outdoor}', 'bob', 89.00, 1, 2.25, 0.5,
+     20000000000, '2026-02-01', '2026-02-01 10:00+00', false),
+    (3, 'Trail running shoes, fast and light', '{sport,trail}', 'ann', 120.00, 2, 0.75, 1,
+     30000000000, '2026-03-01', '2026-03-01 10:00+00', true),
+    (4, 'Running socks', '{sport}', 'cid', 5.00, 7, 0.125, 1.5,
+     40000000000, NULL, NULL, NULL),
+    (5, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+CREATE INDEX docs_idx ON docs USING chdb (
+    body, tags text_array_ops, author columnar_ops, price, qty, weight, ratio, big,
+    sold, seen, ok
+);
+-- Sets every page all-visible, which the aggregate scan asks of the heap.
+VACUUM docs;
+SET enable_seqscan = off;
+-- Runs a query through the aggregate scan and as Postgres computes it:
+-- whether the plan was an aggregate scan, and the rows each returned that
+-- the other did not.
+CREATE FUNCTION pg_temp.check(q text, OUT aggregate_scan bool, OUT only_pushed bigint, OUT only_plain bigint)
+LANGUAGE plpgsql AS $$
+DECLARE line text;
+BEGIN
+    aggregate_scan := false;
+    FOR line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP
+        aggregate_scan := aggregate_scan OR line LIKE '%Custom Scan (chdb_search aggregate)%';
+    END LOOP;
+    EXECUTE format('CREATE TEMP TABLE pushed_rows ON COMMIT DROP AS %s', q);
+    SET LOCAL enable_seqscan = on;
+    SET LOCAL chdb_search.enable_aggregate_pushdown = off;
+    EXECUTE format('CREATE TEMP TABLE plain_rows ON COMMIT DROP AS %s', q);
+    SELECT count(*) INTO only_pushed FROM (TABLE pushed_rows EXCEPT ALL TABLE plain_rows) d;
+    SELECT count(*) INTO only_plain FROM (TABLE plain_rows EXCEPT ALL TABLE pushed_rows) d;
+END $$;
+----------------------------------------------------------------------------
+-- Plans: the groups and the aggregates in one statement, the HAVING clause
+-- and the rest of the target list computed here, and the plan Postgres
+-- would have run carried as the child that answers when the store cannot
+----------------------------------------------------------------------------
+EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'running';
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate)
+   Pushed Cond: (body @@@ 'running'::text)
+   ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+   ->  Aggregate
+         ->  Custom Scan (chdb_search) on docs
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(7 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT author, count(*), count(price), min(price), max(qty), sum(qty), avg(qty)
+  FROM docs WHERE body @@? 'running boots' AND price < 100 GROUP BY author;
+                                                                                                                            QUERY PLAN                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate)
+   Output: author, (count(*)), (count(price)), (min(price)), (max(qty)), (sum(qty)), (avg(qty))
+   Pushed Cond: (docs.body @@? 'running boots'::text), (docs.price < '100'::numeric)
+   ClickHouse: SELECT "author", count(), count("price"), minOrNull("price"), maxOrNull("qty"), sumOrNull("qty"), sumOrNull("qty"), count("qty") FROM idx_N.t_N WHERE hasAnyTokens("body", 'running boots') AND "price" < toDecimal256('100', 0) GROUP BY "author"
+   ->  HashAggregate
+         Output: author, count(*), count(price), min(price), max(qty), sum(qty), avg(qty)
+         Group Key: docs.author
+         ->  Custom Scan (chdb_search) on public.docs
+               Output: author, price, qty
+               Pushed Cond: (docs.body @@? 'running boots'::text), (docs.price < '100'::numeric)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAnyTokens("body", 'running boots') AND "price" < toDecimal256('100', 0)
+(11 rows)
+
+-- A sum is typed as Postgres types it, avg is the store's sum and count.
+EXPLAIN (COSTS OFF)
+SELECT sum(weight), avg(weight), sum(ratio), sum(big), avg(big), sum(price), avg(price) FROM docs;
+                                                                                                                         QUERY PLAN                                                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate)
+   ClickHouse: SELECT toFloat32(sumOrNull("weight")), sumOrNull("weight"), count("weight"), sumOrNull("ratio"), sumOrNull(toInt128("big")), sumOrNull(toInt128("big")), count("big"), sumOrNull("price"), sumOrNull("price"), count("price") FROM idx_N.t_N
+   ->  Aggregate
+         ->  Seq Scan on docs
+(4 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT upper(author), count(*) + 1 FROM docs WHERE price < 100 GROUP BY author HAVING sum(qty) > 1;
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate)
+   Output: upper(author), ((count(*)) + 1), author
+   Filter: ((sum(docs.qty)) > 1)
+   Pushed Cond: (docs.price < '100'::numeric)
+   ClickHouse: SELECT "author", count(), sumOrNull("qty") FROM idx_N.t_N WHERE "price" < toDecimal256('100', 0) GROUP BY "author"
+   ->  HashAggregate
+         Output: author, count(*), sum(qty)
+         Group Key: docs.author
+         ->  Index Scan using docs_idx on public.docs
+               Output: id, body, tags, author, price, qty, weight, ratio, big, sold, seen, ok
+               Index Cond: (docs.price < '100'::numeric)
+(11 rows)
+
+EXPLAIN (COSTS OFF) SELECT ok, min(sold), max(seen) FROM docs GROUP BY ok;
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate)
+   ClickHouse: SELECT "ok", minOrNull("sold"), maxOrNull("seen") FROM idx_N.t_N GROUP BY "ok"
+   ->  HashAggregate
+         Group Key: ok
+         ->  Seq Scan on docs
+(5 rows)
+
+-- Not pushed: a clause the store cannot apply, an aggregate it does not
+-- compute, a grouping by an expression or by a column outside the index,
+-- and count of a text[] column, whose NULL the store cannot tell from empty.
+EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'running' AND id > 1;
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (chdb_search) on docs
+         Filter: (id > 1)
+         Pushed Cond: (body @@@ 'running'::text)
+         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT count(DISTINCT author) FROM docs WHERE body @@@ 'running';
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Sort
+         Sort Key: author COLLATE "C"
+         ->  Custom Scan (chdb_search) on docs
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT string_agg(author, ',') FROM docs WHERE body @@@ 'running';
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@@ 'running'::text)
+         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT lower(author), count(*) FROM docs GROUP BY lower(author);
+                  QUERY PLAN                   
+-----------------------------------------------
+ GroupAggregate
+   Group Key: (lower(author))
+   ->  Sort
+         Sort Key: (lower(author)) COLLATE "C"
+         ->  Seq Scan on docs
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT id, count(*) FROM docs WHERE body @@@ 'running' GROUP BY id;
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ GroupAggregate
+   Group Key: id
+   ->  Sort
+         Sort Key: id
+         ->  Custom Scan (chdb_search) on docs
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT count(tags) FROM docs;
+       QUERY PLAN       
+------------------------
+ Aggregate
+   ->  Seq Scan on docs
+(2 rows)
+
+-- The settings: either off leaves the aggregate to Postgres.
+SET chdb_search.enable_aggregate_pushdown = off;
+EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'running';
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@@ 'running'::text)
+         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(4 rows)
+
+RESET chdb_search.enable_aggregate_pushdown;
+SET chdb_search.enable_custom_scan = off;
+EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'running';
+                   QUERY PLAN                   
+------------------------------------------------
+ Aggregate
+   ->  Index Scan using docs_idx on docs
+         Index Cond: (body @@@ 'running'::text)
+(3 rows)
+
+RESET chdb_search.enable_custom_scan;
+----------------------------------------------------------------------------
+-- The answers are Postgres's
+----------------------------------------------------------------------------
+SELECT * FROM pg_temp.check($$SELECT count(*) FROM docs WHERE body @@@ 'running'$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT count(*) AS n, count(body) AS b, count(price) AS p, count(sold) AS s FROM docs$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT min(price) AS a, max(price) AS b, min(qty) AS c, max(qty) AS d, min(author) AS e, max(author) AS f FROM docs$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT min(sold) AS a, max(sold) AS b, min(seen) AS c, max(seen) AS d, min(ratio) AS e, max(weight) AS f FROM docs$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT sum(qty) AS a, sum(big) AS b, sum(weight) AS c, sum(ratio) AS d, sum(price) AS e FROM docs$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT avg(qty) AS a, avg(big) AS b, avg(weight) AS c, avg(ratio) AS d, avg(price) AS e FROM docs$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT author, count(*), sum(qty), avg(price) FROM docs GROUP BY author$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT ok, sold, count(*) FROM docs GROUP BY ok, sold$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT body, count(*) FROM docs WHERE body @@@ 'running' GROUP BY body$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT author FROM docs WHERE body @@@ 'shoes' GROUP BY author$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT upper(author), count(*) + 1 FROM docs WHERE price < 100 GROUP BY author HAVING sum(qty) > 1$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT count(*), sum(qty), avg(qty), min(sold) FROM docs WHERE body @@@ 'nothing here'$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT author, count(*) FROM docs WHERE body @@@ 'nothing here' GROUP BY author$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ t              |           0 |          0
+(1 row)
+
+-- Groups with a NULL key, and no rows: one row for a plain aggregate.
+SELECT ok, count(*), sum(qty) FROM docs GROUP BY ok ORDER BY ok;
+ ok | count | sum 
+----+-------+-----
+ f  |     1 |   1
+ t  |     2 |   5
+    |     2 |   7
+(3 rows)
+
+SELECT count(*), sum(qty), avg(qty), min(sold) FROM docs WHERE body @@@ 'nothing here';
+ count | sum | avg | min 
+-------+-----+-----+-----
+     0 |     |     | 
+(1 row)
+
+-- avg divides as Postgres does, so the digits are the same.
+SELECT avg(qty), avg(big), avg(price), avg(weight) FROM docs WHERE body @@@ 'running';
+        avg         |         avg          |         avg         |        avg         
+--------------------+----------------------+---------------------+--------------------
+ 4.0000000000000000 | 26666666666.66666667 | 58.3000000000000000 | 0.7916666666666666
+(1 row)
+
+SET chdb_search.enable_aggregate_pushdown = off;
+SELECT avg(qty), avg(big), avg(price), avg(weight) FROM docs WHERE body @@@ 'running';
+        avg         |         avg          |         avg         |        avg         
+--------------------+----------------------+---------------------+--------------------
+ 4.0000000000000000 | 26666666666.66666667 | 58.3000000000000000 | 0.7916666666666666
+(1 row)
+
+RESET chdb_search.enable_aggregate_pushdown;
+-- A NULL needle from a generic plan matches nothing; a subplan's argument is
+-- there at execution only, and a rescan sends another statement.
+PREPARE q(text) AS SELECT count(*) FROM docs WHERE body @@@ $1;
+SET plan_cache_mode = force_generic_plan;
+EXPLAIN (COSTS OFF) EXECUTE q(NULL);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Custom Scan (chdb_search aggregate)
+   Pushed Cond: (body @@@ $1)
+   ClickHouse: SELECT count() FROM idx_N.t_N WHERE 0
+   ->  Aggregate
+         ->  Custom Scan (chdb_search) on docs
+               Pushed Cond: (body @@@ $1)
+               ClickHouse: none: a search key is NULL
+(7 rows)
+
+EXECUTE q(NULL);
+ count 
+-------
+     0
+(1 row)
+
+EXECUTE q('running');
+ count 
+-------
+     3
+(1 row)
+
+RESET plan_cache_mode;
+DEALLOCATE q;
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+SELECT q, c FROM (VALUES ('boots'), ('running')) v(q), LATERAL (SELECT count(*) AS c FROM docs WHERE body @@@ v.q) d;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Nested Loop (actual rows=2 loops=1)
+   ->  Values Scan on "*VALUES*" (actual rows=2 loops=1)
+   ->  Custom Scan (chdb_search aggregate) (actual rows=1 loops=2)
+         Pushed Cond: (docs.body @@@ "*VALUES*".column1)
+         ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+         Store Rows: 2
+         Store Queries: 2
+         ->  Aggregate (never executed)
+               ->  Custom Scan (chdb_search) on docs (never executed)
+                     Pushed Cond: (docs.body @@@ "*VALUES*".column1)
+                     Store Rows: 0
+(11 rows)
+
+SELECT q, c FROM (VALUES ('boots'), ('running')) v(q), LATERAL (SELECT count(*) AS c FROM docs WHERE body @@@ v.q) d ORDER BY 1;
+    q    | c 
+---------+---
+ boots   | 1
+ running | 3
+(2 rows)
+
+----------------------------------------------------------------------------
+-- MVCC: the store answers only for a heap whose every page is all-visible,
+-- checked at planning and again around the statement; otherwise the plan
+-- Postgres would have run answers, inside the node
+----------------------------------------------------------------------------
+PREPARE c AS SELECT count(*) FROM docs WHERE body @@@ 'running';
+SET plan_cache_mode = force_generic_plan;
+EXECUTE c;
+ count 
+-------
+     3
+(1 row)
+
+-- An insert clears its page's bit: a new plan leaves the aggregate to
+-- Postgres, the generic plan takes the exact plan at execution.
+INSERT INTO docs VALUES (6, 'Running late', '{}', 'dee', 1.00, 1, 1, 1, 1, '2026-04-01', '2026-04-01 10:00+00', true);
+EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'running';
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Aggregate
+   ->  Custom Scan (chdb_search) on docs
+         Pushed Cond: (body @@@ 'running'::text)
+         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+(4 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) EXECUTE c;
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate) (actual rows=1 loops=1)
+   Pushed Cond: (body @@@ 'running'::text)
+   ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+   Store Rows: 0
+   Exact Plan: the heap is not all-visible
+   ->  Aggregate (actual rows=1 loops=1)
+         ->  Custom Scan (chdb_search) on docs (actual rows=4 loops=1)
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+               Store Rows: 4
+(10 rows)
+
+EXECUTE c;
+ count 
+-------
+     4
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT author, count(*) FROM docs WHERE body @@@ 'running' GROUP BY author$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ f              |           0 |          0
+(1 row)
+
+-- VACUUM sets the bit again, and the store answers.
+VACUUM docs;
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) EXECUTE c;
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate) (actual rows=1 loops=1)
+   Pushed Cond: (body @@@ 'running'::text)
+   ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+   Store Rows: 1
+   ->  Aggregate (never executed)
+         ->  Custom Scan (chdb_search) on docs (never executed)
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+               Store Rows: 0
+(9 rows)
+
+EXECUTE c;
+ count 
+-------
+     4
+(1 row)
+
+-- A deleted row the store still holds: the exact plan does not count it,
+-- and once VACUUM has removed it from both the store does not either.
+DELETE FROM docs WHERE id = 6;
+SELECT chdb_search_store_table('docs_idx') AS tbl \gset
+SELECT * FROM chdb_search_query(format('SELECT count() FROM %s WHERE hasAllTokens(body, ''running'')', :'tbl')) AS (store_rows bigint);
+ store_rows 
+------------
+          4
+(1 row)
+
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) EXECUTE c;
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate) (actual rows=1 loops=1)
+   Pushed Cond: (body @@@ 'running'::text)
+   ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+   Store Rows: 0
+   Exact Plan: the heap is not all-visible
+   ->  Aggregate (actual rows=1 loops=1)
+         ->  Custom Scan (chdb_search) on docs (actual rows=3 loops=1)
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+               Store Rows: 4
+(10 rows)
+
+EXECUTE c;
+ count 
+-------
+     3
+(1 row)
+
+SELECT * FROM pg_temp.check($$SELECT count(*), sum(qty) FROM docs WHERE body @@@ 'running'$$);
+ aggregate_scan | only_pushed | only_plain 
+----------------+-------------+------------
+ f              |           0 |          0
+(1 row)
+
+VACUUM docs;
+SELECT * FROM chdb_search_query(format('SELECT count() FROM %s WHERE hasAllTokens(body, ''running'')', :'tbl')) AS (store_rows bigint);
+ store_rows 
+------------
+          3
+(1 row)
+
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) EXECUTE c;
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Custom Scan (chdb_search aggregate) (actual rows=1 loops=1)
+   Pushed Cond: (body @@@ 'running'::text)
+   ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+   Store Rows: 1
+   ->  Aggregate (never executed)
+         ->  Custom Scan (chdb_search) on docs (never executed)
+               Pushed Cond: (body @@@ 'running'::text)
+               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+               Store Rows: 0
+(9 rows)
+
+EXECUTE c;
+ count 
+-------
+     3
+(1 row)
+
+-- A transaction's own insert takes the exact plan too, which reads the
+-- store's ctids: as through the index, the row is seen once committed.
+BEGIN;
+INSERT INTO docs VALUES (7, 'Running uncommitted', '{}', 'eve', 1.00, 1, 1, 1, 1, '2026-04-01', '2026-04-01 10:00+00', true);
+EXECUTE c;
+ count 
+-------
+     3
+(1 row)
+
+COMMIT;
+EXECUTE c;
+ count 
+-------
+     4
+(1 row)
+
+RESET plan_cache_mode;
+DEALLOCATE c;
+DROP TABLE docs;
+DROP EXTENSION chdb_search;
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;

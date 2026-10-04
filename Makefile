@@ -24,6 +24,7 @@ export CHDB_SEARCH_STUB
 # rows the stub's GUCs supply, run only with the stub.
 TESTS        ?= $(if $(CHDB_SEARCH_STUB),$(filter-out test/sql/search_worker.sql \
                 test/sql/search_e2e.sql test/sql/search_planner.sql test/sql/search_score.sql \
+                test/sql/search_aggregates.sql \
                 test/sql/vector_opclass.sql test/sql/vector_planner.sql,$(wildcard test/sql/*.sql)), \
                 $(filter-out test/sql/search_stub%.sql,$(wildcard test/sql/*.sql)))
 REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
