@@ -113,6 +113,19 @@ CREATE INDEX ON docs USING chdb (id text_ops);
 CREATE INDEX ON docs USING chdb (body) INCLUDE (title);
 CREATE UNIQUE INDEX ON docs USING chdb (body);
 
+-- Column names are quoted whatever they are: a keyword stays a name, and
+-- inf or nan stay columns rather than float literals.
+CREATE TABLE kw ("index" text, "constraint" text COLLATE "C", inf float8, nan float8);
+SET client_min_messages = debug1;
+CREATE INDEX kw_idx ON kw USING chdb ("index", "constraint" columnar_ops, inf, nan);
+SET enable_seqscan = off;
+\o /dev/null
+SELECT * FROM kw WHERE inf = 1 AND nan < 2 AND "constraint" = 'x';
+\o
+RESET enable_seqscan;
+RESET client_min_messages;
+DROP TABLE kw;
+
 -- A text column filtered through the index needs a bytewise collation:
 -- ClickHouse compares strings bytewise and the scan does not recheck. Only
 -- C and POSIX count as bytewise, as for btree's text_pattern_ops, so the

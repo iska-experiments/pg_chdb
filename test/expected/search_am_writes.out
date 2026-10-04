@@ -34,8 +34,8 @@ INSERT INTO docs VALUES (3, 'committed row', 'T', '{a}', 'cy', 1, now(), true);
 \echo -- nothing is sent before COMMIT
 -- nothing is sent before COMMIT
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 1 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 \echo -- rolled back
 -- rolled back
 BEGIN;
@@ -52,19 +52,19 @@ SAVEPOINT s2;
 INSERT INTO docs VALUES (7, 'released', 'T', '{a}', 'gus', 1, now(), true);
 RELEASE s2;
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 2 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 2 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 2 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
 \echo -- update and delete
 -- update and delete
 UPDATE docs SET body = 'changed' WHERE id = 1;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 1 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DELETE FROM docs WHERE id = 2;
 \echo -- rows with NULLs
 -- rows with NULLs
 INSERT INTO docs (id) VALUES (8);
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 1 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 \echo -- a failing statement
 -- a failing statement
 INSERT INTO docs VALUES (1, 'duplicate key');
@@ -85,8 +85,8 @@ INSERT INTO docs (id, body) VALUES (22, 'z');
 ROLLBACK TO b;
 ROLLBACK TO a;
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 1 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 \echo -- a level released into one that is then rolled back
 -- a level released into one that is then rolled back
 BEGIN;
@@ -113,8 +113,8 @@ SAVEPOINT c;
 INSERT INTO docs (id, body) VALUES (14, 'e');
 RELEASE c;
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 3 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 3 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 3 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 3 rows
 \echo -- nested PL/pgSQL exception blocks, the inner one rolled back first
 -- nested PL/pgSQL exception blocks, the inner one rolled back first
 DO $$
@@ -148,8 +148,8 @@ BEGIN
         END;
     END;
 END $$;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 1 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 RESET client_min_messages;
 ----------------------------------------------------------------------------
 -- Inside a savepoint the buffer is not staged early: it warns, then it caps
@@ -174,15 +174,15 @@ EXCEPTION WHEN OTHERS THEN
     NULL;
 END $$;
 WARNING:  chdb index "docs_idx" buffers rows inserted inside a savepoint until COMMIT
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 60 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 60 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 60 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 60 rows
 \echo -- at the top level the same rows are staged instead
 -- at the top level the same rows are staged instead
 BEGIN;
 INSERT INTO docs (id, body) SELECT 4000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 50 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 ROLLBACK;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 RESET client_min_messages;
@@ -197,22 +197,22 @@ BEGIN;
 INSERT INTO docs (id, body) SELECT 10000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 50 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 50 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 INSERT INTO docs (id, body) VALUES (11000, 'tail');
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 21 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 21 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 121 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 121 rows
 \echo -- a rollback drops the staging table, once
 -- a rollback drops the staging table, once
 BEGIN;
 INSERT INTO docs (id, body) SELECT 12000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 50 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 50 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 ROLLBACK;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 \echo -- staged rows survive a savepoint rolled back after them
@@ -221,16 +221,16 @@ BEGIN;
 INSERT INTO docs (id, body) SELECT 13000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 50 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 50 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 SAVEPOINT s;
 INSERT INTO docs (id, body) VALUES (14000, 'sp');
 ROLLBACK TO s;
 COMMIT;
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 20 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 20 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, title) -- 120 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 120 rows
 \echo -- two indexes over the threshold: one staging table each
 -- two indexes over the threshold: one staging table each
 BEGIN;
@@ -238,14 +238,14 @@ INSERT INTO docs (id, body, title)
 SELECT 15000 + i, repeat('word ', 250), repeat('title ', 200) FROM generate_series(1, 120) i;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 27 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 27 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, title) -- 54 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 27 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, body, title, tags, author, price, seen, flag) -- 27 rows
-DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, title) -- 54 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "title") -- 54 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "title") -- 54 rows
 ROLLBACK;
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
