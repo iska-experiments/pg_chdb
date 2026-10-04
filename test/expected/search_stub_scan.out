@@ -205,4 +205,32 @@ RESET chdb_search_stub.ctids;
 DROP INDEX docs_loc;
 ALTER OPERATOR FAMILY columnar_ops USING chdb DROP OPERATOR 1 (point, point);
 DROP TABLE docs;
+----------------------------------------------------------------------------
+-- An index-only scan the planner picks for a query needing no column
+----------------------------------------------------------------------------
+-- count(*) needs no column, so any index serves an index-only scan, this one
+-- too though it returns none: it hands the executor an all-null index tuple
+-- and the count comes from the store's rows on all-visible pages.
+CREATE TABLE plain (body text);
+INSERT INTO plain SELECT 'word' FROM generate_series(1, 5);
+CREATE INDEX plain_idx ON plain USING chdb (body);
+VACUUM plain;
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) SELECT count(*) FROM plain;
+                   QUERY PLAN                   
+------------------------------------------------
+ Aggregate
+   ->  Index Only Scan using plain_idx on plain
+(2 rows)
+
+SET chdb_search_stub.ctids = '1,2,3';
+SELECT count(*) FROM plain;
+ count 
+-------
+     3
+(1 row)
+
+RESET chdb_search_stub.ctids;
+RESET enable_seqscan;
+DROP TABLE plain;
 DROP EXTENSION chdb_search;
