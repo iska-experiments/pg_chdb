@@ -221,9 +221,11 @@ start(IndexScanDesc scan) {
 
     so->started = true;
     pgstat_count_index_scan(scan->indexRelation);
+#if PG_VERSION_NUM >= 180000
     if (scan->instrument) {
         scan->instrument->nsearches++;
     }
+#endif
     if (sql) {
         so->stream = chdb_search_stream_open(
             RelationGetRelid(scan->indexRelation), sql, scan->numberOfOrderBys, so->cxt

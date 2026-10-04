@@ -17,7 +17,11 @@
 #include "search.h"
 #include "worker.h"
 
+#ifdef PG_MODULE_MAGIC_EXT
 PG_MODULE_MAGIC_EXT(.name = "chdb_search", .version = PGCHCB_VERSION);
+#else
+PG_MODULE_MAGIC;
+#endif
 
 int chdb_max_memory  = 0;
 int chdb_max_threads = 0;
