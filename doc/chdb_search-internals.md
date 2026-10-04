@@ -186,17 +186,18 @@ of transactions that are over (`vacuum.c`).
 
 A scan is one ClickHouse
 `SELECT ctid ... FROM idx_<oid>.t_<generation> WHERE ...` built from the
-scan keys (`select.c`, `query.c`, `literal.c`), streamed back as Native
-blocks and decoded row by row (`scan.c`). When the transaction has rows
-buffered or staged for the index, the builder ships the buffered ones to the
-staging table first and reads both tables as a `UNION ALL` of the same
-`SELECT`, each leg with its own `WHERE`, `ORDER BY` and `LIMIT` so that the
-skip and vector indexes serve both, ordered and limited again outside; the
-staging leg filters out the transaction ids of savepoints rolled back since
-their rows were staged. The builder's FROM clause,
-`chdb_search_append_from`, serves every statement over the index's rows: the
-custom scan's, the score's counts and the aggregate scan's, the last two
-reading the union as a subquery with the `WHERE` in each leg. So a
+scan keys (`select.c`, `query.c`, `textsearch.c`, `phrase.c`, `literal.c`; a
+`chdb.query` tree is `querytree.c`'s, rendered as one expression), streamed
+back as Native blocks and decoded row by row (`scan.c`). When the
+transaction has rows buffered or staged for the index, the builder ships the
+buffered ones to the staging table first and reads both tables as a
+`UNION ALL` of the same `SELECT`, each leg with its own `WHERE`, `ORDER BY`
+and `LIMIT` so that the skip and vector indexes serve both, ordered and
+limited again outside; the staging leg filters out the transaction ids of
+savepoints rolled back since their rows were staged. The builder's FROM
+clause, `chdb_search_append_from`, serves every statement over the index's
+rows: the custom scan's, the score's counts and the aggregate scan's, the
+last two reading the union as a subquery with the `WHERE` in each leg. So a
 transaction sees its own rows at once, and the rows it has not searched for
 travel as one block at commit, as before. `xs_recheck` is false: ClickHouse
 applied the quals, and the heap fetch decides visibility. A `ctid` past the

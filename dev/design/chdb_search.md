@@ -158,6 +158,10 @@ answer) and a ClickHouse translation used by the AM and the CustomScan.
 | `col @@? 'a b'` or `chdb.has_any_tokens(col, 'a b')` | `hasAnyTokens(col, 'a b')` | strategy 2 |
 | `chdb.has_token(col, 'a')` | `hasToken(col, 'a')` | strategy 3 |
 | `col @@~ 'a b'` or `chdb.has_phrase(col, 'a b')` | `hasPhrase(col, 'a b')` | strategy 4, needs `support_phrase_search` |
+| `col @@@ chdb.query` | the tree as one expression | strategy 5; `chdb.match`, `match_all`, `term`, `phrase(needle, slop)`, `regex`, `wildcard`, `boost`, `in_column`, combined by `&&` `\|\|` `!` |
+| `col @@/ 're'` or `chdb.regex(col, re)` | `match(<pre>(col), '(?i)re')` | strategy 6; the pattern follows the preprocessor |
+| `col @@% 'pat%'` or `chdb.wildcard(col, pat)` | `<pre>(col) LIKE <pre>('pat%')` | strategy 7 |
+| `chdb.phrase('a b', slop)` | `hasAllTokens` and a positional check over `tokens(col)` | in order; positions are not stored without `support_phrase_search` |
 | `chdb.tokens(text [, tokenizer, args])` | `tokens(...)` | tokenizer debugging, runs in the worker |
 | `col = 'x'`, `col IN (...)`, `col LIKE 'x%'` on `columnar_ops` | same | pushed as filters |
 | `embedding <=> q`, `<->`, `<#>` | `cosineDistance`, `L2Distance`, `-dotProduct` | ORDER BY ... LIMIT k only, via `chdb_vector` |
@@ -184,6 +188,12 @@ documented.
   tokenizer only, so every match of another tokenizer on a lossy page would be
   dropped; the AM streams the whole TID set anyway. EvalPlanQual rechecks
   still evaluate the fallbacks for non-default tokenizers.
+* `chdb_search_render_query` (`query.c`) renders a `ChdbQuery` tree over
+  any of the index's text columns as one ClickHouse boolean expression, so
+  the CustomScan can push an OR or NOT between our predicates, which the
+  access method's ANDed scan keys cannot carry, as a tree whose leaves name
+  their columns; today it pushes `col @@@ query` as any other operator. Boost weights ride in the tree and the filter ignores
+  them; the score layer multiplies by them.
 * CustomScan (`src/search/planner/`, `planner.h` is its contract):
   `set_rel_pathlist_hook` adds a `chdb_search` path when a heap relation has
   a chdb index and the quals include our operators or their function forms,

@@ -23,8 +23,9 @@ The chdb_search extension gives a Postgres table a [ClickHouse full-text
 index][text index] served by [chDB]. A `chdb` index keeps the indexed columns
 in a ClickHouse MergeTree table with a `text` skip index and answers `WHERE`
 predicates over tokens, so a query for rows that contain all, any, one or a
-phrase of some tokens reads the index, not the heap, and filters the plain
-columns stored beside the text there too.
+phrase of some tokens, match a pattern, or any combination of these, reads
+the index, not the heap, and filters the plain columns stored beside the
+text there too.
 
 The index is a filter first: a row matches exactly when the tokens the
 index derives from it contain the tokens of the query. Order results by
@@ -127,35 +128,32 @@ All functions live in the `chdb` schema. Each has a Postgres implementation,
 so a sequential scan and the heap recheck return the same rows as the index,
 and a ClickHouse translation the index uses.
 
-| Operator        | Function                          | ClickHouse     |
-| --------------- | --------------------------------- | -------------- |
-| `col @@@ 'a b'` | `chdb.has_all_tokens(col, 'a b')` | `hasAllTokens` |
-| `col @@? 'a b'` | `chdb.has_any_tokens(col, 'a b')` | `hasAnyTokens` |
-| `col @@= 'a'`   | `chdb.has_token(col, 'a')`        | `hasToken`     |
-| `col @@~ 'a b'` | `chdb.has_phrase(col, 'a b')`     | `hasPhrase`    |
-| none            | `chdb.tokens(text)`               | `tokens`       |
-| none            | `chdb.score(k [, 'col'])`         | see below      |
+| Operator         | Function                          | ClickHouse     |
+| ---------------- | --------------------------------- | -------------- |
+| `col @@@ 'a b'`  | `chdb.has_all_tokens(col, 'a b')` | `hasAllTokens` |
+| `col @@? 'a b'`  | `chdb.has_any_tokens(col, 'a b')` | `hasAnyTokens` |
+| `col @@= 'a'`    | `chdb.has_token(col, 'a')`        | `hasToken`     |
+| `col @@~ 'a b'`  | `chdb.has_phrase(col, 'a b')`     | `hasPhrase`    |
+| `col @@/ 're'`   | `chdb.regex(col, 're')`           | `match`        |
+| `col @@% 'pat%'` | `chdb.wildcard(col, 'pat%')`      | `LIKE`         |
+| `col @@@ query`  | `chdb.query_matches(col, query)`  | the tree       |
+| none             | `chdb.score(k [, 'col'])`         | see below      |
 
-The first three also take a `text[]` left argument, where the needle is one
-element and all, any and one mean the same. `@@~` needs
-`support_phrase_search` on the column and does not apply to arrays.
-`chdb.tokens()` shows what the default tokenizer, run in the worker, makes
-of a string. `chdb.score()` is the [relevance score](#relevance-score) of a
-row, which only the custom scan computes.
+`chdb.score()` is the [relevance score](#relevance-score) of a row, which
+only the custom scan computes.
+
+A `chdb.query` combines any of these with `&&`, `||` and `!`, weights a
+term with `chdb.boost` and relaxes a phrase with a slop:
 
 ```sql
-SELECT id FROM docs WHERE body @@@ 'postgres clickhouse'; -- both, any order
-SELECT id FROM docs WHERE body @@? 'postgres clickhouse'; -- at least one
-SELECT id FROM docs WHERE body @@= 'postgres';            -- one token
-SELECT id FROM docs WHERE body @@~ 'full text search';    -- in order
+SELECT id FROM docs WHERE body @@@ 'postgres clickhouse';
+SELECT id FROM docs
+ WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('boots'));
 ```
 
-Matching is exact on tokens: `postgres` does not match `postgresql`, and a
-needle without tokens matches nothing. The Postgres implementations know
-ClickHouse's default pipeline only, `lowerUTF8` then `splitByNonAlpha`,
-lowercasing by Unicode whatever the cluster's locale. An index built with
-another tokenizer or preprocessor answers differently, so for such a column
-the operators are meaningful through the index only.
+The [query language] page has every operator and builder, what the patterns
+and the slop mean, and where the Postgres implementations, which know the
+default tokenizer only, part from an index built with another.
 
 ## The Custom Scan
 
@@ -587,7 +585,8 @@ database named `idx_0`.
     next phase keeps the store in index pages.
 *   `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.
 *   The Postgres implementations of the operators tokenize as the default
-    pipeline does; other tokenizers are usable through the index only.
+    pipeline does; other tokenizers are usable through the index only, as
+    is a `chdb.in_column` query.
 *   The custom scan plans a table of its own: a search inside a join takes
     it when the search predicate names constants or the query's parameters,
     while one that depends on the other side of the join, as `LATERAL` does,
@@ -616,6 +615,7 @@ Copyright (c) 2026, ClickHouse
   [text index]: https://clickhouse.com/docs/engines/table-engines/mergetree-family/textindexes
     "ClickHouse Docs: Full-text search with text indexes"
   [chdb_vector]: ./chdb_vector.md "chdb_vector Docs"
+  [query language]: ./chdb_search-query.md "chdb_search Query Language"
   [internals]: ./chdb_search-internals.md "chdb_search Internals"
   [`chdb.max_memory`]: ./chdb.md#chdbmax_memory "chdb Docs: chdb.max_memory"
   [`chdb.max_threads`]: ./chdb.md#chdbmax_threads "chdb Docs: chdb.max_threads"
