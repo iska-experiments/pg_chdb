@@ -8,8 +8,8 @@ use PostgreSQL::Test::Utils;
 use Test::More;
 
 our @EXPORT = qw(
-    server_log check_log check_query search_node worker_pid stop_worker
-    stderr_of store_tables search_ids check_unavailable pitr_rows check_restored
+    server_log check_log check_query search_node worker_pid stderr_of stop_worker
+    store_tables store_rows search_ids check_unavailable pitr_rows check_restored
 );
 
 =begin server_log
@@ -155,6 +155,21 @@ sub store_tables {
         SELECT * FROM chdb_search_query(
             'SELECT name FROM system.tables WHERE database = ''idx_$oid'' ORDER BY name'
         ) AS (name text)
+    });
+}
+
+=head2 store_rows
+
+The rows of docs_idx's store table, those of dead heap tuples included.
+
+=cut
+
+sub store_rows {
+    my $node = shift;
+    return $node->safe_psql(postgres => q{
+        SELECT * FROM chdb_search_query(
+            'SELECT count() FROM ' || chdb_search_store_table('docs_idx')
+        ) AS (n bigint)
     });
 }
 
