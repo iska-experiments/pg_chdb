@@ -39,9 +39,41 @@ SELECT id FROM docs WHERE title @@= 'Shoes' AND tags @@@ 'sport' AND author >= '
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasToken("title", 'Shoes') AND hasAllTokens("tags", 'sport') AND "author" >= 'a' AND "price" < toDecimal256('50.50', 2)
 SELECT id FROM docs WHERE seen > '2026-01-01 00:00:00+00' AND flag = false;
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "seen" > fromUnixTimestamp64Micro(1767225600000000, 'UTC') AND "flag" = false
-SELECT id FROM docs WHERE body @@@ NULL;
 \o
 RESET client_min_messages;
+-- A NULL search key. Written as a constant it never reaches the scan: the
+-- operator is strict, so the planner folds the qual to false. From a generic
+-- plan it reaches the scan as a runtime key, which sends no statement and
+-- returns no row.
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ NULL;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+PREPARE q(text) AS SELECT id FROM docs WHERE body @@@ $1;
+SET plan_cache_mode = force_generic_plan;
+EXPLAIN (COSTS OFF) EXECUTE q(NULL);
+            QUERY PLAN             
+-----------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: (body @@@ $1)
+(2 rows)
+
+SET client_min_messages = debug1;
+EXECUTE q(NULL);
+ id 
+----
+(0 rows)
+
+\o /dev/null
+EXECUTE q('shoes');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes')
+\o
+RESET client_min_messages;
+RESET plan_cache_mode;
+DEALLOCATE q;
 ----------------------------------------------------------------------------
 -- Literals: parsed to the column's type, and the constants ClickHouse
 -- compares unlike Postgres (NaN, the infinities) become predicates

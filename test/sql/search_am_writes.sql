@@ -54,8 +54,22 @@ UPDATE docs SET body = 'changed' WHERE id = 1;
 DELETE FROM docs WHERE id = 2;
 \echo -- rows with NULLs
 INSERT INTO docs (id) VALUES (8);
-\echo -- a failing statement
-INSERT INTO docs VALUES (1, 'duplicate key');
+\echo -- a statement that fails after the index buffered a row
+-- (docs_pkey is checked first for each row, so the duplicate fails at the
+-- second row, once the first has reached the buffer; the savepoint takes
+-- the buffered row with it and the survivor is sent alone.)
+BEGIN;
+SAVEPOINT s;
+INSERT INTO docs (id, body) VALUES (40, 'indexed before the duplicate'), (1, 'duplicate key');
+ROLLBACK TO s;
+INSERT INTO docs (id, body) VALUES (41, 'survivor');
+COMMIT;
+\echo -- an AFTER trigger that raises, once every index has buffered the row
+CREATE FUNCTION boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE 'boom'; END $$;
+CREATE TRIGGER boom AFTER INSERT ON docs FOR EACH ROW EXECUTE FUNCTION boom();
+INSERT INTO docs (id, body) VALUES (42, 'never flushed');
+DROP TRIGGER boom ON docs;
+DROP FUNCTION boom();
 RESET client_min_messages;
 
 ----------------------------------------------------------------------------

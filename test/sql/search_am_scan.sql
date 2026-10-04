@@ -36,9 +36,24 @@ SELECT id FROM docs WHERE body @@@ 'running shoes';
 SELECT id FROM docs WHERE body @@? 'it''s a \back\slash';
 SELECT id FROM docs WHERE title @@= 'Shoes' AND tags @@@ 'sport' AND author >= 'a' AND price < 50.50;
 SELECT id FROM docs WHERE seen > '2026-01-01 00:00:00+00' AND flag = false;
-SELECT id FROM docs WHERE body @@@ NULL;
 \o
 RESET client_min_messages;
+-- A NULL search key. Written as a constant it never reaches the scan: the
+-- operator is strict, so the planner folds the qual to false. From a generic
+-- plan it reaches the scan as a runtime key, which sends no statement and
+-- returns no row.
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ NULL;
+PREPARE q(text) AS SELECT id FROM docs WHERE body @@@ $1;
+SET plan_cache_mode = force_generic_plan;
+EXPLAIN (COSTS OFF) EXECUTE q(NULL);
+SET client_min_messages = debug1;
+EXECUTE q(NULL);
+\o /dev/null
+EXECUTE q('shoes');
+\o
+RESET client_min_messages;
+RESET plan_cache_mode;
+DEALLOCATE q;
 
 ----------------------------------------------------------------------------
 -- Literals: parsed to the column's type, and the constants ClickHouse
