@@ -7,28 +7,32 @@
  * back, and the store would be gone with the index still in the catalog.
  * object_access_hook sees every dropped relation, including those removed by
  * DROP TABLE and DROP SCHEMA ... CASCADE, and records indexes of this access
- * method. Only backends that loaded chdb_search see it, so the library should
- * be in shared_preload_libraries or session_preload_libraries; a store missed
- * otherwise is swept by the worker, which removes databases idx_<oid> whose
- * OID is not in pg_class.
+ * method, and it sees a dropped database, whose per-database directory
+ * pg_chdb/<dboid> and socket it removes at commit. Only backends that loaded
+ * chdb_search run the hook, so the library belongs in
+ * shared_preload_libraries or session_preload_libraries; a backend that loads
+ * it on demand inside a DROP says so in the log. A store the hook missed is
+ * swept by the worker when it next starts (sweep.c): the idx_<oid> databases
+ * whose OID is no longer a chdb index, and the directories and sockets of
+ * databases no longer in pg_database.
  */
 
 #include "postgres.h"
 
-#include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/objectaccess.h"
-#include "catalog/pg_class.h"
-#include "commands/defrem.h"
+#include "catalog/pg_database.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 
 #include "search.h"
+#include "sweep.h"
 
 typedef struct Deferred {
     Oid indexoid;
-    char* sql; /* NULL drops the whole store */
+    char* sql; /* NULL drops the whole store, unless dir is set */
+    bool dir;  /* remove the index's database's pg_chdb directory instead */
     bool at_commit;
     SubTransactionId subid;
 } Deferred;
@@ -53,6 +57,20 @@ defer(Oid indexoid, const char* sql, bool at_commit) {
     d->indexoid  = indexoid;
     d->sql       = sql ? pstrdup(sql) : NULL;
     d->at_commit = at_commit;
+    d->subid     = GetCurrentSubTransactionId();
+    deferred     = lappend(deferred, d);
+    MemoryContextSwitchTo(old);
+}
+
+/* Defers removal of a dropped database's pg_chdb directory and socket. */
+static void
+defer_dir(Oid dboid) {
+    MemoryContext old = MemoryContextSwitchTo(TopTransactionContext);
+    Deferred* d       = palloc0(sizeof(*d));
+
+    d->indexoid  = dboid;
+    d->dir       = true;
+    d->at_commit = true;
     d->subid     = GetCurrentSubTransactionId();
     deferred     = lappend(deferred, d);
     MemoryContextSwitchTo(old);
@@ -99,6 +117,10 @@ drop_store(Oid indexoid) {
 /* Past the commit point nothing can be rolled back, so failures only warn. */
 static void
 run(Deferred* d) {
+    if (d->dir) {
+        chdb_search_remove_store_dir(d->indexoid);
+        return;
+    }
     if (d->sql) {
         chdb_search_try_run(d->indexoid, d->sql);
         return;
@@ -227,22 +249,15 @@ object_access(
     if (prev_object_access) {
         prev_object_access(access, classId, objectId, subId, arg);
     }
-    if (access != OAT_DROP || classId != RelationRelationId || subId != 0) {
+    if (access != OAT_DROP || subId != 0) {
         return;
     }
-
-    HeapTuple tup = SearchSysCache1(RELOID, ObjectIdGetDatum(objectId));
-
-    if (!HeapTupleIsValid(tup)) {
+    if (classId == DatabaseRelationId) {
+        /* The worker for the database is gone by commit, so its store can go. */
+        defer_dir(objectId);
         return;
     }
-
-    Form_pg_class cls = (Form_pg_class)GETSTRUCT(tup);
-    bool ours         = cls->relkind == RELKIND_INDEX && OidIsValid(cls->relam) &&
-                        cls->relam == get_am_oid("chdb", true);
-
-    ReleaseSysCache(tup);
-    if (!ours) {
+    if (classId != RelationRelationId || !chdb_search_is_index(objectId)) {
         return;
     }
     if (((ObjectAccessDrop*)arg)->dropflags & PERFORM_DELETION_CONCURRENTLY) {
