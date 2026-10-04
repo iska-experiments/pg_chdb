@@ -6,7 +6,7 @@ use Exporter 'import';
 use PostgreSQL::Test::Utils;
 use Test::More;
 
-our @EXPORT = qw(server_log check_log check_query);
+our @EXPORT = qw(server_log check_log check_query search_node);
 
 =begin server_log
 
@@ -60,6 +60,24 @@ sub check_query {
         like $@, $err_rx, "Should have $desc chDB error";
         check_log $node, $desc, @args;
     };
+}
+
+=head2 search_node
+
+A node for the chdb_search tests, with the extension created in the postgres
+database. Lines for postgresql.conf follow the name. The worker needs libchdb
+on the server's library path.
+
+=cut
+
+sub search_node {
+    my ($name, @conf) = @_;
+    my $node = PostgreSQL::Test::Cluster->new($name);
+    $node->init;
+    $node->append_conf('postgresql.conf', join "\n", @conf, '') if @conf;
+    $node->start;
+    $node->safe_psql(postgres => 'CREATE EXTENSION chdb_search');
+    return $node;
 }
 
 1;

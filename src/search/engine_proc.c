@@ -17,6 +17,7 @@
 #include "../channel.h"
 #include "../spawn.h"
 #include "engine_proc.h"
+#include "protocol.h"
 
 #define CHDB_SEARCH_ENGINE_PROGRAM "chdb_search_engine"
 
@@ -80,6 +81,11 @@ engine_recv(void* buf, size_t len) {
 pid_t
 engine_pid(void) {
     return engine.pid;
+}
+
+chdbChannel*
+engine_channel(void) {
+    return engine.pid > 0 ? &engine.ch : NULL;
 }
 
 static int
@@ -199,7 +205,7 @@ engine_ensure(Oid dboid) {
     char* const argv[] = {
         program,
         CppAsString2(CHDB_SEARCH_ENGINE_FD),
-        psprintf("%s/pg_chdb/%u", DataDir, dboid),
+        psprintf("%s/" CHDB_SEARCH_DIR "/%u", DataDir, dboid),
         NULL,
     };
 

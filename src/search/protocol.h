@@ -55,8 +55,12 @@
 #define CHDB_CMD_ENGINE_PID 'P'
 #define CHDB_CMD_ENGINE_KILL 'K'
 
-/* Where the worker for `dboid` listens, relative to the data directory. */
-#define CHDB_SEARCH_SOCKET_FMT "pg_chdb/%u.sock"
+/*
+ * The store directory under the data directory: a <dboid> subdirectory holding
+ * each database's chDB store, and the <dboid>.sock its worker listens on.
+ */
+#define CHDB_SEARCH_DIR "pg_chdb"
+#define CHDB_SEARCH_SOCKET_FMT CHDB_SEARCH_DIR "/%u.sock"
 
 /* A decoded request. The query borrows from the frame it was decoded from. */
 typedef struct chdbSearchRequest {
