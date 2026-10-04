@@ -20,6 +20,7 @@
 #include "utils/syscache.h"
 
 #include "client.h"
+#include "pagestore/pages.h"
 #include "pg-clickhouse-encode.h"
 #include "pg-clickhouse.h"
 
@@ -192,16 +193,7 @@ chdb_search_store_unavailable(Relation index);
 extern void
 chdb_search_check_available(Relation index, bool* skip);
 
-#define CHDB_META_MAGIC 0x43484453 /* "CHDS" */
-#define CHDB_META_VERSION 1
-#define CHDB_METAPAGE_BLKNO 0
-
-typedef struct ChdbMetaPageData {
-    uint32 magic;
-    uint32 version;
-    uint64 generation;  /* random per build, ties the store to this relation */
-    uint64 flushed_lsn; /* WAL position when the store was last written */
-} ChdbMetaPageData;
+/* The metapage, ChdbMetaPageData and CHDB_META_*, is pagestore/pages.h's. */
 
 extern uint64
 chdb_meta_init(Relation index, ForkNumber fork);

@@ -68,4 +68,7 @@ typedef struct chdbBlobStore {
 /* dirstore.c: files under pg_chdb/<dboid>/blobs/<storage>/<key>. */
 extern const chdbBlobStore chdb_blob_dirstore;
 
+/* pagebackend.c: pages of the index relation (pages.h), routed by routes.h. */
+extern const chdbBlobStore chdb_blob_pagestore;
+
 #endif /* CHDB_SEARCH_PAGESTORE_STORE_H */

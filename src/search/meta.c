@@ -37,7 +37,7 @@
 
 static ChdbMetaPageData*
 meta_of(Page page) {
-    return (ChdbMetaPageData*)PageGetContents(page);
+    return CHDB_META(page);
 }
 
 /* ---- the fail-safe check ---- */
@@ -214,6 +214,9 @@ chdb_meta_init(Relation index, ForkNumber fork) {
     meta->version     = CHDB_META_VERSION;
     meta->generation  = generation;
     meta->flushed_lsn = 0;
+    meta->dir_head    = InvalidBlockNumber;
+    meta->free_head   = InvalidBlockNumber;
+    meta->flags       = 0;
     ((PageHeader)page)->pd_lower += sizeof(ChdbMetaPageData);
 
     GenericXLogFinish(xlog);
