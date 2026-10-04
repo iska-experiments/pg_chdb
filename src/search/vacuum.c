@@ -235,7 +235,9 @@ sweep_tables(Relation index) {
 
     foreach (lc, stale) {
         chdb_search_try_run(
-            oid, 0, psprintf("DROP TABLE IF EXISTS idx_%u.%s", oid, (char*)lfirst(lc))
+            oid,
+            0,
+            psprintf("DROP TABLE IF EXISTS idx_%u.%s SYNC", oid, (char*)lfirst(lc))
         );
     }
     MemoryContextSwitchTo(old);

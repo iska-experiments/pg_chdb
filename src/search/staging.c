@@ -79,7 +79,7 @@ chdb_search_stage_rows(Pending* p) {
 
         /* Named before it is made, so a CREATE that fails halfway is dropped too. */
         chdb_search_run(
-            p->indexoid, 0, psprintf("DROP TABLE IF EXISTS %s", p->staging)
+            p->indexoid, 0, psprintf("DROP TABLE IF EXISTS %s SYNC", p->staging)
         );
         chdb_search_run(
             p->indexoid,
@@ -118,7 +118,7 @@ chdb_search_staged_table(Oid indexoid, const char** excluded) {
 /* Drops the staging table with `run`. */
 static void
 drop_staging(Pending* p, void (*run)(Oid, uint64, const char*)) {
-    run(p->indexoid, 0, psprintf("DROP TABLE IF EXISTS %s", p->staging));
+    run(p->indexoid, 0, psprintf("DROP TABLE IF EXISTS %s SYNC", p->staging));
     p->staging = NULL;
 }
 
@@ -166,6 +166,6 @@ chdb_search_flush_pending(Pending* p) {
                        p->staging
                    )
     );
-    chdb_search_run(p->indexoid, p->generation, psprintf("DROP TABLE %s", p->staging));
+    chdb_search_run(p->indexoid, p->generation, psprintf("DROP TABLE %s SYNC", p->staging));
     p->staging = NULL;
 }

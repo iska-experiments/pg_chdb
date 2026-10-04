@@ -199,13 +199,13 @@ BEGIN;
 INSERT INTO docs (id, body) VALUES (999, 'kept');
 SAVEPOINT s;
 INSERT INTO docs (id, body) SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 51 rows
 ROLLBACK TO s;
 COMMIT;
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N WHERE xmin NOT IN (N)
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
@@ -214,7 +214,7 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 BEGIN;
 SAVEPOINT a;
 INSERT INTO docs (id, body) SELECT 2000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 SAVEPOINT b;
@@ -226,7 +226,7 @@ INSERT INTO docs (id, body) VALUES (3999, 'kept');
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N WHERE xmin NOT IN (N, N)
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
@@ -238,12 +238,12 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     NULL;
 END $$;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 10 rows
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 60 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
@@ -256,7 +256,7 @@ SET chdb_search.flush_threshold = '64kB';
 SET client_min_messages = debug1;
 BEGIN;
 INSERT INTO docs (id, body) SELECT 10000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
@@ -264,7 +264,7 @@ INSERT INTO docs (id, body) VALUES (11000, 'tail');
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 21 rows
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 121 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
@@ -272,17 +272,17 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 -- a rollback drops the staging table, once
 BEGIN;
 INSERT INTO docs (id, body) SELECT 12000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 \echo -- staged rows survive a savepoint rolled back after them
 -- staged rows survive a savepoint rolled back after them
 BEGIN;
 INSERT INTO docs (id, body) SELECT 13000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 50 rows
@@ -292,7 +292,7 @@ ROLLBACK TO s;
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 20 rows
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 120 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
@@ -301,19 +301,19 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 BEGIN;
 INSERT INTO docs (id, body, title)
 SELECT 15000 + i, repeat('word ', 250), repeat('title ', 200) FROM generate_series(1, 120) i;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "title") -- 54 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 27 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "title") -- 54 rows
 ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 RESET client_min_messages;
 RESET chdb_search.flush_threshold;
 ----------------------------------------------------------------------------

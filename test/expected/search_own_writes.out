@@ -33,7 +33,7 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'nomatch';
 
 SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
@@ -69,7 +69,7 @@ INSERT INTO docs (id, body) VALUES (6, 'unread shoes');
 COMMIT;
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "loc") -- 1 rows
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \echo -- a transaction that never searches sends one block at COMMIT, as before
 -- a transaction that never searches sends one block at COMMIT, as before
@@ -83,7 +83,7 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 BEGIN;
 INSERT INTO docs (id, body) VALUES (8, 'rolled back');
 SELECT id FROM docs WHERE body @@@ 'nomatch';
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
@@ -92,7 +92,7 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 (0 rows)
 
 ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 ----------------------------------------------------------------------------
 -- A savepoint rolled back after its rows were staged is excluded, from the
 -- searches and from the commit
@@ -102,7 +102,7 @@ INSERT INTO docs (id, body) VALUES (9, 'outer');
 SAVEPOINT s;
 INSERT INTO docs (id, body) VALUES (10, 'inner');
 SELECT id FROM docs WHERE body @@@ 'nomatch';
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 2 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
@@ -119,7 +119,7 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 
 COMMIT;
 DEBUG:  chdb_search exec: INSERT INTO idx_N.t_N SELECT * FROM idx_N.t_N_tx_N WHERE xmin NOT IN (N)
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ----------------------------------------------------------------------------
 -- COPY, and a transaction past flush_threshold, stage the same way
@@ -127,7 +127,7 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 BEGIN;
 COPY docs (id, body) FROM stdin;
 SELECT id FROM docs WHERE body @@@ 'nomatch';
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 2 rows
 DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
@@ -137,12 +137,12 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 
 COMMIT;
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 SET chdb_search.flush_threshold = '64kB';
 BEGIN;
 INSERT INTO docs (id, body) SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 51 rows
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 51 rows
@@ -163,7 +163,7 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 
 COMMIT;
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET chdb_search.flush_threshold;
 ----------------------------------------------------------------------------
@@ -174,7 +174,7 @@ SET chdb_search.enable_custom_scan = on;
 BEGIN;
 INSERT INTO docs (id, body) VALUES (3000, 'custom shoes');
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'nomatch' ORDER BY loc <-> '(0,0)' LIMIT 2;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N AS idx_N.t_N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
                                                                                                                                                                             QUERY PLAN                                                                                                                                                                             
@@ -195,7 +195,7 @@ DEBUG:  chdb_search select: SELECT ctid, _distance FROM (SELECT ctid, L2Distance
 
 COMMIT;
 DEBUG:  chdb_search exec: ALTER TABLE idx_N.t_N ATTACH PARTITION tuple() FROM idx_N.t_N_tx_N
-DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 RESET client_min_messages;
 DROP TABLE docs;

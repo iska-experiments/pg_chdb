@@ -46,9 +46,13 @@
  *   DELETE FROM idx_16401.t_7342 WHERE ctid IN (4294967296, ...)
  *     SETTINGS lightweight_delete_mode = 'lightweight_update_force'
  *   OPTIMIZE TABLE idx_16401.t_7342 FINAL
+ *   DROP TABLE IF EXISTS idx_16401.t_7342 SYNC
  *
- * An INSERT carries no FORMAT clause: the worker streams it as Native. Every
- * statement is logged with elog(DEBUG1) before it is sent.
+ * An INSERT carries no FORMAT clause: the worker streams it as Native. A
+ * DROP TABLE says SYNC: ClickHouse's Atomic databases otherwise keep a
+ * dropped table's parts for minutes, and a DROP DATABASE does not wait for
+ * them, so blobs would outlive the index. Every statement is logged with
+ * elog(DEBUG1) before it is sent.
  */
 
 #include "postgres.h"

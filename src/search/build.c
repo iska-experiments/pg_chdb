@@ -115,7 +115,7 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
     } else {
         chdb_search_drop_statement_on_abort(
             RelationGetRelid(index),
-            psprintf("DROP TABLE IF EXISTS %s", chdb_search_table_name(index))
+            psprintf("DROP TABLE IF EXISTS %s SYNC", chdb_search_table_name(index))
         );
     }
     chdb_search_create_store(index);

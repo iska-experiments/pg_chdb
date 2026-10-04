@@ -389,7 +389,7 @@ SELECT id FROM prod WHERE body @@? 'running line' ORDER BY id;
 SET client_min_messages = debug1;
 VACUUM prod;
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 SET client_min_messages = warning;
 SELECT pg_temp.tables(:idx);
  tables 
@@ -420,7 +420,7 @@ SELECT pg_temp.tables(:idx);
 SET client_min_messages = debug1;
 VACUUM prod;
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 SET client_min_messages = warning;
 SELECT pg_temp.tables(:idx);
  tables 

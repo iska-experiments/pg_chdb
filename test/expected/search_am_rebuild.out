@@ -27,7 +27,7 @@ DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "bod
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 2 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 \echo -- TRUNCATE rebuilds every index of the table
 -- TRUNCATE rebuilds every index of the table
 BEGIN;
@@ -45,8 +45,8 @@ DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "tit
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 0 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 SELECT count(*) FROM docs;
  count 
 -------
@@ -71,8 +71,8 @@ DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "tit
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK TO s;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 COMMIT;
 \echo -- a table rewrite (of a column the index does not cover, so it is rebuilt)
 -- a table rewrite (of a column the index does not cover, so it is rebuilt)
@@ -92,8 +92,8 @@ DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  building index "docs_pkey" on table "docs" serially
 DEBUG:  index "docs_pkey" can safely use deduplication
 ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 \echo -- CLUSTER
 -- CLUSTER
 BEGIN;
@@ -111,8 +111,8 @@ DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "tit
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 2 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 ROLLBACK;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 \echo -- a search reads the table the index still names
 -- a search reads the table the index still names
 SET enable_seqscan = off;
@@ -191,7 +191,7 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 INSERT INTO docs (id, body) VALUES (12, 'rolled back with the rebuild');
 ROLLBACK TO s;
-DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N
+DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 COMMIT;
 DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
