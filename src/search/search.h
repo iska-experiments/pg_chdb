@@ -20,6 +20,7 @@
 
 /* GUCs, defined in gucs.c. */
 extern int chdb_search_flush_threshold_kb;
+extern int chdb_search_max_buffer_kb;
 extern double chdb_search_vacuum_optimize_ratio;
 extern bool chdb_search_mask_oids;
 

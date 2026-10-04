@@ -129,6 +129,33 @@ END $$;
 RESET client_min_messages;
 
 ----------------------------------------------------------------------------
+-- Inside a savepoint the buffer is not staged early: it warns, then it caps
+----------------------------------------------------------------------------
+SET chdb_search.flush_threshold = '64kB';
+SET chdb_search.max_buffer = '128kB';
+SET client_min_messages = debug1;
+BEGIN;
+SAVEPOINT s;
+INSERT INTO docs (id, body) SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+INSERT INTO docs (id, body) SELECT 2000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+ROLLBACK TO s;
+COMMIT;
+\echo -- a PL/pgSQL block that completes keeps its rows for COMMIT
+DO $$
+BEGIN
+    INSERT INTO docs (id, body) SELECT 3000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+\echo -- at the top level the same rows are staged instead
+BEGIN;
+INSERT INTO docs (id, body) SELECT 4000 + i, repeat('word ', 250) FROM generate_series(1, 60) i;
+ROLLBACK;
+RESET client_min_messages;
+RESET chdb_search.max_buffer;
+RESET chdb_search.flush_threshold;
+
+----------------------------------------------------------------------------
 -- VACUUM (what it deletes depends on the store's rows; see search_e2e)
 ----------------------------------------------------------------------------
 VACUUM docs;
