@@ -75,10 +75,30 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", 
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
 DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
-\echo -- a failing statement
--- a failing statement
-INSERT INTO docs VALUES (1, 'duplicate key');
+\echo -- a statement that fails after the index buffered a row
+-- a statement that fails after the index buffered a row
+-- (docs_pkey is checked first for each row, so the duplicate fails at the
+-- second row, once the first has reached the buffer; the savepoint takes
+-- the buffered row with it and the survivor is sent alone.)
+BEGIN;
+SAVEPOINT s;
+INSERT INTO docs (id, body) VALUES (40, 'indexed before the duplicate'), (1, 'duplicate key');
 ERROR:  duplicate key value violates unique constraint "docs_pkey"
+ROLLBACK TO s;
+INSERT INTO docs (id, body) VALUES (41, 'survivor');
+COMMIT;
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body", "title", "tags", "author", "price", "seen", "flag") -- 1 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "title") -- 1 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
+\echo -- an AFTER trigger that raises, once every index has buffered the row
+-- an AFTER trigger that raises, once every index has buffered the row
+CREATE FUNCTION boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE 'boom'; END $$;
+CREATE TRIGGER boom AFTER INSERT ON docs FOR EACH ROW EXECUTE FUNCTION boom();
+INSERT INTO docs (id, body) VALUES (42, 'never flushed');
+ERROR:  boom
+DROP TRIGGER boom ON docs;
+DROP FUNCTION boom();
 RESET client_min_messages;
 ----------------------------------------------------------------------------
 -- Nested savepoints: each level rewinds to its own checkpoint
