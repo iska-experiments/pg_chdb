@@ -18,16 +18,16 @@
  * reserved, and duplicate names (two expression columns, say) are rejected
  * because the table would be unusable.
  *
- * Types. text_ops columns are `String` and text_array_ops `Array(String)`;
- * a NULL is stored as '' or [], as the text index cannot hold NULL. Columnar
- * columns use pgch_ch_type_for, so NULLs survive as Nullable(...).
+ * Types. Every column uses pgch_ch_type_for, so text is Nullable(String) and
+ * text[] is Array(Nullable(String)); ClickHouse's text index accepts both and
+ * NULLs survive. A NULL array is stored as the empty array.
  *
  * Example, for CREATE INDEX ON docs USING chdb (body text_ops
  * (tokenizer = 'ngrams', ngram_size = 3), tags text_array_ops, author columnar_ops):
  *
  *   CREATE DATABASE IF NOT EXISTS idx_16401
- *   CREATE TABLE idx_16401.t (ctid UInt64, xmin UInt32, body String,
- *     tags Array(String), author Nullable(String),
+ *   CREATE TABLE idx_16401.t (ctid UInt64, xmin UInt32, body Nullable(String),
+ *     tags Array(Nullable(String)), author Nullable(String),
  *     INDEX body_idx body TYPE text(tokenizer = ngrams(3), preprocessor =
  * lowerUTF8(body)), INDEX tags_idx tags TYPE text(tokenizer = array)) ENGINE =
  * MergeTree ORDER BY ctid INSERT INTO idx_16401.t (ctid, xmin, body, tags, author)
@@ -101,17 +101,7 @@ chdb_search_columns(Relation index) {
         cols[i].name  = pgch_quote_ch_ident(name);
         cols[i].kind  = kind_of(index, i);
         cols[i].typid = a->atttypid;
-        switch (cols[i].kind) {
-        case CHDB_COL_TEXT:
-            cols[i].type = "String";
-            break;
-        case CHDB_COL_TEXT_ARRAY:
-            cols[i].type = "Array(String)";
-            break;
-        default:
-            cols[i].type =
-                pgch_ch_type_for(a->atttypid, a->atttypmod, a->attnotnull, NULL);
-        }
+        cols[i].type = pgch_ch_type_for(a->atttypid, a->atttypmod, a->attnotnull, NULL);
     }
     return cols;
 }
@@ -163,6 +153,12 @@ chdb_search_create_sql(Relation index) {
         );
     }
     appendStringInfoString(&buf, ") ENGINE = MergeTree ORDER BY ctid");
+    if (chdb_search_wants_phrase_search(index)) {
+        /* ClickHouse gates the index argument behind a MergeTree setting. */
+        appendStringInfoString(
+            &buf, " SETTINGS allow_experimental_text_index_phrase_search = 1"
+        );
+    }
     return buf.data;
 }
 

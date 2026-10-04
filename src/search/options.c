@@ -14,10 +14,12 @@
 #include <string.h>
 
 #include "fmgr.h"
+#include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 
+#include "query.h"
 #include "search.h"
 
 typedef struct ChdbIndexOptions {
@@ -28,6 +30,7 @@ typedef struct ChdbIndexOptions {
 typedef struct ChdbTextOptions {
     int32 vl_len_;
     int tokenizer; /* string offsets, zero for unset */
+    int tokenizer_arg;
     int preprocessor;
     int raw_preprocessor;
     int ngram_size; /* zero for unset */
@@ -139,6 +142,27 @@ validate_text_options(void* parsed, relopt_value* vals, int nvals) {
     ChdbTextOptions* o = parsed;
     const char* tok    = GET_STRING_RELOPTION(o, tokenizer);
 
+    const char* arg = GET_STRING_RELOPTION(o, tokenizer_arg);
+
+    if (tok && (strcmp(tok, "icu") == 0 || strcmp(tok, "splitByRegexp") == 0)) {
+        if (!arg) {
+            ereport(
+                ERROR,
+                errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("tokenizer '%s' requires tokenizer_arg", tok),
+                errhint(
+                    "A locale such as 'en' for icu, a regular expression for "
+                    "splitByRegexp."
+                )
+            );
+        }
+    } else if (arg && !(tok && strcmp(tok, "splitByString") == 0)) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+            errmsg("tokenizer_arg applies only to icu, splitByRegexp and splitByString")
+        );
+    }
     if (o->ngram_size && (!tok || strcmp(tok, "ngrams") != 0)) {
         ereport(
             ERROR,
@@ -163,6 +187,16 @@ chdb_search_text_options(PG_FUNCTION_ARGS) {
         validate_tokenizer,
         NULL,
         offsetof(ChdbTextOptions, tokenizer)
+    );
+    add_local_string_reloption(
+        relopts,
+        "tokenizer_arg",
+        "Argument of the tokenizer: icu locale, regular expression, or separator "
+        "characters",
+        NULL,
+        NULL,
+        NULL,
+        offsetof(ChdbTextOptions, tokenizer_arg)
     );
     add_local_string_reloption(
         relopts,
@@ -229,7 +263,23 @@ chdb_search_skip_index_args(
     const char* pre = (o && o->preprocessor) ? GET_STRING_RELOPTION(o, preprocessor)
                                              : DEFAULT_PREPROCESSOR;
 
-    if (strcmp(tok, "ngrams") == 0) {
+    if (strcmp(tok, "icu") == 0 || strcmp(tok, "splitByRegexp") == 0) {
+        /* The argument is a literal, escaped like any other string. */
+        appendStringInfo(&buf, "tokenizer = %s(", tok);
+        chdb_search_append_string(&buf, GET_STRING_RELOPTION(o, tokenizer_arg));
+        appendStringInfoChar(&buf, ')');
+    } else if (strcmp(tok, "splitByString") == 0 && o && o->tokenizer_arg) {
+        /* Each character is one separator. */
+        appendStringInfoString(&buf, "tokenizer = splitByString([");
+        for (const char* c = GET_STRING_RELOPTION(o, tokenizer_arg); *c;
+             c += pg_mblen(c)) {
+            if (c != GET_STRING_RELOPTION(o, tokenizer_arg)) {
+                appendStringInfoString(&buf, ", ");
+            }
+            chdb_search_append_string(&buf, pnstrdup(c, pg_mblen(c)));
+        }
+        appendStringInfoString(&buf, "])");
+    } else if (strcmp(tok, "ngrams") == 0) {
         appendStringInfo(
             &buf,
             "tokenizer = ngrams(%d)",
@@ -258,4 +308,20 @@ Datum
 chdb_search_no_options(PG_FUNCTION_ARGS) {
     init_local_reloptions((local_relopts*)PG_GETARG_POINTER(0), 0);
     PG_RETURN_VOID();
+}
+
+/* Whether any text column asks for phrase search, which needs a table setting. */
+bool
+chdb_search_wants_phrase_search(Relation index) {
+    bytea** all = RelationGetIndexAttOptions(index, false);
+
+    for (int i = 0; all && i < index->rd_att->natts; i++) {
+        ChdbTextOptions* o = (ChdbTextOptions*)all[i];
+
+        /* Other operator classes have option structs without the field. */
+        if (o && VARSIZE(o) >= sizeof(ChdbTextOptions) && o->support_phrase_search) {
+            return true;
+        }
+    }
+    return false;
 }

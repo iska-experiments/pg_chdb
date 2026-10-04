@@ -1,0 +1,136 @@
+/*
+ * The Native row writer shared by every write path: packs (ctid, xmin, values)
+ * into a pgch writer whose columns follow the index's ClickHouse table, and
+ * converts between heap TIDs and the UInt64 ctid column.
+ */
+
+#include "postgres.h"
+
+#include "access/relation.h"
+#include "access/relscan.h"
+#include "access/tableam.h"
+#include "access/xact.h"
+#include "catalog/index.h"
+#include "catalog/pg_type_d.h"
+#include "miscadmin.h"
+#include "utils/builtins.h"
+#include "utils/lsyscache.h"
+#include "utils/memutils.h"
+
+#include "pg-clickhouse-encode.h"
+
+#include "search.h"
+
+/* Matches src/native.c: ClickHouse coalesces small blocks itself. */
+#define BLOCK_BYTES (8 * 1024 * 1024)
+/* ---- TID packing ---- */
+
+uint64
+chdb_search_tid_to_u64(ItemPointer tid) {
+    return ((uint64)ItemPointerGetBlockNumber(tid) << 16) |
+           ItemPointerGetOffsetNumber(tid);
+}
+
+void
+chdb_search_u64_to_tid(uint64 v, ItemPointer tid) {
+    ItemPointerSet(tid, (BlockNumber)(v >> 16), (OffsetNumber)(v & 0xffff));
+}
+
+/* ---- row writer ---- */
+
+struct ChdbRowWriter {
+    pgch_writer* w;
+    MemoryContext cxt;
+    MemoryContext rowcxt;
+    int natts;
+    ChdbColumn* cols;
+};
+
+/* Same parsing as writer_for in src/native.c: the structure names the columns. */
+ChdbRowWriter*
+chdb_rowwriter_new(Relation index) {
+    ChdbRowWriter* rw = palloc0(sizeof(*rw));
+    char* tuple       = psprintf("Tuple(%s)", chdb_search_structure(index));
+    chc_type* type;
+    chc_err err = {};
+
+    rw->cxt = CurrentMemoryContext;
+    rw->rowcxt =
+        AllocSetContextCreate(rw->cxt, "chdb_search row", ALLOCSET_DEFAULT_SIZES);
+    rw->natts = index->rd_att->natts;
+    rw->cols  = chdb_search_columns(index);
+
+    if (chc_type_parse(tuple, strlen(tuple), &pgch_alloc, &type, &err) != CHC_OK) {
+        pgch_raise(&err, ERRCODE_INVALID_PARAMETER_VALUE, "structure: ", NULL);
+    }
+
+    size_t ncols   = chc_type_n_children(type);
+    pgch_col* cols = palloc0(ncols * sizeof(pgch_col));
+
+    for (size_t i = 0; i < ncols; i++) {
+        cols[i].name = chc_type_tuple_field_name(type, i, &cols[i].name_len);
+        cols[i].type = chc_type_child(type, i);
+    }
+    rw->w = pgch_writer_new(rw->cxt, cols, ncols);
+
+    /* Nullable arrays are ordinary in Postgres, ClickHouse has no NULL array. */
+    pgch_writer_set_null_array(rw->w, PGCH_NULL_ARRAY_EMPTY);
+    return rw;
+}
+
+void
+chdb_rowwriter_append(
+    ChdbRowWriter* rw,
+    ItemPointer tid,
+    TransactionId xmin,
+    Datum* values,
+    bool* isnull
+) {
+    MemoryContext old = MemoryContextSwitchTo(rw->rowcxt);
+
+    pgch_append_datum(
+        rw->w, 0, Int64GetDatum((int64)chdb_search_tid_to_u64(tid)), INT8OID, false
+    );
+    pgch_append_datum(rw->w, 1, Int32GetDatum((int32)xmin), INT4OID, false);
+    for (int i = 0; i < rw->natts; i++) {
+        pgch_append_datum(rw->w, i + 2, values[i], rw->cols[i].typid, isnull[i]);
+    }
+    MemoryContextSwitchTo(old);
+    MemoryContextReset(rw->rowcxt);
+}
+
+void
+chdb_rowwriter_checkpoint(ChdbRowWriter* rw, pgch_checkpoint* ckpt) {
+    pgch_writer_checkpoint(rw->w, ckpt);
+}
+
+void
+chdb_rowwriter_rollback(ChdbRowWriter* rw, const pgch_checkpoint* ckpt) {
+    pgch_writer_rollback(rw->w, ckpt);
+}
+
+size_t
+chdb_rowwriter_bytes(ChdbRowWriter* rw) {
+    return pgch_writer_bytes(rw->w);
+}
+
+size_t
+chdb_rowwriter_rows(ChdbRowWriter* rw) {
+    return pgch_writer_rows(rw->w);
+}
+
+void*
+chdb_rowwriter_take(ChdbRowWriter* rw, size_t* len) {
+    pgch_buf out = {};
+
+    pgch_writer_flush(rw->w, &out, NULL);
+    *len = out.len;
+    return out.data;
+}
+
+void
+chdb_rowwriter_free(ChdbRowWriter* rw) {
+    pgch_writer_free(rw->w);
+    MemoryContextDelete(rw->rowcxt);
+    pfree(rw);
+}
