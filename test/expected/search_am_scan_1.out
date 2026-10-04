@@ -84,8 +84,14 @@ CREATE TABLE types (
     i2 int2, i4 int4, i8 int8, f4 float4, f8 float8, n numeric, d date,
     ts timestamp, u uuid, v varchar(20) COLLATE "C", arr text[]
 );
-CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v columnar_ops, arr text_array_ops);
+-- (The table's DDL shows the ClickHouse type of every column.)
 SET client_min_messages = debug1;
+CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v columnar_ops, arr text_array_ops);
+DEBUG:  building index "types_idx" on table "types" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "i2" Nullable(Int16), "i4" Nullable(Int32), "i8" Nullable(Int64), "f4" Nullable(Float32), "f8" Nullable(Float64), "n" Nullable(Decimal256(38)), "d" Nullable(Date32), "ts" Nullable(DateTime64(6, 'UTC')), "u" Nullable(UUID), "v" Nullable(String), "arr" Array(Nullable(String)), INDEX "arr_idx" "arr" TYPE text(tokenizer = array, preprocessor = lowerUTF8("arr"))) ENGINE = MergeTree ORDER BY ctid SETTINGS fsync_after_insert = 1, fsync_part_directory = 1, enable_block_number_column = 1, enable_block_offset_column = 1
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "i2", "i4", "i8", "f4", "f8", "n", "d", "ts", "u", "v", "arr") -- 0 rows
+DEBUG:  chdb_search exec: INSERT INTO idx_N.meta (generation, lsn) VALUES (N, N)
 \o /dev/null
 SELECT * FROM types WHERE i2 = 1::int2 AND i4 = 2 AND i8 = 3::int8 AND v = 'x' AND d = '2026-01-02';
 DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
@@ -131,8 +137,34 @@ EXECUTE p('infinity');
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "ts" IS NOT NULL
 EXECUTE p('2026-01-01');
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "ts" < fromUnixTimestamp64Micro(1767225600000000, 'UTC')
+-- The other literal branches: integers as written, a bare numeric with its
+-- scale, a date and a timestamp without time zone (read as UTC, as the
+-- column is), a uuid, and a needle with non-ASCII letters, a newline, quotes
+-- and backslashes, for a text and an array column.
+SELECT * FROM types WHERE i2 = 1::int2 AND i4 < -2 AND i8 >= 9223372036854775807;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "i2" = 1 AND "i4" < -2 AND "i8" >= 9223372036854775807
+SELECT * FROM types WHERE n < 1.500;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "n" < toDecimal256('1.500', 3)
+SELECT * FROM types WHERE d = '1970-01-02' AND ts > '2000-01-01 00:00:00';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "d" = toDate32(1) AND "ts" > fromUnixTimestamp64Micro(946684800000000, 'UTC')
+SELECT * FROM types WHERE u = '00000000-0000-0000-0000-000000000001';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "u" = toUUID('00000000-0000-0000-0000-000000000001')
+SELECT id FROM docs WHERE body @@@ E'W\u00f6rter\n''quote'' \\slash' AND tags @@= E'W\u00f6rter\n''quote'' \\slash';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'Wörter
+\'quote\' \\slash') AND hasAllTokens("tags", 'Wörter
+\'quote\' \\slash')
 \o
 RESET client_min_messages;
+-- The predicates' own answers to NULLs and empty needles: a NULL element is
+-- not a match, a NULL array is unknown, an empty array or needle matches
+-- nothing.
+SELECT ARRAY['a', NULL] @@@ 'a', NULL::text[] @@@ 'a', '{}'::text[] @@= 'a',
+       chdb.has_any_tokens('x', ''), chdb.has_phrase('x', '');
+ ?column? | ?column? | ?column? | has_any_tokens | has_phrase 
+----------+----------+----------+----------------+------------
+ t        |          | f        | f              | f
+(1 row)
+
 -- The store has no infinities, so the writer refuses them rather than let
 -- the encoder wrap them into finite values.
 INSERT INTO types (d) VALUES ('infinity');

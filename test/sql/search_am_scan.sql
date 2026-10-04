@@ -64,8 +64,9 @@ CREATE TABLE types (
     i2 int2, i4 int4, i8 int8, f4 float4, f8 float8, n numeric, d date,
     ts timestamp, u uuid, v varchar(20) COLLATE "C", arr text[]
 );
-CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v columnar_ops, arr text_array_ops);
+-- (The table's DDL shows the ClickHouse type of every column.)
 SET client_min_messages = debug1;
+CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v columnar_ops, arr text_array_ops);
 \o /dev/null
 SELECT * FROM types WHERE i2 = 1::int2 AND i4 = 2 AND i8 = 3::int8 AND v = 'x' AND d = '2026-01-02';
 SELECT * FROM types WHERE i2 = 1 AND i8 = 2 AND i4 > 3::int8 AND f4 < 0.5 AND f8 >= 1::real;
@@ -89,8 +90,22 @@ SELECT * FROM types WHERE n > '-Infinity'::numeric AND n = 1.50;
 PREPARE p(timestamp) AS SELECT * FROM types WHERE ts < $1;
 EXECUTE p('infinity');
 EXECUTE p('2026-01-01');
+-- The other literal branches: integers as written, a bare numeric with its
+-- scale, a date and a timestamp without time zone (read as UTC, as the
+-- column is), a uuid, and a needle with non-ASCII letters, a newline, quotes
+-- and backslashes, for a text and an array column.
+SELECT * FROM types WHERE i2 = 1::int2 AND i4 < -2 AND i8 >= 9223372036854775807;
+SELECT * FROM types WHERE n < 1.500;
+SELECT * FROM types WHERE d = '1970-01-02' AND ts > '2000-01-01 00:00:00';
+SELECT * FROM types WHERE u = '00000000-0000-0000-0000-000000000001';
+SELECT id FROM docs WHERE body @@@ E'W\u00f6rter\n''quote'' \\slash' AND tags @@= E'W\u00f6rter\n''quote'' \\slash';
 \o
 RESET client_min_messages;
+-- The predicates' own answers to NULLs and empty needles: a NULL element is
+-- not a match, a NULL array is unknown, an empty array or needle matches
+-- nothing.
+SELECT ARRAY['a', NULL] @@@ 'a', NULL::text[] @@@ 'a', '{}'::text[] @@= 'a',
+       chdb.has_any_tokens('x', ''), chdb.has_phrase('x', '');
 -- The store has no infinities, so the writer refuses them rather than let
 -- the encoder wrap them into finite values.
 INSERT INTO types (d) VALUES ('infinity');
