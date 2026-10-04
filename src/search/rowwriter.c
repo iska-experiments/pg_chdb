@@ -14,8 +14,10 @@
 #include "catalog/pg_type_d.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
+#include "utils/date.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/timestamp.h"
 
 #include "pg-clickhouse-encode.h"
 
@@ -37,6 +39,31 @@ chdb_search_u64_to_tid(uint64 v, ItemPointer tid) {
 }
 
 /* ---- row writer ---- */
+
+/*
+ * Date32 and DateTime64 have no infinities: the encoder wraps an infinite
+ * date into some finite one and lets a -infinity timestamp through, so a
+ * row holding one would be found by the wrong comparisons for good.
+ */
+static void
+check_finite(Datum value, Oid typid) {
+    bool finite = true;
+
+    if (typid == DATEOID) {
+        finite = !DATE_NOT_FINITE(DatumGetDateADT(value));
+    } else if (typid == TIMESTAMPOID || typid == TIMESTAMPTZOID) {
+        finite = !TIMESTAMP_NOT_FINITE(DatumGetTimestamp(value));
+    }
+    if (!finite) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+            errmsg(
+                "an infinite %s cannot be stored in a chdb index", format_type_be(typid)
+            )
+        );
+    }
+}
 
 struct ChdbRowWriter {
     pgch_writer* w;
@@ -93,6 +120,9 @@ chdb_rowwriter_append(
     );
     pgch_append_datum(rw->w, 1, Int32GetDatum((int32)xmin), INT4OID, false);
     for (int i = 0; i < rw->natts; i++) {
+        if (!isnull[i]) {
+            check_finite(values[i], rw->cols[i].typid);
+        }
         pgch_append_datum(rw->w, i + 2, values[i], rw->cols[i].typid, isnull[i]);
     }
     MemoryContextSwitchTo(old);

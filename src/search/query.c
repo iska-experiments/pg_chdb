@@ -84,10 +84,15 @@ chdb_search_append_quals(StringInfo buf, Relation index, ScanKey keys, int nkeys
         Oid argtype = OidIsValid(key->sk_subtype) ? key->sk_subtype : col->typid;
 
         if (col->kind == CHDB_COL_COLUMNAR) {
-            appendStringInfo(
-                buf, "%s %s ", col->name, compare_operator(key->sk_strategy)
-            );
-            chdb_search_append_literal(buf, key->sk_argument, argtype);
+            const char* op = compare_operator(key->sk_strategy);
+
+            /* NaN and the infinities compare as Postgres does, not ClickHouse. */
+            if (!chdb_search_append_special(
+                    buf, col->name, key->sk_strategy, key->sk_argument, argtype
+                )) {
+                appendStringInfo(buf, "%s %s ", col->name, op);
+                chdb_search_append_literal(buf, key->sk_argument, argtype);
+            }
         } else {
             appendStringInfo(
                 buf, "%s(%s, ", text_function(key->sk_strategy, col->kind), col->name

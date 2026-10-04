@@ -68,6 +68,21 @@ extern void
 chdb_search_append_string(StringInfo buf, const char* s);
 extern void
 chdb_search_append_vector(StringInfo buf, Datum value, Oid typid);
+/*
+ * A whole predicate for a constant that compares unlike its literal: a float
+ * NaN (equal to itself and above everything in Postgres) or an infinite
+ * date, timestamp or numeric (which the store cannot hold). Appends
+ * isNaN(col), `col IS NOT NULL` or 0 as the strategy requires and returns
+ * true; false leaves an ordinary constant to chdb_search_append_literal.
+ */
+extern bool
+chdb_search_append_special(
+    StringInfo buf,
+    const char* col,
+    StrategyNumber strategy,
+    Datum value,
+    Oid typid
+);
 extern char*
 chdb_search_order_expr(Relation index, ScanKey orderby);
 

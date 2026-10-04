@@ -198,6 +198,32 @@ SET enable_seqscan = off;
 DROP TABLE coll;
 
 ----------------------------------------------------------------------------
+-- Floats compare at their own width, NaN and the infinities as in Postgres
+----------------------------------------------------------------------------
+CREATE TABLE nums (id int, f4 float4, f8 float8, d date);
+INSERT INTO nums VALUES (1, 0.1, 'NaN', '2026-01-01'), (2, 1.5, 1.5, '2000-01-01'), (3, NULL, NULL, NULL);
+CREATE INDEX nums_idx ON nums USING chdb (f4, f8, d);
+CREATE FUNCTION pg_temp.num_checks() RETURNS TABLE (q text, ids int[]) LANGUAGE sql AS $$
+    SELECT 'f4 = 0.1', array_agg(id ORDER BY id) FROM nums WHERE f4 = 0.1::real
+    UNION ALL SELECT 'f4 > 0.1', array_agg(id ORDER BY id) FROM nums WHERE f4 > 0.1::real
+    UNION ALL SELECT 'f8 = NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 = 'NaN'
+    UNION ALL SELECT 'f8 < NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 < 'NaN'
+    UNION ALL SELECT 'f8 <= NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 <= 'NaN'
+    UNION ALL SELECT 'f8 > NaN', array_agg(id ORDER BY id) FROM nums WHERE f8 > 'NaN'
+    UNION ALL SELECT 'd < infinity', array_agg(id ORDER BY id) FROM nums WHERE d < 'infinity'
+    UNION ALL SELECT 'd > -infinity', array_agg(id ORDER BY id) FROM nums WHERE d > '-infinity'
+    UNION ALL SELECT 'd = infinity', array_agg(id ORDER BY id) FROM nums WHERE d = 'infinity'
+$$;
+EXPLAIN (COSTS OFF) SELECT id FROM nums WHERE f8 <= 'NaN';
+SELECT * FROM pg_temp.num_checks();
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT * FROM pg_temp.num_checks();
+RESET enable_indexscan;
+SET enable_seqscan = off;
+DROP TABLE nums;
+
+----------------------------------------------------------------------------
 -- text[]: elements compare in lower case through the index as by seqscan,
 -- and the needle is one token however many words it has
 ----------------------------------------------------------------------------

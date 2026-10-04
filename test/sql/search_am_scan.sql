@@ -39,6 +39,47 @@ SELECT id FROM docs WHERE body @@@ NULL;
 \o
 RESET client_min_messages;
 
+----------------------------------------------------------------------------
+-- Literals: parsed to the column's type, and the constants ClickHouse
+-- compares unlike Postgres (NaN, the infinities) become predicates
+----------------------------------------------------------------------------
+CREATE TABLE types (
+    i2 int2, i4 int4, i8 int8, f4 float4, f8 float8, n numeric, d date,
+    ts timestamp, u uuid, v varchar(20) COLLATE "C", arr text[]
+);
+CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v columnar_ops, arr text_array_ops);
+SET client_min_messages = debug1;
+\o /dev/null
+SELECT * FROM types WHERE i2 = 1::int2 AND i4 = 2 AND i8 = 3::int8 AND v = 'x' AND d = '2026-01-02';
+SELECT * FROM types WHERE u = '00000000-0000-0000-0000-000000000001' AND arr @@= 'x';
+SELECT * FROM types WHERE f4 = 0.1::real;
+SELECT * FROM types WHERE f8 = 0.1 AND f4 > 'Infinity'::real;
+SELECT * FROM types WHERE f8 > 1e308;
+SELECT * FROM types WHERE f8 = 'NaN'::float8;
+SELECT * FROM types WHERE f8 < 'NaN';
+SELECT * FROM types WHERE f8 > 'NaN';
+SELECT * FROM types WHERE f8 <= 'NaN';
+SELECT * FROM types WHERE f8 >= 'NaN' AND f4 = 'NaN'::real;
+SELECT * FROM types WHERE ts < 'infinity';
+SELECT * FROM types WHERE ts = 'infinity';
+SELECT * FROM types WHERE ts >= '-infinity';
+SELECT * FROM types WHERE d > '-infinity'::date;
+SELECT * FROM types WHERE d <= '-infinity'::date;
+SELECT * FROM types WHERE n < 'NaN'::numeric;
+SELECT * FROM types WHERE n >= 'Infinity'::numeric;
+SELECT * FROM types WHERE n > '-Infinity'::numeric AND n = 1.50;
+PREPARE p(timestamp) AS SELECT * FROM types WHERE ts < $1;
+EXECUTE p('infinity');
+EXECUTE p('2026-01-01');
+\o
+RESET client_min_messages;
+-- The store has no infinities, so the writer refuses them rather than let
+-- the encoder wrap them into finite values.
+INSERT INTO types (d) VALUES ('infinity');
+INSERT INTO types (ts) VALUES ('-infinity');
+INSERT INTO types (n) VALUES ('NaN');
+DROP TABLE types;
+
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
 
