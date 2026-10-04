@@ -144,22 +144,28 @@ chdb_channel_error(chdbChannel* ch) {
     if (!ch->err_len) {
         return NULL;
     }
+    ch->err_len = chdb_channel_scrub_error(ch->err_buf, ch->err_len);
 
-    const char* id  = strstr(ch->err_buf, "Request ID:");
+    return ch->err_buf;
+}
+
+size_t
+chdb_channel_scrub_error(char* msg, size_t len) {
+    const char* id  = strstr(msg, "Request ID:");
     const char* eol = id ? strchr(id, '\n') : NULL;
     if (eol) {
         memmove((char*)id, eol + 1, strlen(eol + 1) + 1);
-        ch->err_len = strlen(ch->err_buf);
+        len = strlen(msg);
     }
 
-    const char* version = strstr(ch->err_buf, " (version ");
+    const char* version = strstr(msg, " (version ");
     const char* close   = version ? strchr(version, ')') : NULL;
     if (close) {
         memmove((char*)version, close + 1, strlen(close + 1) + 1);
-        ch->err_len = strlen(ch->err_buf);
+        len = strlen(msg);
     }
 
-    return ch->err_buf;
+    return len;
 }
 
 bool
