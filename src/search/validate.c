@@ -34,7 +34,7 @@
  * Validates an operator class: the options support function, which decides
  * the kind of the family's columns (see ddl.c), chdb_vector's support
  * function, boolean search operators with the strategies of that kind (1..4
- * for text, 1..3 for text arrays, 11..15 for comparisons), and float8
+ * and 6..7 for text, 1..3 for text arrays, 11..15 for comparisons), and float8
  * ordering operators. The columnar_ops class is declared for anyelement, its
  * operators of concrete types live in its family, so only the family is
  * checked for contents.
@@ -135,14 +135,14 @@ chdb_search_validate(Oid opclassoid) {
             lo = CHDB_STRATEGY_EQ;
             hi = CHDB_STRATEGY_GE;
         } else if (!ordering) {
-            hi = kind == CHDB_COL_TEXT ? CHDB_STRATEGY_HAS_PHRASE
+            hi = kind == CHDB_COL_TEXT ? CHDB_STRATEGY_WILDCARD
                                        : CHDB_STRATEGY_HAS_TOKEN;
         }
         if (strategy < lo || strategy > hi) {
             ereport(
                 INFO,
                 errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-                strategy <= CHDB_STRATEGY_HAS_PHRASE && kind == CHDB_COL_COLUMNAR
+                strategy <= CHDB_STRATEGY_WILDCARD && kind == CHDB_COL_COLUMNAR
                     ? errmsg(
                           "chdb opfamily %s contains text search operator %s without "
                           "text options as support function 1",

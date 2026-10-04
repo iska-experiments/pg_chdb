@@ -137,12 +137,15 @@ chdb_search_wants_phrase_search(const ChdbColumn* cols, int natts);
 extern char*
 chdb_search_tokenizer(const ChdbColumn* column);
 /*
- * `expr` under the column's preprocessor, as a query evaluates it: element
- * by element when `array` says the expression is one, as a text[] column is
- * and its needle is not.
+ * The column's preprocessor applied to `expr`: the column itself, or with
+ * `literal` a string literal, for a needle to be compared with the column's
+ * preprocessed text. The column as is when the preprocessor is none.
  */
 extern char*
-chdb_search_preprocess(const ChdbColumn* column, const char* expr, bool array);
+chdb_search_preprocessed(const ChdbColumn* column, const char* expr, bool literal);
+/* Whether the column's preprocessor folds case, so a search of it must too. */
+extern bool
+chdb_search_folds_case(const ChdbColumn* column);
 
 /* ---- score.c ---- */
 /* chdb.score(): a placeholder that raises wherever Postgres evaluates it. */
@@ -169,6 +172,15 @@ chdb_search_score_expr(
     AttrNumber only,
     ChdbScoreCache* cache
 );
+
+/* ---- ops.c, pattern.c: the Postgres implementations of the predicates ---- */
+/* Lowercases as the index's lowerUTF8 does; palloc'd, NUL-terminated. */
+extern char*
+chdb_search_lower(const char* s, size_t n);
+extern bool
+chdb_search_regex_matches(text* hay, text* re, Oid collation);
+extern bool
+chdb_search_wildcard_matches(text* hay, text* pattern);
 
 /* ---- columns.c ---- */
 /* `"<name>"`, with quotes and backslashes escaped, whatever the name. */

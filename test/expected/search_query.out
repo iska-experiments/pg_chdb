@@ -1,0 +1,134 @@
+-- The query language of chdb indexes: the pattern operators, the chdb.query
+-- type with its builders, and the statements they make the access method
+-- generate, logged at DEBUG1. The output is the same with the worker and
+-- with the stub client (see search_am.sql): the rows a scan returns are
+-- discarded here and checked by search_query_e2e.
+\set VERBOSITY terse
+CREATE EXTENSION chdb_search;
+SET search_path = public, chdb;
+SET chdb_search.mask_oids = on;
+-- The index access method's own scans are under test: the custom scan,
+-- which search_planner shows taking the same searches, is kept out of the
+-- plans.
+SET chdb_search.enable_custom_scan = off;
+----------------------------------------------------------------------------
+-- Regex and wildcard: the Postgres fallback of the default preprocessor
+----------------------------------------------------------------------------
+-- The text is lowercased and the pattern matched without regard to case.
+SELECT 'Running shoes' @@/ 'run+ing', 'Running shoes' @@/ '^RUN', 'Running shoes' @@/ 'shoes$',
+       'Running shoes' @@/ 'r.nning sh', 'Running shoes' @@/ 'boots', 'ÉCOLE' @@/ 'école';
+ ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------+----------+----------
+ t        | t        | t        | t        | f        | t
+(1 row)
+
+SELECT chdb.regex('a b', '\Wb'), chdb.regex('ab', 'a\Wb'), chdb.regex('x', '');
+ regex | regex | regex 
+-------+-------+-------
+ t     | f     | t
+(1 row)
+
+SELECT 'x' @@/ '(';
+ERROR:  invalid regular expression: parentheses () not balanced
+SELECT 'Running shoes' @@% 'run%', 'Running shoes' @@% '%SHOES', 'Running shoes' @@% 'run_ing%',
+       'Running shoes' @@% 'run%g', 'Running shoes' @@% 'shoes', 'Running shoes' @@% '%';
+ ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------+----------+----------
+ t        | t        | t        | f        | f        | t
+(1 row)
+
+-- A backslash escapes %, _ and itself; _ is one character, not one byte.
+SELECT chdb.wildcard('50% off', '50\% %'), chdb.wildcard('50x off', '50\% %'),
+       chdb.wildcard('a_b', 'a\_b'), chdb.wildcard('axb', 'a\_b'), chdb.wildcard('a\b', 'a\\b'),
+       chdb.wildcard('é', '_'), chdb.wildcard('é', '__'), chdb.wildcard('', '');
+ wildcard | wildcard | wildcard | wildcard | wildcard | wildcard | wildcard | wildcard 
+----------+----------+----------+----------+----------+----------+----------+----------
+ t        | f        | t        | f        | t        | t        | f        | t
+(1 row)
+
+SELECT NULL::text @@/ 'x', 'x' @@% NULL;
+ ?column? | ?column? 
+----------+----------
+          | 
+(1 row)
+
+----------------------------------------------------------------------------
+-- The operator class carries the new strategies
+----------------------------------------------------------------------------
+SELECT amopstrategy, amopopr::regoperator
+  FROM pg_amop
+ WHERE amopfamily = (SELECT oid FROM pg_opfamily WHERE opfname = 'text_ops'
+                        AND opfmethod = (SELECT oid FROM pg_am WHERE amname = 'chdb'))
+ ORDER BY amopstrategy;
+ amopstrategy |    amopopr     
+--------------+----------------
+            1 | @@@(text,text)
+            2 | @@?(text,text)
+            3 | @@=(text,text)
+            4 | @@~(text,text)
+            6 | @@/(text,text)
+            7 | @@%(text,text)
+(6 rows)
+
+SELECT opcname, amvalidate(oid)
+  FROM pg_opclass
+ WHERE opcmethod = (SELECT oid FROM pg_am WHERE amname = 'chdb')
+ ORDER BY opcname;
+    opcname     | amvalidate 
+----------------+------------
+ columnar_ops   | t
+ text_array_ops | t
+ text_ops       | t
+(3 rows)
+
+----------------------------------------------------------------------------
+-- The statements scans generate: the pattern follows the preprocessor
+----------------------------------------------------------------------------
+CREATE TABLE docs (id int PRIMARY KEY, body text, html text, plain text, raw text, tags text[]);
+INSERT INTO docs VALUES (1, 'Running shoes', '<b>Bold</b>', 'Plain', 'Hyphen-ated', '{sport}');
+CREATE INDEX docs_idx ON docs USING chdb (
+    body,
+    html text_ops (preprocessor = 'extractTextFromHTML'),
+    plain text_ops (preprocessor = 'none'),
+    raw text_ops (raw_preprocessor = 'lowerUTF8(replaceAll(raw, ''-'', '' ''))'),
+    tags text_array_ops
+);
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ 'run+ing' AND body @@% 'Run%';
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: ((body @@/ 'run+ing'::text) AND (body @@% 'Run%'::text))
+(2 rows)
+
+SET client_min_messages = debug1;
+\o /dev/null
+SELECT id FROM docs WHERE body @@/ 'run+ing';
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)run+ing')
+SELECT id FROM docs WHERE body @@% 'Run%';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (lowerUTF8("body") LIKE lowerUTF8('Run%'))
+SELECT id FROM docs WHERE html @@/ 'bold' AND plain @@% 'Pla%';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(extractTextFromHTML("html"), 'bold') AND ("plain" LIKE 'Pla%')
+SELECT id FROM docs WHERE raw @@/ 'hyphen ated' AND raw @@% 'hyphen%';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8(replaceAll(raw, '-', ' ')), '(?i)hyphen ated') AND (lowerUTF8(replaceAll(raw, '-', ' ')) LIKE (SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen%' AS "raw")))
+SELECT id FROM docs WHERE body @@/ E'it''s \\d+' AND body @@% E'50\\% ''off''%';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)it\'s \\d+') AND (lowerUTF8("body") LIKE lowerUTF8('50\\% \'off\'%'))
+\o
+RESET client_min_messages;
+-- An array column has no pattern operators.
+SELECT id FROM docs WHERE tags @@/ 'x';
+ERROR:  operator does not exist: text[] @@/ unknown at character 32
+SELECT id FROM docs WHERE tags @@% 'x';
+ERROR:  operator does not exist: text[] @@% unknown at character 32
+RESET enable_seqscan;
+DROP TABLE docs;
+DROP EXTENSION chdb_search;
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it. There is none with the stub client.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;

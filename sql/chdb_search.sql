@@ -162,6 +162,21 @@ RETURNS boolean
 AS 'MODULE_PATHNAME', 'chdb_search_array_has_token'
 LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE COST 10;
 
+-- Pattern predicates, which match the text rather than its tokens: a
+-- regular expression (RE2's in ClickHouse, Postgres's here, which agree on
+-- the everyday syntax) and a LIKE pattern with % and _. Both follow the
+-- column's preprocessor: with the default lowerUTF8 the text is lowercased
+-- and the pattern matched without regard to case.
+CREATE FUNCTION chdb.regex(text, text)
+RETURNS boolean
+AS 'MODULE_PATHNAME', 'chdb_search_regex'
+LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE COST 10;
+
+CREATE FUNCTION chdb.wildcard(text, text)
+RETURNS boolean
+AS 'MODULE_PATHNAME', 'chdb_search_wildcard'
+LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE COST 10;
+
 -- What the worker's tokens() makes of a string. Asks the ClickHouse side, so
 -- it is not parallel safe and needs the worker.
 CREATE FUNCTION chdb.tokens(text)
@@ -203,6 +218,14 @@ CREATE OPERATOR @@~ (
     LEFTARG = text, RIGHTARG = text, FUNCTION = chdb.has_phrase,
     RESTRICT = chdb_search_restrict_sel, JOIN = chdb_search_join_sel
 );
+CREATE OPERATOR @@/ (
+    LEFTARG = text, RIGHTARG = text, FUNCTION = chdb.regex,
+    RESTRICT = chdb_search_restrict_sel, JOIN = chdb_search_join_sel
+);
+CREATE OPERATOR @@% (
+    LEFTARG = text, RIGHTARG = text, FUNCTION = chdb.wildcard,
+    RESTRICT = chdb_search_restrict_sel, JOIN = chdb_search_join_sel
+);
 
 CREATE OPERATOR @@@ (
     LEFTARG = text[], RIGHTARG = text, FUNCTION = chdb.has_all_tokens,
@@ -219,7 +242,8 @@ CREATE OPERATOR @@= (
 
 ----------------------------------------------------------------------------
 -- Operator classes. Strategies: 1 has_all_tokens @@@, 2 has_any_tokens @@?,
--- 3 has_token @@=, 4 has_phrase @@~ (needs support_phrase_search).
+-- 3 has_token @@=, 4 has_phrase @@~ (needs support_phrase_search), 6 regex
+-- @@/, 7 wildcard @@%.
 ----------------------------------------------------------------------------
 CREATE OPERATOR CLASS text_ops
 DEFAULT FOR TYPE text USING chdb AS
@@ -227,6 +251,8 @@ DEFAULT FOR TYPE text USING chdb AS
     OPERATOR 2 @@? (text, text),
     OPERATOR 3 @@= (text, text),
     OPERATOR 4 @@~ (text, text),
+    OPERATOR 6 @@/ (text, text),
+    OPERATOR 7 @@% (text, text),
     FUNCTION 1 (text) chdb_search_text_options(internal);
 
 -- The default for text[], or columnar_ops would take it through anyelement

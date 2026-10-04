@@ -15,12 +15,15 @@
 /*
  * Strategy numbers, shared with the SQL script. The two sets are disjoint,
  * so a scan key is rendered by its number alone, whatever operator class it
- * came from. Text searches (text_ops, text_array_ops):
+ * came from. Text searches (text_ops, text_array_ops); 5 is reserved for a
+ * search by a chdb.query value:
  */
 #define CHDB_STRATEGY_HAS_ALL_TOKENS 1 /* @@@ */
 #define CHDB_STRATEGY_HAS_ANY_TOKENS 2 /* @@? */
-#define CHDB_STRATEGY_HAS_TOKEN 3
-#define CHDB_STRATEGY_HAS_PHRASE 4 /* @@~ */
+#define CHDB_STRATEGY_HAS_TOKEN 3      /* @@= */
+#define CHDB_STRATEGY_HAS_PHRASE 4     /* @@~ */
+#define CHDB_STRATEGY_REGEX 6          /* @@/, match() */
+#define CHDB_STRATEGY_WILDCARD 7       /* @@%, LIKE */
 
 /* Comparisons (columnar_ops): = < <= > >= */
 #define CHDB_STRATEGY_EQ 11
@@ -130,6 +133,14 @@ chdb_search_append_quals(
     int natts,
     ScanKey keys,
     int nkeys
+);
+/* `hasAllTokens(col, 'needle')` or the like: a text search by strategy. */
+extern void
+chdb_search_append_text_search(
+    StringInfo buf,
+    const struct ChdbColumn* col,
+    StrategyNumber strategy,
+    const char* needle
 );
 extern void
 chdb_search_append_literal(StringInfo buf, Datum value, Oid typid);

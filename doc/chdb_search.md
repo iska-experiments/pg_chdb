@@ -277,8 +277,9 @@ preprocessor, so the tokens are the index's whatever the tokenizer; the
 counts are asked once per statement, one small query per distinct token,
 and `EXPLAIN` asks for them too, as the statement shows the weights. The
 counts are of the rows a search reads, the transaction's own included, and
-of the versions `VACUUM` has not yet removed; a `raw_preprocessor` applies
-to the column and not to the needle, which is tokenized as written.
+of the versions `VACUUM` has not yet removed. A needle goes through a
+`raw_preprocessor` as ClickHouse takes a needle through it, as the value
+of the column in a subquery.
 
 ## Aggregate Pushdown
 

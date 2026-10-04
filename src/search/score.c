@@ -156,7 +156,7 @@ needle_tokens(
     chdb_search_append_string(&lit, needle);
     initStringInfo(&sql);
     appendStringInfo(
-        &sql, "SELECT tokens(%s, ", chdb_search_preprocess(col, lit.data, false)
+        &sql, "SELECT tokens(%s, ", chdb_search_preprocessed(col, lit.data, true)
     );
     chdb_search_append_string(&sql, chdb_search_tokenizer(col));
     appendStringInfoChar(&sql, ')');
@@ -280,8 +280,12 @@ chdb_search_score_expr(
         const ChdbColumn* col = &cols[key->sk_attno - 1];
         ListCell* lc;
 
-        /* The text searches, on the column asked for if one was. */
-        if (key->sk_strategy >= CHDB_STRATEGY_EQ || (key->sk_flags & SK_ISNULL) ||
+        /*
+         * The token searches, on the column asked for if one was: a regex or
+         * a wildcard pattern has no tokens to weigh.
+         */
+        if (key->sk_strategy > CHDB_STRATEGY_HAS_PHRASE ||
+            (key->sk_flags & SK_ISNULL) ||
             (col->kind != CHDB_COL_TEXT && col->kind != CHDB_COL_TEXT_ARRAY) ||
             (only && key->sk_attno != only)) {
             continue;
@@ -322,9 +326,7 @@ chdb_search_score_expr(
             );
             append_match(
                 &buf,
-                chdb_search_preprocess(
-                    col, col->name, col->kind == CHDB_COL_TEXT_ARRAY
-                ),
+                chdb_search_preprocessed(col, col->name, false),
                 token,
                 chdb_search_tokenizer(col)
             );

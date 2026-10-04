@@ -8,6 +8,8 @@
 
 #include "postgres.h"
 
+#include "utils/builtins.h"
+
 #include "query.h"
 #include "search.h"
 #include "vector.h"
@@ -15,21 +17,13 @@
 /*
  * ClickHouse's hasToken takes no array. The array tokenizer makes the needle
  * one token, so for arrays all, any and token agree and hasAllTokens serves;
- * a phrase of elements has no meaning, and ClickHouse would reject it.
+ * a phrase or a pattern over elements has no meaning, and ClickHouse would
+ * reject it.
  */
 static const char*
-text_function(StrategyNumber strategy, ChdbColumnKind kind) {
-    if (kind == CHDB_COL_TEXT_ARRAY) {
-        if (strategy == CHDB_STRATEGY_HAS_TOKEN) {
-            return "hasAllTokens";
-        }
-        if (strategy == CHDB_STRATEGY_HAS_PHRASE) {
-            ereport(
-                ERROR,
-                errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                errmsg("chdb indexes do not search text[] columns for phrases")
-            );
-        }
+token_function(StrategyNumber strategy, ChdbColumnKind kind) {
+    if (kind == CHDB_COL_TEXT_ARRAY && strategy == CHDB_STRATEGY_HAS_TOKEN) {
+        return "hasAllTokens";
     }
     switch (strategy) {
     case CHDB_STRATEGY_HAS_ALL_TOKENS:
@@ -42,6 +36,63 @@ text_function(StrategyNumber strategy, ChdbColumnKind kind) {
         return "hasPhrase";
     }
     elog(ERROR, "unknown chdb text strategy %d", strategy);
+}
+
+/*
+ * A text search of `col` by the strategy of its operator. The token
+ * searches are the index's own functions, which preprocess the needle as
+ * they do the column. A regular expression and a LIKE pattern read the
+ * text, so they take the column through its preprocessor, with the pattern
+ * folded alike: match() by RE2's (?i), LIKE through the same function. A
+ * LIKE is parenthesized, as it may follow a NOT.
+ */
+void
+chdb_search_append_text_search(
+    StringInfo buf,
+    const ChdbColumn* col,
+    StrategyNumber strategy,
+    const char* needle
+) {
+    bool array = col->kind == CHDB_COL_TEXT_ARRAY;
+    StringInfoData lit;
+
+    if (array && strategy >= CHDB_STRATEGY_HAS_PHRASE) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+            errmsg(
+                "chdb indexes do not search text[] columns for %s",
+                strategy == CHDB_STRATEGY_HAS_PHRASE ? "phrases" : "patterns"
+            )
+        );
+    }
+    initStringInfo(&lit);
+    if (strategy == CHDB_STRATEGY_REGEX && chdb_search_folds_case(col)) {
+        needle = psprintf("(?i)%s", needle);
+    }
+    chdb_search_append_string(&lit, needle);
+    switch (strategy) {
+    case CHDB_STRATEGY_REGEX:
+        appendStringInfo(
+            buf,
+            "match(%s, %s)",
+            chdb_search_preprocessed(col, col->name, false),
+            lit.data
+        );
+        return;
+    case CHDB_STRATEGY_WILDCARD:
+        appendStringInfo(
+            buf,
+            "(%s LIKE %s)",
+            chdb_search_preprocessed(col, col->name, false),
+            chdb_search_folds_case(col) ? chdb_search_preprocessed(col, lit.data, true)
+                                        : lit.data
+        );
+        return;
+    }
+    appendStringInfo(
+        buf, "%s(%s, %s)", token_function(strategy, col->kind), col->name, lit.data
+    );
 }
 
 static const char*
@@ -97,11 +148,10 @@ chdb_search_append_quals(
                 chdb_search_append_literal(buf, key->sk_argument, argtype);
             }
         } else {
-            appendStringInfo(
-                buf, "%s(%s, ", text_function(key->sk_strategy, col->kind), col->name
+            /* The needle is text: the operators of the text strategies say so. */
+            chdb_search_append_text_search(
+                buf, col, key->sk_strategy, TextDatumGetCString(key->sk_argument)
             );
-            chdb_search_append_literal(buf, key->sk_argument, argtype);
-            appendStringInfoChar(buf, ')');
         }
     }
     return true;

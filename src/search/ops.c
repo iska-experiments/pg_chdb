@@ -56,8 +56,8 @@ strlower(char* dst, size_t size, const char* s, size_t n) {
  * which str_tolower is ASCII-only for C and POSIX. A database in another
  * encoding has no Unicode text to map and lowercases ASCII only.
  */
-static char*
-lower_for_index(const char* s, size_t n) {
+char*
+chdb_search_lower(const char* s, size_t n) {
     if (GetDatabaseEncoding() != PG_UTF8) {
         return asc_tolower(s, n);
     }
@@ -72,7 +72,7 @@ lower_for_index(const char* s, size_t n) {
 /* Lowercases and splits `t`; token pointers live in the returned buffer. */
 static int
 tokenize(text* t, Tok** out) {
-    char* low = lower_for_index(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
+    char* low = chdb_search_lower(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
     int cap = 16, n = 0;
     Tok* toks = palloc(sizeof(Tok) * cap);
 
@@ -212,7 +212,7 @@ Datum
 chdb_search_array_has_token(PG_FUNCTION_ARGS) {
     ArrayType* arr   = PG_GETARG_ARRAYTYPE_P(0);
     text* t          = PG_GETARG_TEXT_PP(1);
-    char* needle     = lower_for_index(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
+    char* needle     = chdb_search_lower(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
     ArrayIterator it = array_create_iterator(arr, 0, NULL);
     Datum d;
     bool isnull, found = false;
@@ -221,9 +221,9 @@ chdb_search_array_has_token(PG_FUNCTION_ARGS) {
         if (!isnull) {
             text* e = DatumGetTextPP(d);
 
-            found =
-                strcmp(lower_for_index(VARDATA_ANY(e), VARSIZE_ANY_EXHDR(e)), needle) ==
-                0;
+            found = strcmp(
+                        chdb_search_lower(VARDATA_ANY(e), VARSIZE_ANY_EXHDR(e)), needle
+                    ) == 0;
         }
     }
     array_free_iterator(it);
