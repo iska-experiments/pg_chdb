@@ -29,11 +29,12 @@
 #define CHDB_VECTOR_STRATEGY_IP 3     /* <#>, vector_ip_ops */
 
 /*
- * Support function number: chdb.vector_distance_name(int2) RETURNS text.
- * NB: this collides with the AM's options proc if the AM sets
- * amoptsprocnum = 1 for its own opclass parameters. Change both together.
+ * Support function number of chdb.vector_distance_name(int2) RETURNS text.
+ * Number 1 is the access method's options function (amoptsprocnum), which
+ * these classes do not have; am.c sizes amsupport to the numbers here, and
+ * validate.c checks the signature.
  */
-#define CHDB_VECTOR_PROC_DISTANCE_NAME 1
+#define CHDB_VECTOR_PROC_DISTANCE_NAME 2
 
 /* ClickHouse function per strategy. */
 #define CHDB_VECTOR_FN_L2 "L2Distance"

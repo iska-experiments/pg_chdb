@@ -37,9 +37,6 @@ Each class has one ORDER BY operator and the support function
 `chdb.vector_distance_name(int2)`, which maps its strategy number to the
 ClickHouse function. Vector operators are usable only in `ORDER BY ... LIMIT`.
 
-The operator classes are created only if the `chdb` access method exists
-when `chdb_vector` is created; otherwise drop and recreate the extension.
-
 ## Settings
 
 | Setting | Default | ClickHouse setting |
