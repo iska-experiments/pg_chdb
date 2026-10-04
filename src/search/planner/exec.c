@@ -14,6 +14,12 @@
  * returned as many as asked and the heap hid some, the scan asks again
  * for twice as many, skipping the ctids it has seen, until the LIMIT is
  * met or the store runs out.
+ *
+ * With outputs, the columns the store computes (chdb.score), the scan tuple
+ * is a virtual one shaped by the plan's custom_scan_tlist: the heap row is
+ * fetched into a slot of its own and the columns the query needs are copied
+ * from it, then the stream's values follow. The quals and the target list
+ * were rewritten to that shape by setrefs.c.
  */
 
 #include "postgres.h"
@@ -36,9 +42,12 @@ create_scan_state(CustomScan* cscan) {
         (ChdbScanState*)newNode(sizeof(ChdbScanState), T_CustomScanState);
 
     st->css.methods = &chdb_planner_exec_methods;
-    /* The heap tuple itself: no copy, and the quals deform it as they need. */
-    st->css.slotOps = &TTSOpsBufferHeapTuple;
     st->spec        = chdb_planner_unpack(cscan);
+    /*
+     * The heap tuple itself, no copy, and the quals deform it as they need;
+     * or, with outputs, a virtual tuple of the custom_scan_tlist's shape.
+     */
+    st->css.slotOps = st->spec->outputs ? &TTSOpsVirtual : &TTSOpsBufferHeapTuple;
     return (Node*)st;
 }
 
@@ -81,6 +90,19 @@ begin_scan(CustomScanState* css, EState* estate, int eflags) {
         clauses = lappend(clauses, ((ChdbPushed*)lfirst(lc))->clause);
     }
     st->recheck = ExecInitQual(clauses, &css->ss.ps);
+    if (st->spec->outputs) {
+        List* tlist = ((CustomScan*)css->ss.ps.plan)->custom_scan_tlist;
+
+        st->heap_slot = table_slot_create(heap, &estate->es_tupleTable);
+        st->nvars     = list_length(tlist) - list_length(st->spec->outputs);
+        st->attnos    = palloc(sizeof(AttrNumber) * st->nvars);
+        for (int i = 0; i < st->nvars; i++) {
+            st->attnos[i] =
+                castNode(Var, list_nth_node(TargetEntry, tlist, i)->expr)->varattno;
+        }
+        /* For the whole statement: a rescan with other needles asks less. */
+        st->scores = chdb_search_score_cache(estate->es_query_cxt);
+    }
     if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY)) {
 #if PG_VERSION_NUM >= 190000
         st->fetch = table_index_fetch_begin(heap, 0);
@@ -90,6 +112,41 @@ begin_scan(CustomScanState* css, EState* estate, int eflags) {
     }
 }
 
+/*
+ * The scan tuple from the fetched heap row and the stream's row: the heap
+ * columns the plan refers to, system columns and the whole row among them,
+ * then the outputs behind the ctid and the distances.
+ */
+static void
+fill_scan_slot(ChdbScanState* st, TupleTableSlot* slot) {
+    int ndist = list_length(st->spec->orderbys);
+
+    ExecClearTuple(slot);
+    for (int i = 0; i < st->nvars; i++) {
+        AttrNumber attno = st->attnos[i];
+
+        if (attno > 0) {
+            slot->tts_values[i] =
+                slot_getattr(st->heap_slot, attno, &slot->tts_isnull[i]);
+        } else if (attno < 0) {
+            slot->tts_values[i] =
+                slot_getsysattr(st->heap_slot, attno, &slot->tts_isnull[i]);
+        } else {
+            ExprContext* econtext = st->css.ss.ps.ps_ExprContext;
+            MemoryContext old = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
+            slot->tts_values[i] = ExecFetchSlotHeapTupleDatum(st->heap_slot);
+            slot->tts_isnull[i] = false;
+            MemoryContextSwitchTo(old);
+        }
+    }
+    for (int i = 0; i < list_length(st->spec->outputs); i++) {
+        slot->tts_values[st->nvars + i] = st->stream->vals[1 + ndist + i];
+        slot->tts_isnull[st->nvars + i] = st->stream->nulls[1 + ndist + i];
+    }
+    ExecStoreVirtualTuple(slot);
+}
+
 static void
 open_stream(ChdbScanState* st) {
     st->stream = chdb_search_stream_open(
@@ -97,7 +154,7 @@ open_stream(ChdbScanState* st) {
         chdb_meta_generation(st->index),
         st->sql,
         list_length(st->spec->orderbys),
-        0,
+        list_length(st->spec->outputs),
         st->cxt
     );
     st->store_queries++;
@@ -163,6 +220,7 @@ static TupleTableSlot*
 next_tuple(ScanState* ss) {
     ChdbScanState* st    = (ChdbScanState*)ss;
     TupleTableSlot* slot = ss->ss_ScanTupleSlot;
+    TupleTableSlot* heap = st->heap_slot ? st->heap_slot : slot;
     Snapshot snapshot    = ss->ps.state->es_snapshot;
     ItemPointerData tid;
 
@@ -186,8 +244,11 @@ next_tuple(ScanState* ss) {
         }
         /* Under an MVCC snapshot one version at most is visible: no call_again. */
         if (table_index_fetch_tuple(
-                st->fetch, &tid, snapshot, slot, &call_again, &all_dead
+                st->fetch, &tid, snapshot, heap, &call_again, &all_dead
             )) {
+            if (heap != slot) {
+                fill_scan_slot(st, slot);
+            }
             st->returned++;
             return slot;
         }
@@ -216,6 +277,9 @@ reset(ChdbScanState* st) {
     if (st->stream) {
         chdb_search_stream_close(st->stream);
         st->stream = NULL;
+    }
+    if (st->heap_slot) {
+        ExecClearTuple(st->heap_slot); /* the last row's buffer pin */
     }
     MemoryContextReset(st->cxt); /* takes the hash table with it */
     st->seen         = NULL;

@@ -1,12 +1,14 @@
 /*
  * EXPLAIN of the custom scan: the clauses the store applies, written as the
- * query wrote them, the LIMIT it took, and the ClickHouse statement itself,
- * masked as the log masks it when chdb_search.mask_oids is on. The
- * statement needs the arguments' values, so plain EXPLAIN builds it when
- * they are constants or the statement's own parameters, and leaves it out
- * when one comes from a subplan that only ANALYZE would have run. ANALYZE
- * adds the rows the store returned, which the heap fetch may have thinned,
- * and how many times it was asked.
+ * query wrote them, the scores it computes, the LIMIT it took, and the
+ * ClickHouse statement itself, masked as the log masks it when
+ * chdb_search.mask_oids is on. The statement needs the arguments' values,
+ * so plain EXPLAIN builds it when they are constants or the statement's own
+ * parameters, and leaves it out when one comes from a subplan that only
+ * ANALYZE would have run; with a score it also asks the store for the
+ * counts behind the statement's weights. ANALYZE adds the rows the store
+ * returned, which the heap fetch may have thinned, and how many times it
+ * was asked.
  */
 
 #include "postgres.h"
@@ -21,24 +23,44 @@
 #include "../search.h"
 #include "planner.h"
 
-/* `a, b`: each pushed clause deparsed, as EXPLAIN shows an Order By. */
+/* `a, b`: each expression deparsed, as EXPLAIN shows an Order By. */
 static char*
-deparse_pushed(List* pushed, List* context, bool useprefix) {
+deparse_list(List* exprs, List* context, bool useprefix) {
     StringInfoData buf;
     ListCell* lc;
 
     initStringInfo(&buf);
-    foreach (lc, pushed) {
-        Node* clause = (Node*)((ChdbPushed*)lfirst(lc))->clause;
-
+    foreach (lc, exprs) {
         appendStringInfo(
             &buf,
             "%s%s",
             buf.len ? ", " : "",
-            deparse_expression(clause, context, useprefix, false)
+            deparse_expression(lfirst(lc), context, useprefix, false)
         );
     }
     return buf.data;
+}
+
+static char*
+deparse_pushed(List* pushed, List* context, bool useprefix) {
+    List* clauses = NIL;
+    ListCell* lc;
+
+    foreach (lc, pushed) {
+        clauses = lappend(clauses, ((ChdbPushed*)lfirst(lc))->clause);
+    }
+    return deparse_list(clauses, context, useprefix);
+}
+
+static char*
+deparse_outputs(List* outputs, List* context, bool useprefix) {
+    List* exprs = NIL;
+    ListCell* lc;
+
+    foreach (lc, outputs) {
+        exprs = lappend(exprs, ((ChdbOutput*)lfirst(lc))->expr);
+    }
+    return deparse_list(exprs, context, useprefix);
 }
 
 void
@@ -57,6 +79,11 @@ chdb_planner_explain(CustomScanState* css, List* ancestors, ExplainState* es) {
     if (spec->orderbys) {
         ExplainPropertyText(
             "Pushed Order By", deparse_pushed(spec->orderbys, context, useprefix), es
+        );
+    }
+    if (spec->outputs) {
+        ExplainPropertyText(
+            "Pushed Score", deparse_outputs(spec->outputs, context, useprefix), es
         );
     }
     if (spec->limit >= 0) {

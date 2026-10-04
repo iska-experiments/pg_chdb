@@ -22,9 +22,8 @@
 
 #include "planner.h"
 
-/* Through the no-op relabelings the planner wraps binary-coercible types in. */
-static Node*
-strip(Node* node) {
+Node*
+chdb_planner_strip(Node* node) {
     while (node && IsA(node, RelabelType)) {
         node = (Node*)((RelabelType*)node)->arg;
     }
@@ -34,7 +33,7 @@ strip(Node* node) {
 /* The index column `node` is a plain Var of, 1-based, or 0. */
 static AttrNumber
 index_column(RelOptInfo* rel, IndexOptInfo* index, Node* node) {
-    Var* var = (Var*)strip(node);
+    Var* var = (Var*)chdb_planner_strip(node);
 
     if (!var || !IsA(var, Var) || var->varno != rel->relid || var->varlevelsup != 0) {
         return 0;
@@ -219,7 +218,7 @@ chdb_planner_match_pathkey(
     }
     foreach (lc, ec->ec_members) {
         EquivalenceMember* em = lfirst(lc);
-        OpExpr* op            = (OpExpr*)strip((Node*)em->em_expr);
+        OpExpr* op            = (OpExpr*)chdb_planner_strip((Node*)em->em_expr);
         AttrNumber attno;
 
         if (!bms_equal(em->em_relids, rel->relids) || !IsA(op, OpExpr) ||

@@ -12,6 +12,11 @@
  * DISTINCT, window functions, set-returning functions, row locks). Rows the
  * heap fetch then hides, deleted or updated since the store took them, are
  * made up for at execution by asking again for more (exec.c).
+ *
+ * A query that calls chdb.score() on the relation, with a text search to
+ * score, has the store compute it (score.c): the path takes the calls as
+ * its outputs and, as the other paths would evaluate the placeholder and
+ * raise, replaces them.
  */
 
 #include "postgres.h"
@@ -130,6 +135,13 @@ collect_orderbys(PlannerInfo* root, RelOptInfo* rel, ChdbPath* p) {
     if (root->query_pathkeys == NIL) {
         return false;
     }
+    /* By the score alone, descending: the store breaks the ties by ctid. */
+    if (list_length(root->query_pathkeys) == 1 &&
+        chdb_planner_match_score_pathkey(
+            linitial(root->query_pathkeys), p->spec.outputs, &p->spec.score_order
+        )) {
+        return true;
+    }
     foreach (lc, root->query_pathkeys) {
         ChdbPushed* pushed = palloc0(sizeof(*pushed));
 
@@ -143,6 +155,30 @@ collect_orderbys(PlannerInfo* root, RelOptInfo* rel, ChdbPath* p) {
     return true;
 }
 
+/*
+ * Leaves the relation the chdb custom scans that compute the score alone:
+ * every other path, another chdb index's included, would evaluate
+ * chdb.score() in Postgres, where it raises. The hook runs after the core
+ * planner added its paths and before the partial ones are gathered.
+ */
+static void
+drop_other_paths(RelOptInfo* rel) {
+    List* keep = NIL;
+    ListCell* lc;
+
+    foreach (lc, rel->pathlist) {
+        Path* path = lfirst(lc);
+
+        if (IsA(path, CustomPath) &&
+            ((CustomPath*)path)->methods == &chdb_planner_path_methods &&
+            ((ChdbPath*)path)->spec.outputs != NIL) {
+            keep = lappend(keep, path);
+        }
+    }
+    rel->pathlist         = keep;
+    rel->partial_pathlist = NIL;
+}
+
 static void
 add_scan_path(PlannerInfo* root, RelOptInfo* rel, IndexOptInfo* index) {
     ChdbPath* p = palloc0(sizeof(*p));
@@ -153,7 +189,11 @@ add_scan_path(PlannerInfo* root, RelOptInfo* rel, IndexOptInfo* index) {
     p->spec.indexoid = index->indexoid;
     p->spec.limit    = -1;
     search           = collect_quals(root, rel, p);
-    ordered          = collect_orderbys(root, rel, p);
+    /* A score is of the text searches, so there must be one to score. */
+    if (search) {
+        p->spec.outputs = chdb_planner_collect_scores(root, rel, index);
+    }
+    ordered = collect_orderbys(root, rel, p);
     if (!search && !ordered) {
         pfree(p);
         return;
@@ -175,6 +215,9 @@ add_scan_path(PlannerInfo* root, RelOptInfo* rel, IndexOptInfo* index) {
     p->cpath.custom_paths  = NIL;
     p->cpath.methods       = &chdb_planner_path_methods;
     chdb_planner_cost(root, rel, p);
+    if (p->spec.outputs) {
+        drop_other_paths(rel);
+    }
     add_path(rel, path);
 }
 

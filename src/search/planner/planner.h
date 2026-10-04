@@ -19,12 +19,14 @@
  * take goes with them. The rows come back as ctids, which the scan fetches
  * from the heap under the executor's snapshot, so visibility is Postgres's.
  *
- * A later stage that computes a column in the store (chdb.score) adds its
- * expression to a spec as another ChdbPushed kind and its value to the
- * stream after the distances; plan.c then needs a custom_scan_tlist naming
- * it and exec.c a virtual scan tuple to put it in. An aggregate stage builds
- * a spec of its own from create_upper_paths_hook and a scan with no
- * relation, scanrelid 0, returning the store's row as the scan tuple.
+ * chdb.score(k) is a column the store computes (score.c here binds it, the
+ * access method's score.c renders it): the spec's outputs, selected after
+ * the distances, which plan.c names in a custom_scan_tlist behind the heap
+ * columns the query needs, so that setrefs.c points the target list and the
+ * quals at them, and exec.c fills a virtual scan tuple from the heap row and
+ * the stream. An aggregate stage builds a spec of its own from
+ * create_upper_paths_hook and a scan with no relation, scanrelid 0,
+ * returning the store's row as the scan tuple.
  */
 
 #include "postgres.h"
@@ -48,15 +50,27 @@ typedef struct ChdbPushed {
 extern Expr*
 chdb_pushed_arg(const ChdbPushed* p);
 
+/* A column the store computes for the query: chdb.score(k[, 'col']). */
+typedef struct ChdbOutput {
+    Expr* expr;       /* the call as written, which the scan tuple stands for */
+    AttrNumber attno; /* the index column it is restricted to, or 0 for all */
+} ChdbOutput;
+
 /* What one scan sends: shared by the path, the plan and the executor. */
 typedef struct ChdbScanSpec {
     Oid indexoid;
-    List* quals;    /* ChdbPushed, ANDed into the WHERE clause */
-    List* orderbys; /* ChdbPushed, the ORDER BY in order */
-    int64 limit;    /* LIMIT the query takes, negative for none */
+    List* quals;     /* ChdbPushed, ANDed into the WHERE clause */
+    List* orderbys;  /* ChdbPushed, the ORDER BY in order */
+    List* outputs;   /* ChdbOutput, selected after the distances */
+    int score_order; /* 1-based output the rows are ordered by, or 0 */
+    int64 limit;     /* LIMIT the query takes, negative for none */
 } ChdbScanSpec;
 
 /* ---- match.c: clauses and pathkeys to pushed expressions ---- */
+
+/* Through the no-op relabelings the planner wraps binary-coercible types in. */
+extern Node*
+chdb_planner_strip(Node* node);
 
 /*
  * Whether `rinfo` is a predicate ClickHouse can apply on a column of
@@ -85,6 +99,22 @@ chdb_planner_match_pathkey(
     PathKey* pathkey,
     ChdbPushed* out
 );
+
+/* ---- score.c: chdb.score() calls to outputs ---- */
+
+/*
+ * The chdb.score() calls the query evaluates on `rel`, in its target list,
+ * its HAVING clause and the relation's restrictions, each once, with the
+ * column a second argument names resolved to an index column of `index`.
+ * None for a statement that may recheck rows: EvalPlanQual hands the scan
+ * a heap tuple, which the scan tuple the outputs need is not.
+ */
+extern List*
+chdb_planner_collect_scores(PlannerInfo* root, RelOptInfo* rel, IndexOptInfo* index);
+
+/* Whether `pathkey` sorts by one of `outputs` descending; *n is its 1-based place. */
+extern bool
+chdb_planner_match_score_pathkey(PathKey* pathkey, List* outputs, int* n);
 
 /* ---- hook.c: the path ---- */
 
@@ -127,6 +157,10 @@ typedef struct ChdbScanState {
     List* args;        /* ExprState per pushed expression, quals then orderbys */
     ExprState* recheck;
     struct IndexFetchTableData* fetch;
+    TupleTableSlot* heap_slot; /* the fetched row, when the scan tuple is virtual */
+    AttrNumber* attnos; /* heap attribute per scan tuple column before the outputs */
+    int nvars;
+    struct ChdbScoreCache* scores; /* the counts behind the outputs, per statement */
     struct ChdbStream* stream;
     struct HTAB* seen; /* ctids returned so far, when a LIMIT is pushed */
     char* sql;         /* NULL once built when a search key is NULL: no rows */
