@@ -231,3 +231,48 @@ chdb_dir_list(ChdbPages* p, const char* prefix, ChdbDirSink sink, void* ud) {
 
     walk_pages(p, list_visitor, &l);
 }
+
+static void
+any_sink(void* ud, const ChdbDirEntry* e) {
+    *(bool*)ud = true;
+}
+
+static bool
+any_visitor(void* ud, BlockNumber blk, Page page) {
+    Listing* l = ud;
+
+    list_visitor(l, blk, page);
+    return !*(bool*)l->ud;
+}
+
+bool
+chdb_dir_any(ChdbPages* p, const char* prefix) {
+    bool found = false;
+    Listing l  = { .prefix = prefix, .len = strlen(prefix), .sink = any_sink, .ud = &found };
+
+    walk_pages(p, any_visitor, &l);
+    return found;
+}
+
+/* ---- the version ---- */
+
+static bool
+lsn_visitor(void* ud, BlockNumber blk, Page page) {
+    XLogRecPtr* lsn = ud;
+    XLogRecPtr here = PageGetLSN(page);
+
+    if (here > *lsn) {
+        *lsn = here;
+    }
+    return true;
+}
+
+XLogRecPtr
+chdb_dir_lsn(ChdbPages* p) {
+    Buffer meta    = chdb_pages_read(p, CHDB_METAPAGE_BLKNO, BUFFER_LOCK_SHARE);
+    XLogRecPtr lsn = PageGetLSN(BufferGetPage(meta));
+
+    UnlockReleaseBuffer(meta);
+    walk_pages(p, lsn_visitor, &lsn);
+    return lsn;
+}

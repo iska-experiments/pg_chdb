@@ -10,12 +10,21 @@
  * and the worker taking another would wait behind a REINDEX waiting for the
  * worker. A build in progress sends its own CREATE TABLE and needs none of
  * this; its relation is in no catalog the worker can read anyway.
+ *
+ * On a server in recovery the engine runs read-only (engine/readonly.c),
+ * and the table is attached with table_readonly, alone: the staging tables
+ * are the primary's transactions', which it drops as they end. Replay
+ * changes the parts under the engine, so the attach remembers a version of
+ * the relation's blobs and, when a request finds it moved, detaches the
+ * table and attaches it again from what the pages hold now, by name: the
+ * engine keeps a detached table's definition, and refuses a second.
  */
 
 #include "postgres.h"
 
 #include "access/relation.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "utils/hsearch.h"
@@ -31,7 +40,9 @@
 
 typedef struct Attached {
     Oid index;
-    uint64 generation; /* the last one attached for the index */
+    uint64 generation;  /* the last one attached for the index */
+    XLogRecPtr version; /* of the relation's blobs then, on a standby */
+    bool detached;      /* a standby's table is detached, to be attached by name */
 } Attached;
 
 /* By index, what this worker has attached, which the engine keeps until replaced. */
@@ -94,19 +105,20 @@ staging_sink(void* ud, const char* key, uint64 size, int64 mtime) {
 }
 
 /*
- * The attach statements for the index's table and the staging tables of
- * its generation, if the catalog has the index, its metapage names
- * `*generation`, or any generation when zero is asked, which is then set,
- * and the table has been made: MergeTree writes a file into a table's
- * directory as it creates it, so a generation without a blob is one whose
- * CREATE TABLE is still to come, as a CREATE INDEX CONCURRENTLY's is once
- * its catalog entry is in, and attaching would make an empty table in its
- * way. Palloc'd in the caller's context. A staging table is known by the
- * blobs under its key prefix: of a transaction still running, which goes
- * on writing it, or of one that is over, which VACUUM sweeps.
+ * The attach statements for the index's table and, unless `readonly`, the
+ * staging tables of its generation, if the catalog has the index, its
+ * metapage names `*generation`, or any generation when zero is asked,
+ * which is then set, and the table has been made: MergeTree writes a file
+ * into a table's directory as it creates it, so a generation without a
+ * blob is one whose CREATE TABLE is still to come, as a CREATE INDEX
+ * CONCURRENTLY's is once its catalog entry is in, and attaching would make
+ * an empty table in its way. Palloc'd in the caller's context. A staging
+ * table is known by the blobs under its key prefix: of a transaction still
+ * running, which goes on writing it, or of one that is over, which VACUUM
+ * sweeps.
  */
 static List*
-attach_sqls(Oid index, uint64* generation) {
+attach_sqls(Oid index, uint64* generation, bool readonly) {
     MemoryContext caller = CurrentMemoryContext;
     List* sqls           = NIL;
     List* fxids          = NIL;
@@ -124,15 +136,19 @@ attach_sqls(Oid index, uint64* generation) {
             MemoryContext old = MemoryContextSwitchTo(caller);
 
             *generation = current;
-            sqls        = lappend(sqls, chdb_search_attach_sql(rel, 0));
-            chdb_pagestore_list(
-                psprintf(CHDB_STORE_STORAGE_FMT, index),
-                psprintf("s" UINT64_FORMAT "_tx_", current),
-                staging_sink,
-                &fxids
-            );
+            sqls        = lappend(sqls, chdb_search_attach_sql(rel, 0, readonly));
+            if (!readonly) {
+                chdb_pagestore_list(
+                    psprintf(CHDB_STORE_STORAGE_FMT, index),
+                    psprintf("s" UINT64_FORMAT "_tx_", current),
+                    staging_sink,
+                    &fxids
+                );
+            }
             foreach (lc, fxids) {
-                sqls = lappend(sqls, chdb_search_attach_sql(rel, *(uint64*)lfirst(lc)));
+                sqls = lappend(
+                    sqls, chdb_search_attach_sql(rel, *(uint64*)lfirst(lc), readonly)
+                );
             }
             MemoryContextSwitchTo(old);
         }
@@ -174,30 +190,84 @@ engine_exec(Oid index, const char* sql) {
     }
 }
 
+/* Runs a statement on the engine, logged as the attach statements are. */
+static void
+engine_run(Oid index, const char* what, const char* sql) {
+    chdb_search_log_sql(what, sql);
+    engine_exec(index, sql);
+}
+
+/*
+ * A standby's table whose pages moved under it, or whose last reattach
+ * was cut short, is put back whole: the disk, which keeps a map of the
+ * directories it listed when it was made, reads them afresh, then the
+ * table is detached and attached by name from the definition the engine
+ * kept, which loads the parts the disk now sees.
+ */
+static void
+reattach(Oid index, Attached* a, XLogRecPtr version) {
+    char* table = chdb_search_table_of(index, a->generation);
+
+    if (!a->detached) {
+        a->detached = true;
+        engine_run(
+            index,
+            "refresh",
+            psprintf("SYSTEM RESTART DISK " CHDB_STORE_DISK_NAME_FMT, index, a->generation)
+        );
+        engine_run(index, "detach", psprintf("DETACH TABLE IF EXISTS %s SYNC", table));
+    }
+    engine_run(index, "attach", psprintf("ATTACH TABLE IF NOT EXISTS %s", table));
+    a->detached = false;
+    a->version  = version;
+}
+
 /*
  * A request naming the generation last attached for its index costs nothing
- * here; one naming none, as VACUUM's sweep and a store's DDL do, or another
- * generation, as the first after a REINDEX does, asks the catalog.
+ * here, on a standby a look at the relation's version; one naming none, as
+ * VACUUM's sweep and a store's DDL do, or another generation, as the first
+ * after a REINDEX does, asks the catalog.
  */
 void
-chdb_search_attach(Oid index, uint64 generation) {
-    Attached* a = OidIsValid(index) ? attached_entry(index, false) : NULL;
+chdb_search_attach(Oid index, uint64 generation, const RelFileLocator* loc) {
+    Attached* a        = OidIsValid(index) ? attached_entry(index, false) : NULL;
+    bool readonly      = RecoveryInProgress();
+    XLogRecPtr version = InvalidXLogRecPtr;
     ListCell* lc;
 
-    if (!OidIsValid(index) || (a && generation != 0 && a->generation == generation)) {
+    if (!OidIsValid(index)) {
+        return;
+    }
+    if (readonly && loc && RelFileNumberIsValid(loc->relNumber)) {
+        version = chdb_pagestore_version(*loc);
+    }
+    if (a && generation != 0 && a->generation == generation) {
+        if (readonly && (a->version != version || a->detached)) {
+            reattach(index, a, version);
+        }
         return;
     }
 
-    List* sqls = attach_sqls(index, &generation);
+    List* sqls = attach_sqls(index, &generation, readonly);
 
-    if (a && a->generation == generation) {
+    if (a && a->generation == generation && a->version == version) {
         return; /* a request naming no generation, for the one attached */
     }
     foreach (lc, sqls) {
-        chdb_search_log_sql("attach", lfirst(lc));
-        engine_exec(index, lfirst(lc));
+        engine_run(index, "attach", lfirst(lc));
     }
     if (sqls) {
-        attached_entry(index, true)->generation = generation;
+        a             = attached_entry(index, true);
+        a->generation = generation;
+        a->version    = version;
+        a->detached   = false;
+    }
+}
+
+void
+chdb_search_attach_reset(void) {
+    if (attached) {
+        hash_destroy(attached);
+        attached = NULL;
     }
 }

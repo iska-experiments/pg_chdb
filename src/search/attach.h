@@ -9,15 +9,24 @@
 
 #include "postgres.h"
 
+#include "storage/relfilelocator.h"
+
 /*
  * Before a request of `index` is relayed: attaches the table of
  * `generation`, or of the index's current one when none is named, and its
  * staging tables, if the catalog's index names that generation and this
  * worker has not attached it yet. Raises with the engine's error if the
  * attach fails; for a generation the catalog does not have, does nothing,
- * and the engine answers the request with CHDB_STATUS_NO_STORE.
+ * and the engine answers the request with CHDB_STATUS_NO_STORE. On a
+ * server in recovery the table is attached read-only and alone, and put
+ * back whenever the blobs in the relation at `loc`, the request's, have
+ * changed since, as replay changes them.
  */
 extern void
-chdb_search_attach(Oid index, uint64 generation);
+chdb_search_attach(Oid index, uint64 generation, const RelFileLocator* loc);
+
+/* After promotion: forgets every table attached, read-only as they were. */
+extern void
+chdb_search_attach_reset(void);
 
 #endif /* CHDB_SEARCH_ATTACH_H */

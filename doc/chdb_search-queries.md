@@ -250,14 +250,17 @@ SELECT author, count(*), avg(price) FROM docs WHERE body @@@ 'shoes'
 The store lives in the pages of the index relation, written through
 Postgres's generic WAL like any index: crash recovery, base backups,
 point-in-time recovery, streaming replication and `pg_rewind` carry it with
-the heap, and no `REINDEX` is needed after any of them. What remains to
-check before a scan, a commit's flush or `VACUUM`'s deletes is that this
-server can serve the pages at all: a server in recovery does not yet, and
+the heap, and no `REINDEX` is needed after any of them. A hot standby
+serves searches through the index from its replayed pages, with a worker
+and an engine of its own that write nothing; a search there is current to
+the last record replayed, and a promoted standby keeps serving, taking
+rows from then on. What remains to check before a scan, a commit's flush
+or `VACUUM`'s deletes is that the index has a store at all, which only a
+build that never finished lacks, and
 [`chdb_search.unavailable_index`](chdb_search.md#chdb_searchunavailable_index)
-decides what a standby does: by default the statement fails with `chdb
-index "name" is not available on this server`; in `skip` mode the planner
-takes another path and answers from the heap. A promoted standby serves
-the index at once.
+decides what to do with one that has none: by default the statement fails
+with `chdb index "name" has no store`; in `skip` mode the planner takes
+another path and answers from the heap.
 
 Every build writes a new **generation**: a random id in the index's
 metapage that names the store table, `idx_<oid>.t_<generation>`. A

@@ -72,6 +72,11 @@ chdb_search_remove_store_dir(Oid dboid) {
     remove_engine_dir(dboid, true);
 }
 
+void
+chdb_search_empty_engine_dir(Oid dboid) {
+    remove_engine_dir(dboid, false);
+}
+
 /*
  * The engine directory and socket of every database no longer in
  * pg_database go: a DROP DATABASE whose session had not loaded the library

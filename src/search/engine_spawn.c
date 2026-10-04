@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "access/xlog.h"
 #include "miscadmin.h"
 
 #include "../spawn.h"
@@ -73,11 +74,18 @@ engine_ensure(Oid dboid) {
         return psprintf("could not open a page channel to the chDB engine: %m");
     }
 
+    /*
+     * On a server in recovery the pages cannot be written, so the engine
+     * opens the store read-only (src/search/engine/chdb_search_engine.c);
+     * promotion restarts it (standby.c).
+     */
+    bool readonly      = RecoveryInProgress();
     char* const argv[] = {
         program,
         CppAsString2(CHDB_SEARCH_ENGINE_FD),
         CppAsString2(CHDB_SEARCH_PAGE_FD),
         psprintf("%s/" CHDB_SEARCH_ENGINE_DIR_FMT, DataDir, dboid),
+        readonly ? CHDB_SEARCH_ENGINE_READONLY : NULL,
         NULL,
     };
 
@@ -97,7 +105,7 @@ engine_ensure(Oid dboid) {
     }
     close(fd[1]);
     close(page[1]);
-    engine_attach(pid, fd[0], page[0]);
+    engine_attach(pid, fd[0], page[0], readonly);
 
     return NULL;
 }

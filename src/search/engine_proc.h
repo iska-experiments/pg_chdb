@@ -17,14 +17,20 @@
 extern char*
 engine_ensure(Oid dboid);
 
-/* engine_spawn.c hands over the child it forked: its pid and the worker's socket ends.
+/*
+ * engine_spawn.c hands over the child it forked: its pid, the worker's
+ * socket ends, and whether it was started read-only (standby.h).
  */
 extern void
-engine_attach(pid_t pid, int fd, int page_fd);
+engine_attach(pid_t pid, int fd, int page_fd, bool readonly);
 
 /* The engine's pid, or 0 when none runs. */
 extern pid_t
 engine_pid(void);
+
+/* Whether the running engine was started read-only; false when none runs. */
+extern bool
+engine_readonly(void);
 
 /*
  * The channel to a running engine, NULL when none runs, for a request the

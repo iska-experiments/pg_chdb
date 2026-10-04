@@ -229,3 +229,10 @@ chdb_pagestore_list_relation(Relation index, chdbBlobListSink sink, void* ud) {
         chdb_dir_list(&p, "", list_entry, &l);
     }
 }
+
+bool
+chdb_pagestore_has_blobs(Relation index, const char* prefix) {
+    ChdbPages p;
+
+    return chdb_pages_open(&p, index->rd_locator, index) && chdb_dir_any(&p, prefix);
+}

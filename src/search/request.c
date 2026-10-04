@@ -123,7 +123,7 @@ serve(chdbChannel* client, MemoryContext cxt) {
 
         /* Where the index's blobs go, then a table the engine lacks yet. */
         chdb_pagestore_note(req.index, loc);
-        chdb_search_attach(req.index, req.generation);
+        chdb_search_attach(req.index, req.generation, &loc);
     }
 
     char* err = relay_request(client, &raw, req.ctx.cmd, &data_open);

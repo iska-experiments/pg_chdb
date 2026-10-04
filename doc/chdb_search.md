@@ -236,11 +236,10 @@ overrides it. Defaults to `0.2`.
 
 ### `chdb_search.unavailable_index`
 
-What a scan, a commit or a `VACUUM` does with a chdb index whose store is not
-available on this server (see
-[Availability](chdb_search-queries.md#availability)): `error` raises, so a
-broken index is never silent; `skip` lets the planner use another path and
-leaves the store alone. Defaults to `error`.
+What a scan, a commit or a `VACUUM` does with a chdb index that has no
+store (see [Availability](chdb_search-queries.md#availability)): `error`
+raises, so a broken index is never silent; `skip` lets the planner use
+another path and leaves the index alone. Defaults to `error`.
 
 ### `chdb_search.worker_timeout`
 
@@ -297,9 +296,9 @@ requirement; they travel with every request and apply to the engine's query.
 *   One process per store: a database's worker is the only reader and
     writer, so reads do not scale with backends, and at most 64 databases
     can have a worker at once.
-*   A standby does not serve the index until it is promoted: the pages are
-    there, but the worker that reads them for the engine does not run in
-    recovery yet.
+*   A standby's engine reads the parts afresh whenever the primary's
+    flushes or merges have changed them under it, so the first search
+    after a change pays for reopening the table.
 *   Every byte the engine writes is WAL: a part's files as it flushes them,
     and again as merges rewrite them. WAL_NUMBERS_PLACEHOLDER
 *   `pg_upgrade` leaves indexes to be rebuilt with `REINDEX`.

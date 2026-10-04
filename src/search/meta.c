@@ -9,10 +9,10 @@
  * other's.
  *
  * The store lives in this relation's pages, written into the WAL ahead of
- * the commits that depend on it, so a crash, a restore or a rewind leave
- * the two as one: what remains to check is that this server can serve the
- * pages at all, which one in recovery cannot until a standby's worker
- * learns to read them.
+ * the commits that depend on it, so a crash, a restore, a rewind or a
+ * standby's replay leave the two as one, and a server in recovery serves
+ * them as the primary does: what remains to check is that the pages hold
+ * a store at all.
  */
 
 #include "postgres.h"
@@ -24,13 +24,24 @@
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 
+#include "pagestore/pagestore.h"
 #include "search.h"
 
 /* ---- the fail-safe check ---- */
 
+/*
+ * The store is missing when the pages hold no blob of the generation the
+ * metapage names: MergeTree writes a file into a table's directory as it
+ * creates it, so a built index always has one, and only a REINDEX puts a
+ * store there again. The walk stops at the first blob found.
+ */
 bool
 chdb_search_store_unavailable(Relation index) {
-    return RecoveryInProgress();
+    char* prefix = psprintf(CHDB_STORE_KEY_PREFIX_FMT "/", chdb_meta_generation(index));
+    bool missing = !chdb_pagestore_has_blobs(index, prefix);
+
+    pfree(prefix);
+    return missing;
 }
 
 void
@@ -46,12 +57,9 @@ chdb_search_check_available(Relation index, bool* skip) {
     ereport(
         ERROR,
         errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-        errmsg(
-            "chdb index \"%s\" is not available on this server",
-            RelationGetRelationName(index)
-        ),
-        errdetail("Its store is not served on a server in recovery."),
-        errhint("Query the index on the primary, or once the server is promoted.")
+        errmsg("chdb index \"%s\" has no store", RelationGetRelationName(index)),
+        errdetail("Its pages hold no data for the generation its metapage names."),
+        errhint("REINDEX INDEX rebuilds the store.")
     );
 }
 
@@ -140,7 +148,7 @@ chdb_meta_note_flush(Relation index) {
     advance_metapage(index);
 }
 
-/* A commit whose rows the store did not take, the server being in recovery. */
+/* A commit whose rows the store did not take, there being none in skip mode. */
 void
 chdb_meta_note_skipped(Relation index) {
     advance_metapage(index);

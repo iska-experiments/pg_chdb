@@ -20,6 +20,10 @@ chdb_search_sweep(Oid dboid);
 extern void
 chdb_search_remove_store_dir(Oid dboid);
 
+/* Removes the engine directory alone, for a worker that keeps listening. */
+extern void
+chdb_search_empty_engine_dir(Oid dboid);
+
 /* Whether the catalog has `relid` as an index of the chdb access method. */
 extern bool
 chdb_search_is_index(Oid relid);

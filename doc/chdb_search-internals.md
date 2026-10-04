@@ -128,11 +128,29 @@ generation into a new relation, so a rollback leaves the old one whole,
 and the next `VACUUM` drops the engine's table of the generation that lost.
 
 Before a scan returns a row, before a commit flushes and before `VACUUM`
-deletes, `chdb_search_check_available` asks only whether the server is in
-recovery, where no worker serves the pages yet. The store and the index
-being one relation, there is nothing else to compare. The worker checks
-the generation every request carries as well, and answers `NO_STORE` for a
-table it does not have.
+deletes, `chdb_search_check_available` asks only whether the pages hold
+any blob of the generation the metapage names: the store and the index
+being one relation, there is nothing else to compare, and only a build
+that never finished leaves none. The worker checks the generation every
+request carries as well, and answers `NO_STORE` for a table it does not
+have.
+
+## Standbys
+
+The worker starts on a hot standby as on the primary and serves searches
+from the replayed pages (`standby.c`). Its engine is started read-only
+(`engine/readonly.c`): the callbacks that would write refuse, naming the
+reason, merges are stopped for the session, and the worker refuses the
+same page requests behind it. Tables are attached with `table_readonly =
+1` and without staging tables, from the listing alone, which reads only.
+Replay changes the parts under the engine, so a request on a standby
+reads a version of the index's blobs, the latest LSN among its metapage
+and directory pages, and one that finds it moved detaches the table and
+attaches it again (`attach.c`): a search is current to the last record
+replayed. When the server is promoted the worker, which waits at most a
+second while in recovery, stops the engine, empties its directory and
+forgets what it attached and noted; the next request starts a read-write
+engine over the same pages, and nothing is rebuilt.
 
 ## Backups and Replication
 
@@ -144,11 +162,11 @@ replicates it as it does any index, and the tests in `t/` prove each case:
     `pgsql_tmp`. A restore replays both to the recovery target, so the
     index answers for exactly the rows committed up to it, with no
     `REINDEX`; the worker rebuilds the engine's directory from the catalog.
-*   **Streaming replication.** A standby replays the pages with the heap,
-    but serves no search yet: a search through a chdb index fails with `Its
-    store is not served on a server in recovery`, or in `skip` mode is
-    planned without the index. A promoted standby serves the index at once
-    from the same pages and indexes new rows as any primary.
+*   **Streaming replication.** A standby replays the pages with the heap
+    and serves searches from them through a read-only engine of its own
+    (see [Standbys](#standbys)), current to the last record replayed. A
+    promoted standby serves the index at once from the same pages and
+    indexes new rows as any primary.
 *   **Logical replication.** A subscriber's table keeps its own chdb index
     through ordinary inserts, so the table sync and the apply worker flush
     to the subscriber's store at their commits, and replicated rows are
@@ -353,9 +371,9 @@ carries as its child, so the answer is always the snapshot's.
     protocol and the engine's side, with the files a stand-in.
 *   **Phase 1, stage 2** (this tree): the blobs in the index relation's
     pages, written with generic WAL. Crash recovery, backups and
-    replication come from Postgres, the engine's directory is a cache,
-    and the fail-safe check is reduced to recovery. Standby reads are the
-    step left: a worker that opens the pages read-only on a replica.
+    replication come from Postgres, the engine's directory is a cache, a
+    standby serves searches through a read-only engine, and the fail-safe
+    check asks only whether the pages hold a store.
 
 ## Debug Functions
 

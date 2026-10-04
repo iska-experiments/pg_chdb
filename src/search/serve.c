@@ -1,6 +1,7 @@
 /*
  * The worker's accept and dispatch loop: one thread, one request at a time,
- * with idle connections costing nothing.
+ * with idle connections costing nothing. On a server in recovery the wait
+ * is bounded, so that the loop notices the promotion (standby.c).
  *
  * On Linux the worker listens on a name in the abstract namespace,
  * `pg_chdb/<hash>/<dboid>`, the hash that of the data directory's path,
@@ -38,6 +39,7 @@
 #include "protocol.h"
 #include "request.h"
 #include "serve.h"
+#include "standby.h"
 
 #define CHDB_SEARCH_MAX_CLIENTS 128
 
@@ -185,11 +187,16 @@ chdb_search_serve(void) {
     while (!ShutdownRequestPending) {
         WaitEvent event;
         bool rebuild = false;
+        int n        = WaitEventSetWait(
+            set, chdb_search_standby_timeout(), &event, 1, PG_WAIT_EXTENSION
+        );
 
-        WaitEventSetWait(set, -1, &event, 1, PG_WAIT_EXTENSION);
         CHECK_FOR_INTERRUPTS();
+        chdb_search_standby_poll();
 
-        if (event.events & WL_LATCH_SET) {
+        if (n == 0) {
+            /* The timeout: nothing to serve. */
+        } else if (event.events & WL_LATCH_SET) {
             ResetLatch(MyLatch);
             if (ConfigReloadPending) {
                 ConfigReloadPending = false;

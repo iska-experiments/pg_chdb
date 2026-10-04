@@ -22,6 +22,7 @@
 #include "pagestore/pagestore.h"
 #include "registry.h"
 #include "serve.h"
+#include "standby.h"
 #include "sweep.h"
 #include "worker.h"
 
@@ -91,6 +92,7 @@ chdb_search_worker_main(Datum arg) {
     }
     PG_END_TRY();
 
+    chdb_search_standby_init();
     chdb_search_listen(worker_dboid);
     ereport(LOG, errmsg("chdb_search: worker for database %u listening", worker_dboid));
 

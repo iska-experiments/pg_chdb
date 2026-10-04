@@ -27,7 +27,7 @@ a ranker.
 | 5 | Writes are **buffered per transaction and flushed at pre-commit** as one Native block, and **a transaction sees its own rows**: a search through the index ships the rows buffered so far to a staging table `t_<generation>_tx_<xid>` of the transaction's own and reads it with the table in one `UNION ALL`; commit attaches the staging table's parts. A transaction that never searches its own rows still sends one block at commit. The read is the trigger, not a statement-end hook: it catches every write path and makes no parts a query will not use. |
 | 6 | **IDF-weighted overlap score**, not BM25. ClickHouse stores no term frequencies, so `chdb.score()` sums the inverse document frequency of the query tokens each row contains; document frequencies come from the text index itself. Deterministic `ORDER BY chdb.score(k) DESC LIMIT n` through the CustomScan. Real BM25 waits on an upstream change (proposal 3). |
 | 7 | Scope: index AM **plus CustomScan** (score, top-N, LIMIT pushdown, snippets later) **plus aggregate pushdown** (`count(*)`, `GROUP BY` over indexed columns). |
-| 8 | **Crash safety through Postgres pages**: a chDB disk type whose blobs live in index-relation pages written with generic WAL by the worker. Upstream PR to chdb-core. Phase 0 uses a local directory so end-to-end works before that lands. |
+| 8 | **Crash safety through Postgres pages**: a chDB disk type whose blobs live in index-relation pages written with generic WAL by the worker. Upstream PR to chdb-core. Phase 0 used a local directory so end-to-end worked before that landed; the pages are in, and a standby serves searches from them (`chdb_search-storage.md`). |
 | 9 | Tokenizer/preprocessor options are a **curated allowlist**; a `raw_preprocessor` escape hatch is superuser-only. |
 | 10 | New extensions target **PostgreSQL 17+** (18 preferred for `extension_control_path`). `chdb` and `chdb_hook` keep 15+. |
 | 11 | Commit style: https://github.com/ubicloud/ubicloud/blob/main/COMMIT_MESSAGES.md. Small reviewable commits, draft PRs. |
@@ -49,7 +49,9 @@ a ranker.
 
 * Registered on demand with `RegisterDynamicBackgroundWorker` by the first
   backend in a database that needs it (CREATE INDEX, insert flush, scan).
-  `bgw_restart_time = 5s`, `BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION`.
+  `bgw_restart_time = 5s`, `BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION`,
+  `BgWorkerStart_ConsistentState` so that a hot standby has a worker too,
+  serving searches read-only until promoted (`standby.c`).
   Flagged in shared memory per database OID so only one starts (a small
   `chdb_search` shmem hash sized by `max_databases` GUC, default 64, attached
   with `shmem_request_hook` when preloaded; without preload a dynamic DSA
@@ -90,35 +92,24 @@ a ranker.
   its id. The supervisor answers from its event loop while idle (background
   merges ask with no request in flight), from inside any wait on the
   request channel while relaying (`channel.h`'s aside descriptor), and while
-  waiting for a stopping engine to close its store. It answers from a backend
-  behind `chdbBlobStore` (`pagestore/store.h`, a table of functions: exists,
-  metadata, read, write begin/append/commit/abort, remove, list, copy, and
-  the storages held), which keeps the blobs in the pages of the index
-  relation, written with generic WAL (`pagebackend.c`, layout in `pages.h`,
-  see `chdb_search-storage.md`). Every request names the index relation as
-  its backend sees it, since a build's relation is in no catalog the worker
-  can read, and the blobs of each generation are routed to the relation
-  whose metapage holds it. Each callback is a round trip, so a blob cache
-  belongs in the engine process.
+  waiting for a stopping engine to close its store, from the blob store of
+  `pagestore/store.h` over the index relation's pages, written with
+  generic WAL and found by the relation's locator each request carries
+  (`chdb_search-storage.md`). Each callback is a round trip, so a blob
+  cache belongs in the engine process.
 * Listens on the abstract unix socket `@pg_chdb/<hash>/<dboid>` on Linux,
-  the hash of the data directory's path, device and inode, for peers of the
-  server's uid only, and on `$PGDATA/pg_chdb/pgsql_tmp/<dboid>.sock` elsewhere. Wire
-  protocol reuses the setup payload of `src/setup.h` with new commands:
+  the hash of the data directory's path, device and inode, for peers of
+  the server's uid only, and on `$PGDATA/pg_chdb/pgsql_tmp/<dboid>.sock`
+  elsewhere. Wire protocol reuses the setup payload of `src/setup.h` with
+  new commands:
   * `CHDB_CMD_EXEC` run DDL/DML, reply status.
   * `CHDB_CMD_SELECT` stream Native blocks back (reuse `chdb_select_receive`).
   * `CHDB_CMD_INSERT` stream Native blocks in (reuse `chdb_copy_send`).
-  Requests carry the index OID and a generation id (see
-  `chdb_search-storage.md`): for a non-zero generation the engine checks
-  that `idx_<oid>.t_<generation>` exists before running the request and
-  otherwise answers `CHDB_STATUS_NO_STORE`, which the client raises with a
-  REINDEX hint.
-* Engine directory: `$PGDATA/pg_chdb/pgsql_tmp/<dboid>/` holds chDB's own
-  metadata and scratch space, a cache the worker empties when it starts
-  and refills from the catalog and the index pages: each index's table,
-  `idx_<indexrelid>.t_<generation>` with a UUID fixed by the two, is
-  attached on the first request naming the index (`attach.c`), and the
-  disk finds its parts in the pages under the generation's key prefix.
-  Named `pgsql_tmp` so that base backups and `pg_rewind` leave it out.
+  Requests carry the index OID, a generation id and the relation's
+  locator; for a non-zero generation without its `idx_<oid>.t_<generation>`
+  the engine answers `CHDB_STATUS_NO_STORE`, raised with a REINDEX hint.
+* Engine directory: `$PGDATA/pg_chdb/pgsql_tmp/<dboid>/`, a cache the
+  worker empties at start and refills from the catalog and the pages.
 
 ### Access method (`src/search/am.c`, `sql/chdb_search.sql`)
 
@@ -186,33 +177,31 @@ answer) and a ClickHouse translation used by the AM and the CustomScan.
 | `embedding <=> q`, `<->`, `<#>` | `cosineDistance`, `L2Distance`, `-dotProduct` | ORDER BY ... LIMIT k only, via `chdb_vector` |
 
 The Postgres fallbacks tokenize with a built-in `splitByNonAlpha` +
-lower; for other tokenizers the operator is marked lossy (`xs_recheck`
-false, but the planner is told the operator is only usable through the
-index: the plain implementation raises when the index is absent, as
-pgvector does for unsupported casts). Per-index tokenizers must match the
-Postgres-side implementation or the function is index-only; this is
-documented.
+lower; with another tokenizer the operator is usable through the index
+only (`xs_recheck` false; the plain implementation raises when the index
+is absent, as pgvector does for unsupported casts), as documented.
 
 ### Scans
 
-* `amgettuple`: the scan sends one ClickHouse query selecting `ctid`
-  (and `_distance` for vector order-bys) with `WHERE` built from the index
-  quals and `ORDER BY ... LIMIT` from `orderbys` plus the LIMIT passed down by
-  the CustomScan (or `max_limit_for_vector_search_queries`). Rows stream
-  back as Native blocks; the AM fills `xs_heaptid` and `xs_orderbyvals`.
-  Visibility is rechecked by the executor through the heap fetch, so stale
-  entries from aborted transactions are harmless until VACUUM removes them.
-* No `amgetbitmap`: a TIDBitmap past `work_mem` makes the bitmap heap scan
-  recheck the quals with the Postgres fallbacks, which implement the default
-  tokenizer only, so every match of another tokenizer on a lossy page would be
-  dropped; the AM streams the whole TID set anyway. EvalPlanQual rechecks
-  still evaluate the fallbacks for non-default tokenizers.
+* `amgettuple`: the scan sends one ClickHouse query selecting `ctid` and
+  `xmin` (and `_distance` for vector order-bys) with `WHERE` built from the
+  index quals and `ORDER BY ... LIMIT` from `orderbys` plus the LIMIT passed
+  down by the CustomScan (or `max_limit_for_vector_search_queries`). Rows
+  stream back as Native blocks; the AM fills `xs_heaptid` and
+  `xs_orderbyvals`. The heap fetch decides visibility, but a row whose
+  `xmin` ended without committing is skipped, as the heap may have given
+  its TID out again (`xmin.c`); VACUUM deletes such rows with the dead.
+* No `amgetbitmap`: a lossy TIDBitmap would recheck the quals with the
+  Postgres fallbacks, which know the default tokenizer only, and drop every
+  match of another; the AM streams the whole TID set anyway. EvalPlanQual
+  rechecks still evaluate the fallbacks.
 * `chdb_search_render_query` (`query.c`) renders a `ChdbQuery` tree over
   any of the index's text columns as one ClickHouse boolean expression, so
   the CustomScan can push an OR or NOT between our predicates, which the
   access method's ANDed scan keys cannot carry, as a tree whose leaves name
-  their columns; today it pushes `col @@@ query` as any other operator. Boost weights ride in the tree and the filter ignores
-  them; the score layer multiplies by them.
+  their columns; today it pushes `col @@@ query` as any other operator.
+  Boost weights ride in the tree and the filter ignores them; the score
+  layer multiplies by them.
 * CustomScan (`src/search/planner/`, `planner.h` is its contract):
   `set_rel_pathlist_hook` adds a `chdb_search` path when a heap relation has
   a chdb index and the quals include our operators or their function forms,
@@ -284,11 +273,11 @@ the index the per-column scores are summed; `chdb.score(k, 'body')`
 restricts to one column. A `chdb.query` key contributes the needles of its
 match, term and phrase leaves outside a NOT, each term multiplied by the
 product of the boosts above its leaf (the largest, for a token two leaves
-share); patterns contribute nothing. A scoring query gets the CustomScan as its only
-path, since every other one would evaluate the placeholder; a statement
-that may recheck rows under EvalPlanQual (row locks, UPDATE, DELETE) gets
-no score, as the recheck hands the scan a heap tuple and the scan tuple
-with a score is virtual.
+share); patterns contribute nothing. A scoring query gets the CustomScan
+as its only path, since every other one would evaluate the placeholder; a
+statement that may recheck rows under EvalPlanQual (row locks, UPDATE,
+DELETE) gets no score, as the recheck hands the scan a heap tuple and the
+scan tuple with a score is virtual.
 
 What this does not do: term frequency, document length normalisation,
 phrase proximity. ClickHouse's posting lists hold row ids only, so true BM25
@@ -309,8 +298,9 @@ inserted into it; `ROLLBACK TO` rewinds the writer to the level's mark.
 
 Staging. A scan of the index inside the transaction, or a buffer past
 `chdb_search.flush_threshold`, ships the buffered rows to a staging table
-`t_<generation>_tx_<fxid>` created `AS t` (same columns, skip indexes,
-ORDER BY and settings), one block per shipment. The scan then reads
+`t_<generation>_tx_<fxid>` defined as `t` is (same columns, skip indexes,
+ORDER BY and settings) but for its UUID and its key prefix on the index's
+storage, one block per shipment. The scan then reads
 `t UNION ALL t_tx`, each leg with the full WHERE, ORDER BY and LIMIT so the
 skip and HNSW indexes serve both; the custom scan's statement is the same,
 and the score's counts and the aggregate scan read the union as a
@@ -328,9 +318,10 @@ flushes as commit does, attaching the staging table too.
 
 ### Storage
 
-The store layout, the generation and LSN check, the Phase 1 `pg_pages`
-disk with its host contract, and the backup and replication guarantees
-are in [chdb_search-storage.md](chdb_search-storage.md).
+The store layout, the callback disk with its host contract, the page
+format, standby reads, the rows of transactions that never committed, and
+the backup and replication guarantees are in
+[chdb_search-storage.md](chdb_search-storage.md).
 
 ## GUCs
 
@@ -338,7 +329,8 @@ are in [chdb_search-storage.md](chdb_search-storage.md).
 `chdb_search.flush_threshold`, `chdb_search.vacuum_optimize_ratio` (0.2),
 `chdb_search.enable_custom_scan`, `enable_aggregate_pushdown`,
 `chdb_search.hnsw_candidate_list_size` (256), `chdb_search.vector_rescoring`
-(off), `chdb_search.worker_timeout` (30s), `chdb_search.unavailable_index` (`error`).
+(off), `chdb_search.worker_timeout` (30s),
+`chdb_search.unavailable_index` (`error`).
 
 ## Sub-projects and ownership
 
@@ -350,7 +342,8 @@ are in [chdb_search-storage.md](chdb_search-storage.md).
 | D | pg_chdb `search-planner` | CustomScan, `chdb.score()`, aggregate pushdown | C's query builder |
 | E | pg_chdb `chdb-vector` | `chdb_vector` extension, opclasses, cast | C |
 | F | pg_chdb `search-tests` | pg_regress + TAP tests, docs in `doc/chdb_search.md` | C |
-| H | pg_chdb `replication-tests` | PITR, standby, logical replication and WAL-G TAP tests; Phase 0 fail-safe in the AM | C, F |
+| G | pg_chdb `search-page-store` | blobs in index pages, standby reads, the xmin skip, PITR without REINDEX | A, C |
+| H | pg_chdb `replication-tests` | PITR, standby, logical replication and WAL-G TAP tests | C, F |
 
 Each lands as a draft PR of small commits. B exposes `client.h` first so C
 can compile against it with a stub worker.

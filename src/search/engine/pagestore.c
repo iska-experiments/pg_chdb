@@ -14,6 +14,7 @@
 #include "../pagestore/protocol.h"
 #include "pagecall.h"
 #include "pagestore.h"
+#include "readonly.h"
 
 /* The ud of the callbacks: the storage they serve. */
 #define NAME(ud) (((pageStorage*)(ud))->name)
@@ -267,4 +268,5 @@ pagestore_callbacks(chdb_object_storage_callbacks* cb, pageStorage* storage) {
         .copy         = cb_copy,
         .last_error   = cb_last_error,
     };
+    readonly_callbacks(cb);
 }

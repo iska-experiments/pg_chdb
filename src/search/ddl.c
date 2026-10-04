@@ -50,7 +50,9 @@
  *     SETTINGS disk = disk(type = 'callback', storage_name = 'pg_16401',
  *       key_prefix = 'g7342'),
  *       enable_block_number_column = 1, enable_block_offset_column = 1
- *   ATTACH TABLE IF NOT EXISTS idx_16401.t_7342 UUID '...' (the same)
+ *   ATTACH TABLE IF NOT EXISTS idx_16401.t_7342 UUID '...' (the same; on a
+ *     standby the disk is named, disk(name = 'pg_16401_g7342', ...), and
+ *     the settings end in ", table_readonly = 1")
  *   CREATE TABLE idx_16401.t_7342_tx_912 UUID '...' (the same, key_prefix = 's7342_tx_912')
  *   INSERT INTO idx_16401.t_7342 (ctid, xmin, "body", "tags", "author")
  *   SELECT ctid FROM idx_16401.t_7342 WHERE hasAllTokens("body", 'running shoes')
@@ -126,10 +128,12 @@ table_uuid(Oid indexoid, uint64 generation, uint64 fxid) {
 /*
  * `verb` (CREATE TABLE, or ATTACH TABLE IF NOT EXISTS) and the table's whole
  * definition: the build's table for a zero `fxid`, else that transaction's
- * staging table, which differs in name, UUID and key prefix alone.
+ * staging table, which differs in name, UUID and key prefix alone. With
+ * `readonly` the table performs no write and schedules no merge, for an
+ * engine on a server in recovery.
  */
 static char*
-table_sql(Relation index, const char* verb, uint64 fxid) {
+table_sql(Relation index, const char* verb, uint64 fxid, bool readonly) {
     ChdbColumn* cols  = chdb_search_columns(index);
     Oid oid           = RelationGetRelid(index);
     uint64 generation = chdb_meta_generation(index);
@@ -178,13 +182,17 @@ table_sql(Relation index, const char* verb, uint64 fxid) {
      * MODIFY SETTING, no REINDEX. One SETTINGS clause: ClickHouse rejects a
      * second.
      */
-    appendStringInfo(
-        &buf,
-        ") ENGINE = MergeTree ORDER BY ctid SETTINGS " CHDB_STORE_DISK_FMT
-        ", enable_block_number_column = 1, enable_block_offset_column = 1",
-        oid,
-        fxid ? psprintf(CHDB_STORE_STAGING_PREFIX_FMT, generation, fxid)
-             : psprintf(CHDB_STORE_KEY_PREFIX_FMT, generation)
+    char* prefix = fxid ? psprintf(CHDB_STORE_STAGING_PREFIX_FMT, generation, fxid)
+                        : psprintf(CHDB_STORE_KEY_PREFIX_FMT, generation);
+
+    appendStringInfoString(&buf, ") ENGINE = MergeTree ORDER BY ctid SETTINGS ");
+    if (readonly) {
+        appendStringInfo(&buf, CHDB_STORE_DISK_RO_FMT, oid, generation, oid, prefix);
+    } else {
+        appendStringInfo(&buf, CHDB_STORE_DISK_FMT, oid, prefix);
+    }
+    appendStringInfoString(
+        &buf, ", enable_block_number_column = 1, enable_block_offset_column = 1"
     );
     if (chdb_search_wants_phrase_search(cols, index->rd_att->natts)) {
         /* ClickHouse gates the index argument behind a MergeTree setting. */
@@ -192,28 +200,32 @@ table_sql(Relation index, const char* verb, uint64 fxid) {
             &buf, ", allow_experimental_text_index_phrase_search = 1"
         );
     }
+    if (readonly) {
+        appendStringInfoString(&buf, ", table_readonly = 1");
+    }
     return buf.data;
 }
 
 char*
 chdb_search_create_sql(Relation index) {
-    return table_sql(index, "CREATE TABLE", 0);
+    return table_sql(index, "CREATE TABLE", 0, false);
 }
 
 char*
 chdb_search_staging_sql(Relation index, uint64 fxid) {
-    return table_sql(index, "CREATE TABLE", fxid);
+    return table_sql(index, "CREATE TABLE", fxid, false);
 }
 
 /*
  * The statements that put the index's current table, or a transaction's
  * staging table, back into an engine whose metadata does not have it: the
  * parts are found by the disk under the key prefix, and a table the engine
- * has is left alone.
+ * has is left alone. On a standby the table is read-only: the pages
+ * cannot be written, and the engine would refuse to (engine/readonly.c).
  */
 char*
-chdb_search_attach_sql(Relation index, uint64 fxid) {
-    return table_sql(index, "ATTACH TABLE IF NOT EXISTS", fxid);
+chdb_search_attach_sql(Relation index, uint64 fxid, bool readonly) {
+    return table_sql(index, "ATTACH TABLE IF NOT EXISTS", fxid, readonly);
 }
 
 /* `(ctid, xmin, a, b)`, the columns a Native INSERT names, in block order. */

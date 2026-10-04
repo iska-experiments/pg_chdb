@@ -32,6 +32,7 @@ static struct {
     pid_t pid;        /* 0 when none runs */
     chdbChannel ch;   /* its requests and replies */
     chdbChannel page; /* its page requests */
+    bool readonly;    /* started on a server in recovery */
     bool reaped;      /* waited for already, with this status */
     int status;
 } engine;
@@ -96,6 +97,11 @@ engine_pid(void) {
 chdbChannel*
 engine_channel(void) {
     return engine.pid > 0 ? &engine.ch : NULL;
+}
+
+bool
+engine_readonly(void) {
+    return engine.pid > 0 && engine.readonly;
 }
 
 static int
@@ -288,7 +294,7 @@ open_channel(chdbChannel* ch, int fd, const char* recv_what, const char* send_wh
 }
 
 void
-engine_attach(pid_t pid, int fd, int page_fd) {
+engine_attach(pid_t pid, int fd, int page_fd, bool readonly) {
     open_channel(
         &engine.ch,
         fd,
@@ -304,6 +310,12 @@ engine_attach(pid_t pid, int fd, int page_fd) {
     engine.ch.aside_fd = page_fd;
     engine.ch.aside    = serve_aside;
     engine.pid         = pid;
+    engine.readonly    = readonly;
     engine.reaped      = false;
-    elog(DEBUG1, "chdb_search: chdb_search_engine pid %d", (int)pid);
+    elog(
+        DEBUG1,
+        "chdb_search: chdb_search_engine pid %d%s",
+        (int)pid,
+        readonly ? " (read-only)" : ""
+    );
 }

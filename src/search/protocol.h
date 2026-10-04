@@ -106,6 +106,19 @@
     "', key_prefix = '%s')"
 
 /*
+ * A standby's engine names its disk, from the index OID and the generation,
+ * so that the worker can have the disk read the pages afresh by name
+ * (SYSTEM RESTART DISK) before it puts the table back (attach.c); the
+ * primary's disk takes the name ClickHouse makes of its definition. The
+ * read-only disk format takes the index OID and generation, then the index
+ * OID and the rendered prefix as the other does.
+ */
+#define CHDB_STORE_DISK_NAME_FMT "pg_%" PRIu32 "_g%" PRIu64
+#define CHDB_STORE_DISK_RO_FMT                                                         \
+    "disk = disk(name = '" CHDB_STORE_DISK_NAME_FMT                                    \
+    "', type = 'callback', storage_name = '" CHDB_STORE_STORAGE_FMT "', key_prefix = '%s')"
+
+/*
  * The worker's directory under the data directory: pg_chdb/pgsql_tmp holds a
  * <dboid> subdirectory for each database's engine, chDB's own metadata and
  * scratch space, and off Linux, where the worker's socket is not abstract,
@@ -118,6 +131,14 @@
 #define CHDB_SEARCH_CACHE_DIR CHDB_SEARCH_DIR "/pgsql_tmp"
 #define CHDB_SEARCH_ENGINE_DIR_FMT CHDB_SEARCH_CACHE_DIR "/%u"
 #define CHDB_SEARCH_SOCKET_FMT CHDB_SEARCH_CACHE_DIR "/%u.sock"
+
+/*
+ * The engine's optional last argument: the worker runs on a server in
+ * recovery, whose pages it cannot write, so the engine refuses every
+ * callback that would write, attaches its tables read-only and runs no
+ * merges (engine/readonly.c). Promotion restarts the engine without it.
+ */
+#define CHDB_SEARCH_ENGINE_READONLY "readonly"
 
 /* A decoded request. The query borrows from the frame it was decoded from. */
 typedef struct chdbSearchRequest {

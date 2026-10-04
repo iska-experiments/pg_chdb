@@ -14,6 +14,7 @@
 
 #include "postgres.h"
 
+#include "access/xlogdefs.h"
 #include "utils/rel.h"
 
 #include "../../channel.h"
@@ -35,6 +36,21 @@ chdb_pagestore_note(Oid index, RelFileLocator loc);
 /* Before the index's database is dropped: its blobs go with its relations. */
 extern void
 chdb_pagestore_forget(Oid index);
+
+/*
+ * After promotion: forgets every relation, so that each is noted afresh
+ * when next named, and recovered then if a crashed primary left it dirty.
+ */
+extern void
+chdb_pagestore_reset(void);
+
+/*
+ * A version of the blobs in the relation at `loc`: the latest LSN among its
+ * metapage and directory pages, which every blob put or removed moves, on
+ * a standby by replay. InvalidXLogRecPtr for a relation gone or empty.
+ */
+extern XLogRecPtr
+chdb_pagestore_version(RelFileLocator loc);
 
 /*
  * Reads one request from the page channel and answers it. A failure of the
@@ -60,6 +76,10 @@ chdb_pagestore_list(
 /* The blobs in an index relation's pages, from a backend that has it open. */
 extern void
 chdb_pagestore_list_relation(Relation index, chdbBlobListSink sink, void* ud);
+
+/* Whether the index relation holds any blob under `prefix`, likewise. */
+extern bool
+chdb_pagestore_has_blobs(Relation index, const char* prefix);
 
 /* After the engine's last stop: marks every relation written as clean. */
 extern void

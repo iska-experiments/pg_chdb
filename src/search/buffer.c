@@ -198,15 +198,11 @@ reset_pending(bool aborted) {
 }
 
 /*
- * Sends one index's rows at commit. The store must first prove itself
- * current (meta.c): a flush into a store that is behind the heap, as a
- * restore or pg_rewind leaves it, would record the flush on both sides and
- * so pass the store, missing every row between the backup and the restore
- * point, as current. In error mode the refusal aborts the commit; in skip
- * mode the rows stay out of the store and the metapage moves on without it,
- * so the mismatch outlives any repair but a REINDEX. An index dropped later
- * in this transaction has no metapage to check: its rows go to the store
- * that goes with it.
+ * Sends one index's rows at commit. The index must first have a store to
+ * take them (meta.c): in error mode the refusal aborts the commit; in skip
+ * mode the rows stay out and the metapage moves on without them, so only
+ * a REINDEX repairs the index. An index dropped later in this transaction
+ * has no metapage to check: its rows go to the store that goes with it.
  */
 static void
 flush_at_commit(Pending* p) {

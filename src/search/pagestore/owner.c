@@ -9,6 +9,7 @@
 #include "storage/bufmgr.h"
 #include "storage/lwlock.h"
 
+#include "dir.h"
 #include "owner.h"
 #include "pagestore.h"
 #include "routes.h"
@@ -58,6 +59,33 @@ chdb_pagestore_note(Oid index, RelFileLocator loc) {
 void
 chdb_pagestore_forget(Oid index) {
     chdb_routes_forget(index);
+}
+
+void
+chdb_pagestore_reset(void) {
+    chdb_routes_reset();
+}
+
+XLogRecPtr
+chdb_pagestore_version(RelFileLocator loc) {
+    ResourceOwner saved = chdb_pagestore_enter();
+    XLogRecPtr lsn      = InvalidXLogRecPtr;
+    ChdbPages p;
+
+    PG_TRY();
+    {
+        if (chdb_pages_open(&p, loc, NULL)) {
+            lsn = chdb_dir_lsn(&p);
+        }
+    }
+    PG_CATCH();
+    {
+        chdb_pagestore_leave(saved, true);
+        PG_RE_THROW();
+    }
+    PG_END_TRY();
+    chdb_pagestore_leave(saved, false);
+    return lsn;
 }
 
 void

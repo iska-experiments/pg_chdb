@@ -15,9 +15,9 @@ table of the same so that a backend could refuse a store from another
 point in time than its index: a restore, a `pg_rewind`, a crash between a
 flush and its commit.
 
-Phase 1 (callback disk, chdb-core branch `callback-object-storage`, this
-tree): chdb-core gained a `callback` object storage type and the
-registration
+Phase 1 (callback disk, chdb-core branch `callback-object-storage`, open
+as chdb-io/chdb-core#256; today): chdb-core gained a `callback` object
+storage type and the registration
 
 ```c
 typedef struct chdb_object_storage_callbacks {
@@ -100,9 +100,11 @@ EXISTS` finds the parts under the generation's key prefix. Staging tables
 have a prefix of their own, `s<generation>_tx_<fxid>`, and are attached
 from the prefixes the blobs carry, so a transaction mid-flight survives a
 worker restart and a crashed one's table is still there for VACUUM to
-sweep. A generation whose table has written no blob yet is not attached:
-its `CREATE TABLE` is still to come, as a `CREATE INDEX CONCURRENTLY`'s is
-between its catalog entry and its build. The directory is named for
+sweep; commit's `ATTACH PARTITION tuple() FROM` copies a staging table's
+parts from its prefix to the table's on the one storage. A generation
+whose table has written no blob yet is not attached: its `CREATE TABLE`
+is still to come, as a `CREATE INDEX CONCURRENTLY`'s is between its
+catalog entry and its build. The directory is named for
 Postgres to leave out of base backups and `pg_rewind`, as it does every
 `pgsql_tmp`. The `meta` table and the LSN comparison are gone: the store
 and the index are one relation.
@@ -169,30 +171,55 @@ point-in-time recovery, streaming replication and `pg_rewind`: the pages
 are its store, and generic WAL (`RM_GENERIC`) is replayed by core with no
 resource manager of our own and no `shared_preload_libraries`.
 
-| Property | Phase 0 (directory under PGDATA) | Phase 1 (parts in index pages, this tree) |
+| Property | Phase 0 (directory under PGDATA) | Today (Phase 1, parts in index pages) |
 |---|---|---|
 | Base backup + PITR | Heap restored to the target; store a copy from backup time, so the index is **stale and must be rebuilt** | Consistent at the target LSN, no rebuild |
 | WAL-G delta backups | Store files have no page LSNs, so every delta copies the whole store | Standard pages, delta works; the engine's cache directory is excluded as `pgsql_tmp` |
-| Streaming standby | No store on the standby; the index is **unusable** until promotion and rebuild | The pages are replicated; the index is refused in recovery (`error`) or skipped (`skip`) and served at once on promotion, no rebuild. Standby reads are the step left: a worker opening the pages read-only |
+| Streaming standby | No store on the standby; the index is **unusable** until promotion and rebuild | The pages are replicated and a worker on the standby serves searches from them, its engine read-only; a promoted standby serves at once, read-write, no rebuild |
 | `pg_rewind` | Store copied wholesale, then treated as stale | Rewound with the other relation files |
 | Logical replication | Works: the subscriber maintains its own index through `aminsert` | Same |
 | Replay requirements | None | None: generic WAL, replayed by core |
 
 Fail-safe rule: a scan never returns rows from a store it cannot prove
-current. In Phase 1 that proof is the relation itself; what the access
-method still checks before a scan, a flush and VACUUM's deletes is that
-the server is not in recovery, and `chdb_search.unavailable_index = error |
-skip` decides what a standby does: `error` raises "chdb index is not
-available on this server", `skip` makes `amcostestimate` return
+current. Today that proof is the relation itself, on a standby as on
+the primary; what the access method still checks before a scan, a flush
+and VACUUM's deletes is that the pages hold a store at all, any blob under
+the generation's prefix, and `chdb_search.unavailable_index = error |
+skip` decides what to do with an index that has none: `error` raises
+"chdb index has no store", `skip` makes `amcostestimate` return
 `disable_cost` so the planner uses another path. The default is `error`,
 because a silent fallback to a sequential scan hides an index that is not
-serving.
+serving. An index whose build finished always has a store, as MergeTree
+writes a file into a table's directory as it creates it.
 
-Standby reads (not in this tree): the standby's worker opens the index
-pages read-only, attaches the tables from the catalog as the primary's
-does, and runs the engine with `SYSTEM STOP MERGES` and a read-only disk so
-it never writes. Promotion switches the worker to read-write without a
-rebuild; today promotion starts the worker.
+**Standby reads** (`standby.c`, `engine/readonly.c`). The worker starts on
+a hot standby too (`BgWorkerStart_ConsistentState`) and serves searches
+from the replayed pages. Its engine is started with the `readonly`
+argument: every callback that would write refuses with "the store is
+read-only: the server is in recovery", libchdb raises the refusal to the
+statement that needed the write, and the session runs `SYSTEM STOP
+MERGES`; the worker refuses the same page requests itself, behind the
+engine. Tables are attached with `table_readonly = 1`, which makes
+MergeTree write nothing and schedule no background work, and without the
+staging tables, which are the primary's transactions'. Attaching from
+the listing reads only, as the pages hold everything MergeTree creates
+with a table (`format_version.txt`, the `detached` directory's marker),
+so nothing is served from an overlay. Replay changes the parts under the
+engine, so every request on a standby reads a version of the index's
+blobs, the latest LSN among its metapage and directory pages, and a
+request that finds it moved detaches the table and attaches it again from
+what the pages hold now: a search on a standby is current to the last
+replayed record, at the cost of a reattach after each flush or merge the
+primary makes. The dirty flag a primary's worker leaves on a relation is
+not recovered on the standby, which cannot write, and its routes are not
+cleaned when the worker stops.
+
+Promotion: the event loop waits at most a second while the server is in
+recovery and, when `RecoveryInProgress()` turns false, stops the engine,
+empties its directory, a cache of tables attached read-only, and forgets
+the relations and tables noted, so the next request starts a read-write
+engine and attaches afresh, recovering any relation a crashed primary left
+dirty. Nothing is rebuilt.
 
 ## WAL volume
 
@@ -216,12 +243,15 @@ warning. On Linux the worker now listens in the abstract namespace, on
 `@pg_chdb/<hash>/<dboid>` with the hash of the data directory's path,
 device and inode, so the data directory holds no socket and a backup runs
 with the workers up; `SO_PEERCRED` stands in for the file mode, admitting
-peers of the server's uid only. Elsewhere the socket is still the file, and
-the worker has to be stopped for a WAL-G backup.
+peers of the server's uid only. Elsewhere the socket is still a file, now
+`pg_chdb/pgsql_tmp/<dboid>.sock`, which WAL-G leaves out with every
+`pgsql_tmp` as `pg_basebackup` does, so a backup runs with the workers up
+there too.
 
-Tests: `t/search_standby.pl` (a streaming standby refuses the index and
-serves it on promotion with no REINDEX; the cache directory removed and
-rebuilt), `t/search_crash.pl` (a backend and the postmaster killed with
+Tests: `t/search_standby.pl` (a streaming standby answers a search from
+the replicated pages, sees rows replayed after its first search, writes
+nothing, and once promoted serves and takes rows with no REINDEX; the
+cache directory removed and rebuilt), `t/search_crash.pl` (a backend and the postmaster killed with
 rows in flight; recovery leaves the index consistent with the heap),
 `t/search_pagestore.pl` (an engine killed inside a blob; freed pages
 reused; DROP INDEX takes the pages), `t/search_pitr.pl` (base backup with

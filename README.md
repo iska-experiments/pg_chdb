@@ -93,8 +93,9 @@ See the [chdb_hook documentation](doc/chdb_hook.md) for details.
 ### chdb_search Extension
 
 The `chdb_search` extension gives a table a ClickHouse full-text index. A
-background worker per database owns the [chDB] store, and queries match exact
-tokens, with no BM25 ranking:
+background worker per database owns the [chDB] store, kept in the index's own
+pages, so backups and streaming replication carry it and a standby serves
+searches. Queries match exact tokens, with no BM25 ranking:
 
 ```sql
 CREATE EXTENSION chdb_search;

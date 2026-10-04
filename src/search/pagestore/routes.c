@@ -9,6 +9,7 @@
 
 #include "access/relation.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "miscadmin.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
@@ -62,12 +63,23 @@ chdb_routes_note(Oid index, RelFileLocator loc) {
 
     if (!found) {
         r->dirtied = false;
-        /* First sight of a relation a worker died writing: before any blob. */
-        if (p.meta.flags & CHDB_META_DIRTY) {
+        /*
+         * First sight of a relation a worker died writing: before any blob.
+         * On a standby the flag is the primary's worker's and the pages
+         * cannot be written; promotion resets the routes (standby.c), so
+         * the relation is seen afresh, and recovered then if need be.
+         */
+        if ((p.meta.flags & CHDB_META_DIRTY) && !RecoveryInProgress()) {
             chdb_pages_recover(&p);
         }
     }
     r->loc = loc;
+}
+
+void
+chdb_routes_reset(void) {
+    hash_destroy(routes);
+    chdb_routes_init();
 }
 
 void
@@ -198,6 +210,10 @@ chdb_routes_clean(void) {
     HASH_SEQ_STATUS seq;
     Route* r;
 
+    /* A standby took no page; the flag it sees is the primary's to clear. */
+    if (RecoveryInProgress()) {
+        return;
+    }
     hash_seq_init(&seq, routes);
     while ((r = hash_seq_search(&seq)) != NULL) {
         ChdbPages p;

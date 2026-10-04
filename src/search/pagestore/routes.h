@@ -29,6 +29,10 @@ chdb_routes_note(Oid index, RelFileLocator loc);
 extern void
 chdb_routes_forget(Oid index);
 
+/* After promotion: every relation is forgotten, to be noted afresh. */
+extern void
+chdb_routes_reset(void);
+
 /*
  * The relation for a storage and a key, or false for a pair not noted.
  * Raises for a storage name or key that is not of the shape above.

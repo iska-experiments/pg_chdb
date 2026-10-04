@@ -160,9 +160,12 @@ chdb_search_create_sql(Relation index);
 /* The staging table of transaction `fxid`, defined as the index's table is. */
 extern char*
 chdb_search_staging_sql(Relation index, uint64 fxid);
-/* ATTACH TABLE IF NOT EXISTS for the index's table, or for a staging table. */
+/*
+ * ATTACH TABLE IF NOT EXISTS for the index's table, or for a staging table;
+ * `readonly` for an engine on a server in recovery.
+ */
 extern char*
-chdb_search_attach_sql(Relation index, uint64 fxid);
+chdb_search_attach_sql(Relation index, uint64 fxid, bool readonly);
 extern char*
 chdb_search_structure(const ChdbColumn* cols, int natts);
 extern char*
@@ -183,11 +186,12 @@ chdb_search_warn_failure(Oid indexoid);
 
 /* ---- meta.c ---- */
 /*
- * Whether this server can serve the index's store now: the store lives in
- * the index relation's pages, so it is as current as the relation, but a
- * server in recovery does not serve it yet. A scan proves this before
- * returning any row, VACUUM before deleting, a commit before flushing, the
- * planner before costing in skip mode.
+ * Whether the index has no store: it lives in the index relation's pages,
+ * so it is as current as the relation and served wherever the relation is,
+ * a standby included, and is missing only when the pages hold no blob of
+ * the generation the metapage names. A scan proves this before returning
+ * any row, VACUUM before deleting, a commit before flushing, the planner
+ * before costing in skip mode.
  */
 extern bool
 chdb_search_store_unavailable(Relation index);
@@ -209,7 +213,7 @@ extern uint64
 chdb_meta_generation(Relation index);
 extern void
 chdb_meta_note_flush(Relation index);
-/* A commit flushed nothing, the store being unavailable in skip mode. */
+/* A commit flushed nothing, the store being missing in skip mode. */
 extern void
 chdb_meta_note_skipped(Relation index);
 

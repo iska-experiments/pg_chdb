@@ -13,6 +13,7 @@
 
 #include "postgres.h"
 
+#include "access/xlog.h"
 #include "lib/stringinfo.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
@@ -138,8 +139,24 @@ list_sink(void* ud, const char* key, uint64 size, int64 mtime) {
 
 /* ---- the operations ---- */
 
+/*
+ * A server in recovery cannot write its pages. The engine refuses these
+ * itself (engine/readonly.c); one that asks anyway is answered the same.
+ */
+static void
+check_writable(uint32 op) {
+    if (op >= CHDB_PAGE_WRITE_BEGIN && op != CHDB_PAGE_LIST && RecoveryInProgress()) {
+        ereport(
+            ERROR,
+            errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+            errmsg("chdb_search: the store is read-only while the server is in recovery")
+        );
+    }
+}
+
 static void
 answer(uint32 op, chdbSetupCursor* cur, StringInfo out) {
+    check_writable(op);
     switch (op) {
     case CHDB_PAGE_STORAGES:
         store->storages(name_sink, out);

@@ -125,9 +125,10 @@ chdb_search_worker_ensure(Oid dboid) {
         return;
     }
 
+    /* A hot standby serves the index read-only, so the worker starts there too. */
     BackgroundWorker bgw = {
         .bgw_flags      = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION,
-        .bgw_start_time = BgWorkerStart_RecoveryFinished,
+        .bgw_start_time = BgWorkerStart_ConsistentState,
         .bgw_restart_time = 5,
         .bgw_main_arg     = ObjectIdGetDatum(dboid),
         .bgw_notify_pid   = MyProcPid,

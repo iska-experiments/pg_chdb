@@ -32,4 +32,15 @@ typedef void (*ChdbDirSink)(void* ud, const ChdbDirEntry* e);
 extern void
 chdb_dir_list(ChdbPages* p, const char* prefix, ChdbDirSink sink, void* ud);
 
+/* Whether any entry's key starts with the prefix; stops at the first. */
+extern bool
+chdb_dir_any(ChdbPages* p, const char* prefix);
+
+/*
+ * The latest LSN among the metapage and the directory pages: a version of
+ * the directory, since every entry put or removed moves one of them.
+ */
+extern XLogRecPtr
+chdb_dir_lsn(ChdbPages* p);
+
 #endif /* CHDB_SEARCH_PAGESTORE_DIR_H */
