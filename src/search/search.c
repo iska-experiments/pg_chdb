@@ -30,8 +30,6 @@ _PG_init(void) {
         return;
     }
 
-    CHDB_GUCS("chdb_search");
-
     DefineCustomStringVariable(
         "chdb_search.libchdb_path",
         "Library the chdb_search worker loads chDB from.",
@@ -58,6 +56,9 @@ _PG_init(void) {
         NULL,
         NULL
     );
+
+    /* Last: reserving the prefix drops placeholders for GUCs not yet defined. */
+    CHDB_GUCS("chdb_search");
 }
 
 PG_FUNCTION_INFO_V1(chdb_search_version);
