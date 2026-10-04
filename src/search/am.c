@@ -57,11 +57,12 @@ chdb_search_costestimate(
     genericcostestimate(root, path, loop_count, &costs);
 
     /*
-     * In skip mode an unavailable store makes the index the most expensive
-     * path, so the planner takes another; in error mode a scan would raise,
-     * and the cost is left alone so a forced scan still reaches that error.
-     * The check asks the store once per flush, so planning in skip mode
-     * costs a round trip then. The planner holds a lock on the index.
+     * In skip mode an index without a store is the most expensive path, so
+     * the planner takes another; in error mode a scan would raise, and the
+     * cost is left alone so a forced scan still reaches that error. The
+     * check walks the index's blob directory to the first blob of its
+     * generation, so planning in skip mode costs a few page reads. The
+     * planner holds a lock on the index.
      */
     if (chdb_search_unavailable_index == CHDB_UNAVAILABLE_SKIP) {
         Relation index   = index_open(path->indexinfo->indexoid, NoLock);
