@@ -7,7 +7,6 @@
 CREATE EXTENSION chdb_search;
 SET search_path = public, chdb;
 SET chdb_search.mask_oids = on;
-
 CREATE TABLE docs (
     id int PRIMARY KEY,
     body text,
@@ -26,16 +25,20 @@ CREATE INDEX docs_idx ON docs USING chdb (
     body, title, tags text_array_ops, author columnar_ops, price, seen, flag columnar_ops
 );
 SET enable_seqscan = off;
-
 ----------------------------------------------------------------------------
 -- Search keys and filters, with escaping of the search string
 ----------------------------------------------------------------------------
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 SELECT id FROM docs WHERE body @@? 'it''s a \back\slash';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAnyTokens("body", 'it\'s a \\back\\slash')
 SELECT id FROM docs WHERE title @@= 'Shoes' AND tags @@@ 'sport' AND author >= 'a' AND price < 50.50;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasToken("title", 'Shoes') AND hasAllTokens("tags", 'sport') AND "author" >= 'a' AND "price" < toDecimal256('50.50', 2)
 SELECT id FROM docs WHERE seen > '2026-01-01 00:00:00+00' AND flag = false;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "seen" > fromUnixTimestamp64Micro(1767225600000000, 'UTC') AND "flag" = false
 \o
 RESET client_min_messages;
 -- A NULL search key. Written as a constant it never reaches the scan: the
@@ -44,18 +47,35 @@ RESET client_min_messages;
 -- returns no row. (PostgreSQL 19 names the scan the Result replaces, which
 -- search_am_scan_1.out expects.)
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ NULL;
+        QUERY PLAN        
+--------------------------
+ Result
+   Replaces: Scan on docs
+   One-Time Filter: false
+(3 rows)
+
 PREPARE q(text) AS SELECT id FROM docs WHERE body @@@ $1;
 SET plan_cache_mode = force_generic_plan;
 EXPLAIN (COSTS OFF) EXECUTE q(NULL);
+            QUERY PLAN             
+-----------------------------------
+ Index Scan using docs_idx on docs
+   Index Cond: (body @@@ $1)
+(2 rows)
+
 SET client_min_messages = debug1;
 EXECUTE q(NULL);
+ id 
+----
+(0 rows)
+
 \o /dev/null
 EXECUTE q('shoes');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes')
 \o
 RESET client_min_messages;
 RESET plan_cache_mode;
 DEALLOCATE q;
-
 ----------------------------------------------------------------------------
 -- Literals: parsed to the column's type, and the constants ClickHouse
 -- compares unlike Postgres (NaN, the infinities) become predicates
@@ -68,36 +88,60 @@ CREATE INDEX types_idx ON types USING chdb (i2, i4, i8, f4, f8, n, d, ts, u, v c
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT * FROM types WHERE i2 = 1::int2 AND i4 = 2 AND i8 = 3::int8 AND v = 'x' AND d = '2026-01-02';
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "i2" = 1 AND "i4" = 2 AND "i8" = 3 AND "d" = toDate32(20455) AND "v" = 'x'
 SELECT * FROM types WHERE i2 = 1 AND i8 = 2 AND i4 > 3::int8 AND f4 < 0.5 AND f8 >= 1::real;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "i2" = 1 AND "i4" > 3 AND "i8" = 2 AND "f4" < toFloat64('0.5') AND "f8" >= toFloat32('1')
 SELECT * FROM types WHERE u = '00000000-0000-0000-0000-000000000001' AND arr @@= 'x';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "u" = toUUID('00000000-0000-0000-0000-000000000001') AND hasAllTokens("arr", 'x')
 SELECT * FROM types WHERE f4 = 0.1::real;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "f4" = toFloat32('0.1')
 SELECT * FROM types WHERE f8 = 0.1 AND f4 > 'Infinity'::real;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "f4" > toFloat32('Infinity') AND "f8" = toFloat64('0.1')
 SELECT * FROM types WHERE f8 > 1e308;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "f8" > toFloat64('1e+308')
 SELECT * FROM types WHERE f8 = 'NaN'::float8;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE isNaN("f8")
 SELECT * FROM types WHERE f8 < 'NaN';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE NOT isNaN("f8")
 SELECT * FROM types WHERE f8 > 'NaN';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
 SELECT * FROM types WHERE f8 <= 'NaN';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "f8" IS NOT NULL
 SELECT * FROM types WHERE f8 >= 'NaN' AND f4 = 'NaN'::real;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE isNaN("f4") AND isNaN("f8")
 SELECT * FROM types WHERE ts < 'infinity';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "ts" IS NOT NULL
 SELECT * FROM types WHERE ts = 'infinity';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
 SELECT * FROM types WHERE ts >= '-infinity';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "ts" IS NOT NULL
 SELECT * FROM types WHERE d > '-infinity'::date;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "d" IS NOT NULL
 SELECT * FROM types WHERE d <= '-infinity'::date;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
 SELECT * FROM types WHERE n < 'NaN'::numeric;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "n" IS NOT NULL
 SELECT * FROM types WHERE n >= 'Infinity'::numeric;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE 0
 SELECT * FROM types WHERE n > '-Infinity'::numeric AND n = 1.50;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "n" IS NOT NULL AND "n" = toDecimal256('1.50', 2)
 PREPARE p(timestamp) AS SELECT * FROM types WHERE ts < $1;
 EXECUTE p('infinity');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "ts" IS NOT NULL
 EXECUTE p('2026-01-01');
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "ts" < fromUnixTimestamp64Micro(1767225600000000, 'UTC')
 \o
 RESET client_min_messages;
 -- The store has no infinities, so the writer refuses them rather than let
 -- the encoder wrap them into finite values.
 INSERT INTO types (d) VALUES ('infinity');
+ERROR:  an infinite date cannot be stored in a chdb index
 INSERT INTO types (ts) VALUES ('-infinity');
+ERROR:  an infinite timestamp without time zone cannot be stored in a chdb index
 INSERT INTO types (n) VALUES ('NaN');
+ERROR:  chdb: cannot encode "NaN" as ClickHouse Decimal256(38)
 DROP TABLE types;
-
 ----------------------------------------------------------------------------
 -- ORDER BY a distance operator of the column's family
 ----------------------------------------------------------------------------
@@ -105,29 +149,45 @@ DROP TABLE types;
 -- will add; the ClickHouse Point is a tuple, which L2Distance takes.
 ALTER OPERATOR FAMILY columnar_ops USING chdb ADD OPERATOR 1 <-> (point, point) FOR ORDER BY float_ops;
 SELECT amvalidate(oid) FROM pg_opclass WHERE opcname = 'columnar_ops';
+ amvalidate 
+------------
+ t
+(1 row)
+
 CREATE INDEX docs_loc ON docs USING chdb (loc, body);
 EXPLAIN (COSTS OFF) SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
+                 QUERY PLAN                 
+--------------------------------------------
+ Limit
+   ->  Index Scan using docs_loc on docs
+         Order By: (loc <-> '(1,2)'::point)
+(3 rows)
+
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs ORDER BY loc <-> '(1,2)' LIMIT 2;
+DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
+DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (1,2)) AS _distance FROM idx_N.t_N ORDER BY _distance
 SELECT id FROM docs WHERE body @@@ 'shoes' ORDER BY loc <-> '(1,2)', loc <-> '(3,4)' LIMIT 2;
+DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (1,2)) AS _distance1, L2Distance("loc", (3,4)) AS _distance2 FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes') ORDER BY _distance1, _distance2
 -- A NULL argument reaches the scan from a generic plan (a custom plan folds
 -- the strict operator to NULL and sorts nothing): every row then has a NULL
 -- distance, as by seqscan, rather than vanishing.
 SET plan_cache_mode = force_generic_plan;
 PREPARE near(point) AS SELECT id FROM docs ORDER BY loc <-> $1 LIMIT 1;
 EXECUTE near(NULL);
+DEBUG:  chdb_search select: SELECT ctid, CAST(NULL AS Nullable(Float64)) AS _distance FROM idx_N.t_N ORDER BY _distance
 EXECUTE near('(3,4)');
+DEBUG:  chdb_search select: SELECT ctid, L2Distance("loc", (3,4)) AS _distance FROM idx_N.t_N ORDER BY _distance
 RESET plan_cache_mode;
 \o
 RESET client_min_messages;
 SELECT id FROM docs ORDER BY loc <-> '(1,NaN)' LIMIT 1;
+ERROR:  unsupported value in distance argument: "(1,NaN)"
 DROP INDEX docs_loc;
 ALTER OPERATOR FAMILY columnar_ops USING chdb DROP OPERATOR 1 (point, point);
-
 DROP TABLE docs;
 DROP EXTENSION chdb_search;
-
 -- The worker stays connected to the database, which could not be dropped for
 -- the next run, so stop it. There is none with the stub client.
 DO $$
