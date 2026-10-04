@@ -18,7 +18,7 @@ SET client_min_messages = debug1;
 VACUUM docs;
 DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N
-DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (2)
+DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (2) SETTINGS lightweight_delete_mode = 'lightweight_update_force'
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 RESET client_min_messages;
 -- Past the index's ratio, the parts are merged after the delete.
@@ -28,7 +28,7 @@ SET client_min_messages = debug1;
 VACUUM docs;
 DEBUG:  chdb_search select: SELECT count(), max(lsn), (SELECT count() FROM system.tables WHERE database = 'idx_N' AND name = 't_N') FROM idx_N.meta WHERE generation = N
 DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N
-DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (1)
+DEBUG:  chdb_search exec: DELETE FROM idx_N.t_N WHERE ctid IN (1) SETTINGS lightweight_delete_mode = 'lightweight_update_force'
 DEBUG:  chdb_search select: SELECT name FROM system.tables WHERE database = 'idx_N' AND name LIKE 't\\_%'
 DEBUG:  chdb_search exec: OPTIMIZE TABLE idx_N.t_N FINAL
 RESET client_min_messages;
