@@ -24,6 +24,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgrprotos.h"
 
+#include "ops.h"
 #include "search.h"
 
 static text*

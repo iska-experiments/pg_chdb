@@ -250,4 +250,47 @@ chdb_search_append_special(
 extern char*
 chdb_search_order_expr(Relation index, const struct ChdbColumn* cols, ScanKey orderby);
 
+/*
+ * The index's tokenizer and preprocessor as expressions (textindex.c), for
+ * the searches that read the text or its tokens rather than the posting
+ * lists, and the phrase with slop built from them (phrase.c).
+ */
+/* The column's tokenizer as the DDL and a text search spell it: `ngrams(3)`. */
+extern char*
+chdb_search_tokenizer(const struct ChdbColumn* column);
+/*
+ * The column's preprocessor applied to `expr`: the column itself, or with
+ * `literal` a string literal, for a needle to be compared with the column's
+ * preprocessed text. The column as is when the preprocessor is none.
+ */
+extern char*
+chdb_search_preprocessed(
+    const struct ChdbColumn* column,
+    const char* expr,
+    bool literal
+);
+/* Whether the column's preprocessor folds case, so a search of it must too. */
+extern bool
+chdb_search_folds_case(const struct ChdbColumn* column);
+/*
+ * `tokens(<preprocessed expr>, '<tokenizer>'[, <args>])`: the tokens the
+ * column's index derives from the column or, with `literal`, from a string,
+ * for a phrase's positions and the score's needles.
+ */
+extern char*
+chdb_search_tokens_call(
+    const struct ChdbColumn* column,
+    const char* expr,
+    bool literal
+);
+
+/* A phrase whose tokens may be `slop` others apart, from token positions. */
+extern void
+chdb_search_append_slop_phrase(
+    StringInfo buf,
+    const struct ChdbColumn* column,
+    const char* needle,
+    int32 slop
+);
+
 #endif /* CHDB_SEARCH_QUERY_H */

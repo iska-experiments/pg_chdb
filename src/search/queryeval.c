@@ -18,6 +18,7 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 
+#include "ops.h"
 #include "query.h"
 #include "search.h"
 

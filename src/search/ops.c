@@ -26,6 +26,7 @@
 #include "utils/formatting.h"
 #include "utils/lsyscache.h"
 
+#include "ops.h"
 #include "query.h"
 #include "search.h"
 

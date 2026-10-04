@@ -7,6 +7,7 @@
 
 #include "postgres.h"
 
+#include "ops.h"
 #include "query.h"
 #include "search.h"
 

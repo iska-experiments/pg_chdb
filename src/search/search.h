@@ -134,35 +134,6 @@ extern char*
 chdb_search_skip_index_args(const ChdbColumn* column);
 extern bool
 chdb_search_wants_phrase_search(const ChdbColumn* cols, int natts);
-/* The column's tokenizer as the DDL and tokens() spell it: `ngrams(3)`. */
-extern char*
-chdb_search_tokenizer(const ChdbColumn* column);
-/*
- * The column's preprocessor applied to `expr`: the column itself, or with
- * `literal` a string literal, for a needle to be compared with the column's
- * preprocessed text. The column as is when the preprocessor is none.
- */
-extern char*
-chdb_search_preprocessed(const ChdbColumn* column, const char* expr, bool literal);
-/* Whether the column's preprocessor folds case, so a search of it must too. */
-extern bool
-chdb_search_folds_case(const ChdbColumn* column);
-/*
- * `tokens(<preprocessed expr>, '<tokenizer>'[, <args>])`: the tokens the
- * column's index derives from the column or, with `literal`, from a string.
- */
-extern char*
-chdb_search_tokens_call(const ChdbColumn* column, const char* expr, bool literal);
-
-/* ---- phrase.c ---- */
-/* A phrase whose tokens may be `slop` others apart, from token positions. */
-extern void
-chdb_search_append_slop_phrase(
-    StringInfo buf,
-    const ChdbColumn* column,
-    const char* needle,
-    int32 slop
-);
 
 /* ---- score.c ---- */
 /* chdb.score(): a placeholder that raises wherever Postgres evaluates it. */
@@ -189,30 +160,6 @@ chdb_search_score_expr(
     AttrNumber only,
     ChdbScoreCache* cache
 );
-
-/* ---- ops.c, pattern.c: the Postgres implementations of the predicates ---- */
-/* Lowercases as the index's lowerUTF8 does; palloc'd, NUL-terminated. */
-extern char*
-chdb_search_lower(const char* s, size_t n);
-extern bool
-chdb_search_regex_matches(text* hay, text* re, Oid collation);
-extern bool
-chdb_search_wildcard_matches(text* hay, text* pattern);
-/*
- * A text search by strategy (query.h), as the operator of that strategy
- * answers it: of a text, with a phrase's slop, or of a text[], whose
- * elements are tokens and which no phrase or pattern applies to.
- */
-extern bool
-chdb_search_text_leaf(int strategy, text* hay, text* needle, int32 slop, Oid collation);
-extern bool
-chdb_search_array_leaf(int strategy, ArrayType* arr, text* needle);
-/* Raises for a strategy a text[] column has no answer to. */
-extern void
-chdb_search_check_array_search(int strategy);
-/* The operator functions of `col @@@ query`, which validate.c knows by address. */
-extern PGDLLEXPORT Datum chdb_search_query_matches(PG_FUNCTION_ARGS);
-extern PGDLLEXPORT Datum chdb_search_array_query_matches(PG_FUNCTION_ARGS);
 
 /* ---- columns.c ---- */
 /* `"<name>"`, with quotes and backslashes escaped, whatever the name. */
