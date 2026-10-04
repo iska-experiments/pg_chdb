@@ -12,5 +12,8 @@ OBJS         = ../native.o ../native_writer.o ../channel.o ../helper_setup.o ../
 
 include ../module.mk
 
+# PGXS tracks no header dependencies; the vendored ones are module.mk's.
+$(OBJS): $(wildcard *.h ../*.h)
+
 # client.mode, written by the top-level Makefile, changes with CHDB_SEARCH_STUB.
 $(shlib): $(wildcard client.mode)

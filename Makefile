@@ -30,7 +30,6 @@ REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
 # NO_LOCALE=1, in a database with the C locale).
 REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION) --encoding=UTF8 $(if $(MAX_CONCURRENT_TESTS),--max-concurrent-tests $(MAX_CONCURRENT_TESTS))
 MODULE_big   = $(EXTENSION)
-PG_CONFIG   ?= pg_config
 TAP_TESTS   ?= 1
 OBJS         = $(subst .c,.o, $(wildcard src/*.c))
 
@@ -60,27 +59,11 @@ CLANG_FORMAT ?= clang-format
 LIBCHDB_VERSION ?= v26.9.0
 LIBCHDB_BUILD   ?= dynamic
 
-# Header-only dependencies, vendored as submodules. clickhouse-c comes from
-# pg-clickhouse-c's own pin, its signatures naming clickhouse-c types, so a
-# second checkout on the include path would silently win.
-PGCH_DIR     = $(CURDIR)/vendor/pg-clickhouse-c
-CH_C_DIR     = $(PGCH_DIR)/clickhouse-c
-
-# Suppress annoying pre-c99 warning, error on 	/other warnings.
-PG_CFLAGS    = -Wno-declaration-after-statement -Wall -Werror
-
-# -isystem keeps the vendored headers' warnings out of the -Werror build.
-# PGCH_MSG_PREFIX prefixes messages pg-clickhouse-c raises like our own.
-# clickhouse-c copies what it raises through chc_err.msg, 256 bytes by default,
-# which clips the longer type names out of a decoding error.
-PG_CPPFLAGS  = -isystem $(CH_C_DIR) -isystem $(PGCH_DIR) -DPGCH_MSG_PREFIX='"chdb: "' \
-               -DCHC_ERR_MSG_LEN=4096
-
 # Clean up generated files.
 EXTRA_CLEAN  = src/version.h sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX) src/hook/*.o src/hook/*.bc src/search/client.mode test/schedule*
 
-PGXS := $(shell $(PG_CONFIG) --pgxs)
-include $(PGXS)
+# The vendored headers, compiler flags and PGXS, shared with the modules below.
+include src/module.mk
 
 # Set default prove flags.
 ifeq ($(PROVE_FLAGS),)
@@ -103,10 +86,8 @@ SEARCH_MODULE  := src/search/chdb_search$(DLSUFFIX)
 # Require the versioned SQL script.
 all: sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX)
 
-# PGXS tracks no header dependencies, and the vendored libraries are all header.
-# *.bc compiles same sources, so needs same headers.
-$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h \
-                        $(wildcard src/*.h $(PGCH_DIR)/*.h $(CH_C_DIR)/*.h)
+# The vendored headers are module.mk's; clickhouse.h first, as fetching it is a rule.
+$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h $(wildcard src/*.h)
 
 # Versioned SQL script.
 sql/$(EXTENSION)--$(EXTVERSION).sql: sql/$(EXTENSION).sql
@@ -119,7 +100,7 @@ src/version.h: META.json
 # Hook module.
 HOOK_MODULE := src/hook/chdb_hook$(DLSUFFIX)
 $(HOOK_MODULE): $(wildcard src/hook/*.c src/hook/*.h) $(OBJS)
-	@$(MAKE) -C $(dir $@) all CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) NO_FILE_SCHEME=$(NO_FILE_SCHEME)
+	@$(MAKE) -C $(dir $@) all NO_FILE_SCHEME=$(NO_FILE_SCHEME)
 
 # Install and uninstall the chdb_hook module.
 install-hook: $(HOOK_MODULE)
@@ -188,7 +169,7 @@ $(eval $(call libchdb_program,helper,$(HELPER),src/setup.h))
 # later, as the control file says; an older server builds and tests the chdb
 # extension alone, and its TAP tests skip the search ones.
 ifeq ($(shell test $(VERSION_NUM) -ge 170000 && echo yes),yes)
-$(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)))
+$(eval $(call ext_module,chdb_search,$(OBJS) src/search/client.mode,CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)))
 $(eval $(call libchdb_program,engine,$(ENGINE),src/search/protocol.h src/setup.h))
 else
 TESTS := $(filter-out test/sql/search_%,$(TESTS))
@@ -293,6 +274,3 @@ kv-rest:
 
 start-kv-rest: kv-rest
 	KVREST_PORT="$${KVREST_PORT:-9182}" ./kv-rest &
-
-# Run make print-VARIABLE_NAME to print VARIABLE_NAME's flavor and value.
-print-%	: ; $(info $* is $(flavor $*) variable set to "$($*)") @true
