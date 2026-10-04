@@ -8,6 +8,7 @@
 #include "postgres.h"
 
 #include <errno.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -124,10 +125,7 @@ chdb_search_connect(void) {
                 errdetail(
                     "No worker answered within %d seconds.", chdb_search_worker_timeout
                 ),
-                errhint(
-                    "See the server log, and that the worker finds libchdb at "
-                    "chdb_search.libchdb_path."
-                )
+                errhint("See the server log for why.")
             );
         }
         WaitLatch(
@@ -177,8 +175,11 @@ send_request(chdbSearchConn* conn, chdbCmdType cmd, Oid index, const char* sql) 
     pfree(buf.data);
 }
 
-/* Reads the status frame and raises the worker's error if it carries one. */
-static void
+/*
+ * Reads the status frame and raises the worker's error if it carries one.
+ * Otherwise returns its text: a debug command's answer, empty for the rest.
+ */
+static char*
 read_status(chdbSearchConn* conn) {
     uint8_t status;
     uint32_t len;
@@ -202,8 +203,7 @@ read_status(chdbSearchConn* conn) {
     chdb_channel_recv_exact(&conn->ch, detail, len);
     detail[len] = '\0';
     if (status == 0) {
-        pfree(detail);
-        return;
+        return detail;
     }
 
     /* Worded as the helper's errors are: no trailing newline, request ID or version. */
@@ -218,6 +218,8 @@ read_status(chdbSearchConn* conn) {
         errdetail("%s", detail),
         errcontext("query: %s", conn->query)
     );
+
+    return NULL;
 }
 
 void
@@ -258,4 +260,18 @@ chdb_search_finish(chdbSearchConn* conn) {
         while (chdb_channel_recv(&conn->ch, skip, sizeof(skip))) {}
     }
     read_status(conn);
+}
+
+int
+chdb_search_engine_pid(chdbSearchConn* conn) {
+    send_request(conn, CHDB_CMD_ENGINE_PID, 0, "");
+
+    return atoi(read_status(conn));
+}
+
+int
+chdb_search_engine_kill(chdbSearchConn* conn, int signo) {
+    send_request(conn, CHDB_CMD_ENGINE_KILL, 0, psprintf("%d", signo));
+
+    return atoi(read_status(conn));
 }

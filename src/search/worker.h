@@ -8,9 +8,6 @@ extern int chdb_max_memory;
 extern int chdb_max_threads;
 extern int chdb_max_parsers;
 
-/* Where the worker finds libchdb, as dlopen takes it. */
-extern char* chdb_search_libchdb_path;
-
 /* Seconds a client waits for a worker to come up. */
 extern int chdb_search_worker_timeout;
 

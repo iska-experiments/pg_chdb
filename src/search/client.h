@@ -71,6 +71,14 @@ chdb_search_finish(chdbSearchConn* conn);
 extern void
 chdb_search_drop(chdbSearchConn* conn, Oid indexoid);
 
+/* The worker's engine process: its pid, zero if none runs. */
+extern int
+chdb_search_engine_pid(chdbSearchConn* conn);
+
+/* Sends a signal to the engine, which raises if none runs. Returns its pid. */
+extern int
+chdb_search_engine_kill(chdbSearchConn* conn, int signo);
+
 /*
  * The channel of the connection, for the Native streaming code of native.h.
  * Use after chdb_search_select or chdb_search_insert; finish the stream with
