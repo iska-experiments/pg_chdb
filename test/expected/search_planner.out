@@ -62,46 +62,46 @@ END $$;
 -- rest as its own filter
 ----------------------------------------------------------------------------
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running shoes';
-                                      QUERY PLAN                                      
---------------------------------------------------------------------------------------
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: (body @@@ 'running shoes'::text)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE chdb.has_any_tokens(body, 'boots socks') AND tags @@= 'sport';
-                                                      QUERY PLAN                                                      
-----------------------------------------------------------------------------------------------------------------------
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: has_any_tokens(body, 'boots socks'::text), (tags @@= 'sport'::text)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAnyTokens("body", 'boots socks') AND hasAllTokens("tags", 'sport')
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAnyTokens("body", 'boots socks') AND hasAllTokens("tags", 'sport')
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@? 'boots socks' AND author = 'bob' AND 10 < price;
-                                                                 QUERY PLAN                                                                  
----------------------------------------------------------------------------------------------------------------------------------------------
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: (body @@? 'boots socks'::text), (author = 'bob'::text), ('10'::numeric < price)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAnyTokens("body", 'boots socks') AND "author" = 'bob' AND "price" > toDecimal256('10', 0)
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAnyTokens("body", 'boots socks') AND "author" = 'bob' AND "price" > toDecimal256('10', 0)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running' AND id > 1 AND author <> 'bob';
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Filter: ((id > 1) AND (author <> 'bob'::text))
    Pushed Cond: (body @@@ 'running'::text)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
 (4 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF) SELECT id, body FROM docs WHERE chdb.has_token(body, 'boots') AND length(body) > 5;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
  Custom Scan (chdb_search) on public.docs
    Output: id, body
    Filter: (length(docs.body) > 5)
    Pushed Cond: has_token(docs.body, 'boots'::text)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasToken("body", 'boots')
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasToken("body", 'boots')
 (5 rows)
 
 -- A filter alone is the index's; an order alone is the store's, with the
@@ -114,77 +114,77 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE price < 50;
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT 2;
-                                                    QUERY PLAN                                                    
-------------------------------------------------------------------------------------------------------------------
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Order By: (loc <-> '(0,0)'::point)
          Pushed Limit: 2
-         ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N ORDER BY _distance LIMIT 2
+         ClickHouse: SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N ORDER BY _distance LIMIT 2
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running' ORDER BY loc <-> '(0,0)' OFFSET 1 LIMIT 2;
-                                                                       QUERY PLAN                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@@ 'running'::text)
          Pushed Order By: (loc <-> '(0,0)'::point)
          Pushed Limit: 3
-         ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance LIMIT 3
+         ClickHouse: SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance LIMIT 3
 (6 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running' AND id > 1 ORDER BY loc <-> '(0,0)' LIMIT 2;
-                                                                   QUERY PLAN                                                                   
-------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Filter: (id > 1)
          Pushed Cond: (body @@@ 'running'::text)
          Pushed Order By: (loc <-> '(0,0)'::point)
-         ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance
+         ClickHouse: SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance
 (6 rows)
 
 -- No LIMIT goes along with a sort the store does not do all of, or with
 -- grouping, DISTINCT or row locks between the scan and the LIMIT.
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running' ORDER BY loc <-> '(0,0)', id LIMIT 2;
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
  Limit
    ->  Sort
          Sort Key: ((loc <-> '(0,0)'::point)), id
          ->  Custom Scan (chdb_search) on docs
                Pushed Cond: (body @@@ 'running'::text)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
 (6 rows)
 
 EXPLAIN (COSTS OFF) SELECT DISTINCT ON (loc <-> '(0,0)') id FROM docs WHERE body @@@ 'running' ORDER BY loc <-> '(0,0)' LIMIT 2;
-                                                                      QUERY PLAN                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Unique
          ->  Custom Scan (chdb_search) on docs
                Pushed Cond: (body @@@ 'running'::text)
                Pushed Order By: (loc <-> '(0,0)'::point)
-               ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance
+               ClickHouse: SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance
 (6 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running' ORDER BY loc <-> '(0,0)' LIMIT 2 FOR UPDATE;
-                                                                      QUERY PLAN                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  LockRows
          ->  Custom Scan (chdb_search) on docs
                Pushed Cond: (body @@@ 'running'::text)
                Pushed Order By: (loc <-> '(0,0)'::point)
-               ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance
+               ClickHouse: SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY _distance
 (6 rows)
 
 -- The statement shows masked, as the log is; unmasked it names the table.
 SET chdb_search.mask_oids = off;
 CREATE FUNCTION pg_temp.plan(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$
 BEGIN RETURN QUERY EXECUTE 'EXPLAIN (COSTS OFF) ' || q; END $$;
-SELECT line ~ 'ClickHouse: SELECT ctid FROM idx_\d+\.t_\d+ WHERE' AS names_the_table
+SELECT line ~ 'ClickHouse: SELECT ctid, xmin FROM idx_\d+\.t_\d+ WHERE' AS names_the_table
   FROM pg_temp.plan($$SELECT id FROM docs WHERE body @@@ 'running shoes'$$) line
  WHERE line LIKE '%ClickHouse:%';
  names_the_table 
@@ -266,27 +266,27 @@ SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ 'nothing here'$
 -- the OR and NOT the scan keys cannot, a regex and a wildcard, as operators
 -- and as functions, all members of the column's operator family.
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('trail')) AND price < 100;
-                                                                                       QUERY PLAN                                                                                       
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                          QUERY PLAN                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: (body @@@ 'and(match_all(''running shoes''), not(term(''trail'')))'::query), (price < '100'::numeric)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAllTokens("body", 'running shoes') AND NOT hasToken("body", 'trail'))) AND "price" < toDecimal256('100', 0)
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAllTokens("body", 'running shoes') AND NOT hasToken("body", 'trail'))) AND "price" < toDecimal256('100', 0)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ '^run' AND chdb.wildcard(body, '%shoes%');
-                                                              QUERY PLAN                                                               
----------------------------------------------------------------------------------------------------------------------------------------
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: (body @@/ '^run'::text), wildcard(body, '%shoes%'::text)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)^run') AND (lowerUTF8("body") LIKE lowerUTF8('%shoes%'))
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)^run') AND (lowerUTF8("body") LIKE lowerUTF8('%shoes%'))
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE chdb.query_matches(tags, chdb.term('sport') && !chdb.term('trail'));
-                                                      QUERY PLAN                                                      
-----------------------------------------------------------------------------------------------------------------------
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: query_matches(tags, 'and(term(''sport''), not(term(''trail'')))'::query)
-   ClickHouse: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("tags", 'sport') AND NOT hasAllTokens("tags", 'trail'))
+   ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasAllTokens("tags", 'sport') AND NOT hasAllTokens("tags", 'trail'))
 (3 rows)
 
 SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('trail')) AND price < 100$$);
@@ -382,13 +382,13 @@ SELECT q, d.id FROM (VALUES ('boots'), ('running')) v(q), LATERAL (SELECT id FRO
 (4 rows)
 
 SELECT * FROM pg_temp.explain($$SELECT q, d.id FROM (VALUES ('boots'), ('running')) v(q), LATERAL (SELECT id FROM docs WHERE body @@@ v.q OFFSET 0) d$$, true);
-                                       explain                                        
---------------------------------------------------------------------------------------
+                                          explain                                           
+--------------------------------------------------------------------------------------------
  Nested Loop (actual rows=4.00 loops=1)
    ->  Values Scan on "*VALUES*" (actual rows=2.00 loops=1)
    ->  Custom Scan (chdb_search) on docs (actual rows=2.00 loops=2)
          Pushed Cond: (docs.body @@@ "*VALUES*".column1)
-         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+         ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
          Store Rows: 4
          Store Queries: 2
 (7 rows)
@@ -436,13 +436,13 @@ SELECT * FROM pg_temp.check($$SELECT id FROM docs WHERE body @@@ 'running'$$);
 
 -- The nearest row is the deleted one: the scan asks for more.
 SELECT * FROM pg_temp.explain($$SELECT id FROM docs ORDER BY loc <-> '(0,0)' LIMIT 2$$, true);
-                                                     explain                                                      
-------------------------------------------------------------------------------------------------------------------
+                                                        explain                                                         
+------------------------------------------------------------------------------------------------------------------------
  Limit (actual rows=2.00 loops=1)
    ->  Custom Scan (chdb_search) on docs (actual rows=2.00 loops=1)
          Pushed Order By: (loc <-> '(0,0)'::point)
          Pushed Limit: 2
-         ClickHouse: SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N ORDER BY _distance LIMIT 4
+         ClickHouse: SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N ORDER BY _distance LIMIT 4
          Store Rows: 6
          Store Queries: 2
 (7 rows)

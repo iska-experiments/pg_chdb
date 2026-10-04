@@ -279,6 +279,15 @@ chdb_search_drop_on_abort(Oid indexoid);
 extern void
 chdb_search_drop_statement_on_abort(Oid indexoid, const char* sql);
 
+/* ---- xmin.c ---- */
+/*
+ * Whether a store row's inserting transaction ended without committing, so
+ * that the row is a scan's to skip and VACUUM's to delete. False for a
+ * build's rows, which carry no transaction id.
+ */
+extern bool
+chdb_search_xmin_aborted(Relation heap, TransactionId xmin);
+
 /* ---- scan.c, vacuum.c ---- */
 extern IndexScanDesc
 chdb_search_ambeginscan(Relation index, int nkeys, int norderbys);

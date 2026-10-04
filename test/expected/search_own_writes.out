@@ -35,7 +35,7 @@ SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
 ----
 (0 rows)
@@ -43,7 +43,7 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 \echo -- nothing new to ship: the union alone
 -- nothing new to ship: the union alone
 SELECT id FROM docs WHERE body @@@ 'nomatch';
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
 ----
 (0 rows)
@@ -53,11 +53,11 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 INSERT INTO docs (id, body) VALUES (4, 'staged boots'), (5, 'staged sandals');
 UPDATE docs SET body = 'updated through the index' WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 2 rows
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
 \echo -- a distance ORDER BY orders and limits each leg, then the union
 -- a distance ORDER BY orders and limits each leg, then the union
 SELECT id FROM docs WHERE body @@@ 'nomatch' ORDER BY loc <-> '(0,0)' LIMIT 2;
-DEBUG:  chdb_search select: SELECT ctid, _distance FROM (SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance UNION ALL SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance) ORDER BY _distance
+DEBUG:  chdb_search select: SELECT ctid, xmin, _distance FROM (SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance UNION ALL SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance) ORDER BY _distance
  id 
 ----
 (0 rows)
@@ -83,7 +83,7 @@ SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
 ----
 (0 rows)
@@ -102,14 +102,14 @@ SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 2 rows
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
 ----
 (0 rows)
 
 ROLLBACK TO s;
 SELECT id FROM docs WHERE body @@@ 'nomatch';
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') AND xmin NOT IN (N))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') AND xmin NOT IN (N))
  id 
 ----
 (0 rows)
@@ -126,7 +126,7 @@ SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 2 rows
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
 ----
 (0 rows)
@@ -143,7 +143,7 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 51 rows
 SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 18 rows
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
 ----
 (0 rows)
@@ -151,7 +151,7 @@ DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE h
 INSERT INTO docs (id, body) VALUES (2000, 'tail');
 SELECT id FROM docs WHERE body @@@ 'nomatch';
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
-DEBUG:  chdb_search select: SELECT ctid FROM (SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM (SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') UNION ALL SELECT ctid, xmin FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch'))
  id 
 ----
 (0 rows)
@@ -171,18 +171,18 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'nomatch' ORDER BY loc <-
 DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N_tx_N SYNC
 DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N_tx_N UUID 'N' (ctid UInt64, xmin UInt32, "body" Nullable(String), "loc" Nullable(Point), INDEX "body_idx" "body" TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8("body"))) ENGINE = MergeTree ORDER BY ctid SETTINGS disk = disk(type = 'callback', storage_name = 'pg_N', key_prefix = 'sN_tx_N'), enable_block_number_column = 1, enable_block_offset_column = 1
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N_tx_N (ctid, xmin, "body", "loc") -- 1 rows
-                                                                                                                                                                            QUERY PLAN                                                                                                                                                                             
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@@ 'nomatch'::text)
          Pushed Order By: (loc <-> '(0,0)'::point)
          Pushed Limit: 2
-         ClickHouse: SELECT ctid, _distance FROM (SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2 UNION ALL SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2) ORDER BY _distance LIMIT 2
+         ClickHouse: SELECT ctid, xmin, _distance FROM (SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2 UNION ALL SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2) ORDER BY _distance LIMIT 2
 (6 rows)
 
 SELECT id FROM docs WHERE body @@@ 'nomatch' ORDER BY loc <-> '(0,0)' LIMIT 2;
-DEBUG:  chdb_search select: SELECT ctid, _distance FROM (SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2 UNION ALL SELECT ctid, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2) ORDER BY _distance LIMIT 2
+DEBUG:  chdb_search select: SELECT ctid, xmin, _distance FROM (SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2 UNION ALL SELECT ctid, xmin, L2Distance("loc", (0,0)) AS _distance FROM idx_N.t_N_tx_N WHERE hasAllTokens("body", 'nomatch') ORDER BY _distance LIMIT 2) ORDER BY _distance LIMIT 2
  id 
 ----
 (0 rows)

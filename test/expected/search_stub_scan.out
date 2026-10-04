@@ -96,7 +96,7 @@ SELECT id FROM docs WHERE body @@@ 'x';
 SET chdb_search_stub.ctids = '1';
 SET client_min_messages = debug1;
 SELECT id FROM docs WHERE body @@@ 'x';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
  id 
 ----
   1
@@ -105,14 +105,14 @@ DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body"
 INSERT INTO docs VALUES (4, 'Flushed', '(4,4)');
 DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 1 rows
 SELECT id FROM docs WHERE body @@@ 'x';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
  id 
 ----
   1
 (1 row)
 
 SELECT id FROM docs WHERE body @@@ 'x';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
  id 
 ----
   1

@@ -5,10 +5,12 @@
  * amgettuple fills xs_heaptid from the packed UInt64 ctid ((block << 16) |
  * offset) and the order-by values from the distance columns. xs_recheck is
  * false: ClickHouse has already applied the quals, and the heap fetch still
- * decides visibility, so rows of dead or rolled-back tuples that linger in the
- * store until VACUUM are harmless. A ctid past the heap's end, which a store
- * the fail-safe check has not refused can still hold, is skipped rather than
- * fetched (tid_in_heap), as heapam would raise on it.
+ * decides visibility, so rows of dead tuples that linger in the store until
+ * VACUUM are harmless, but for the rows of a transaction that never
+ * committed, whose TIDs the heap may have given to other rows since: those
+ * are skipped by the transaction id each row carries (xmin.c). A ctid past
+ * the heap's end is skipped rather than fetched, as heapam would raise on
+ * it (chdb_search_stream_fetchable, which the custom scan shares).
  *
  * The index returns no column (amcanreturn is unset), yet the planner may
  * still choose an index-only scan of it when a query needs none, as count(*)
@@ -41,8 +43,7 @@ typedef struct ScanOpaque {
     MemoryContext cxt;
     ChdbStream* stream;
     bool started;
-    BlockNumber heap_nblocks; /* of the heap as last measured, for tid_in_heap */
-    IndexTuple null_itup;     /* for an index-only scan, built on first use */
+    IndexTuple null_itup; /* for an index-only scan, built on first use */
 } ScanOpaque;
 
 /* Reads the request's status, which raises the worker's error, and closes. */
@@ -120,7 +121,10 @@ chdb_search_stream_query(
     return s;
 }
 
-/* A scan's stream: the packed ctid, `ndist` distances, then `nscores` scores. */
+/*
+ * A scan's stream: the packed ctid and the transaction id, then `ndist`
+ * distances and `nscores` scores.
+ */
 ChdbStream*
 chdb_search_stream_open(
     Oid indexoid,
@@ -130,18 +134,19 @@ chdb_search_stream_open(
     int nscores,
     MemoryContext cxt
 ) {
-    int ncols  = 1 + ndist + nscores;
+    int ncols  = 2 + ndist + nscores;
     Oid* types = palloc(sizeof(Oid) * ncols);
 
     types[0] = INT8OID;
-    for (int i = 1; i < ncols; i++) {
-        types[i] = i <= ndist ? FLOAT8OID : FLOAT4OID;
+    types[1] = INT8OID;
+    for (int i = 2; i < ncols; i++) {
+        types[i] = i < 2 + ndist ? FLOAT8OID : FLOAT4OID;
     }
     return chdb_search_stream_query(indexoid, generation, sql, types, ncols, cxt);
 }
 
 bool
-chdb_search_stream_next(ChdbStream* s, ItemPointer tid) {
+chdb_search_stream_next(ChdbStream* s, ItemPointer tid, TransactionId* xmin) {
     if (!s->done) {
         MemoryContextReset(s->rowcxt);
 
@@ -156,6 +161,9 @@ chdb_search_stream_next(ChdbStream* s, ItemPointer tid) {
         if (more) {
             if (tid) {
                 chdb_search_u64_to_tid((uint64)DatumGetInt64(s->vals[0]), tid);
+            }
+            if (xmin) {
+                *xmin = (TransactionId)DatumGetInt64(s->vals[1]);
             }
             return true;
         }
@@ -208,9 +216,8 @@ reset_stream(ScanOpaque* so) {
         so->stream = NULL;
     }
     MemoryContextReset(so->cxt);
-    so->started      = false;
-    so->heap_nblocks = 0;
-    so->null_itup    = NULL;
+    so->started   = false;
+    so->null_itup = NULL;
 }
 
 void
@@ -282,19 +289,39 @@ start(IndexScanDesc scan) {
  * Whether `tid` points into the heap. A store from before the heap lost its
  * last pages, or copied from after they were allocated, names blocks past
  * the heap's end, and heapam reads such a block unconditionally and raises
- * "could not read blocks". The count, kept in *nblocks between calls, is
- * measured again when a block is at or past it: any row the store can
- * return had its block allocated before the flush that sent it, so a fresh
- * count only ever filters phantoms.
+ * "could not read blocks". The count, kept in the stream, is measured again
+ * when a block is at or past it: any row the store can return had its block
+ * allocated before the flush that sent it, so a fresh count only ever
+ * filters phantoms.
  */
-bool
-chdb_search_tid_in_heap(Relation heap, BlockNumber* nblocks, ItemPointer tid) {
+static bool
+tid_in_heap(ChdbStream* s, Relation heap, ItemPointer tid) {
     BlockNumber blk = ItemPointerGetBlockNumber(tid);
 
-    if (blk >= *nblocks) {
-        *nblocks = RelationGetNumberOfBlocks(heap);
+    if (blk >= s->heap_nblocks) {
+        s->heap_nblocks = RelationGetNumberOfBlocks(heap);
     }
-    return blk < *nblocks;
+    return blk < s->heap_nblocks;
+}
+
+/*
+ * Whether the row's transaction ended without committing (xmin.c). A
+ * transaction's rows come together, in ctid order, so the last verdict
+ * answers for most rows.
+ */
+static bool
+row_aborted(ChdbStream* s, Relation heap, TransactionId xmin) {
+    if (xmin != s->last_xmin || !TransactionIdIsValid(xmin)) {
+        s->last_xmin    = xmin;
+        s->last_aborted = chdb_search_xmin_aborted(heap, xmin);
+    }
+    return s->last_aborted;
+}
+
+bool
+chdb_search_stream_fetchable(ChdbStream* s, Relation heap, ItemPointer tid) {
+    return tid_in_heap(s, heap, tid) &&
+           !row_aborted(s, heap, (TransactionId)DatumGetInt64(s->vals[1]));
 }
 
 bool
@@ -308,11 +335,11 @@ chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir) {
         return false;
     }
     do {
-        if (!chdb_search_stream_next(so->stream, &scan->xs_heaptid)) {
+        if (!chdb_search_stream_next(so->stream, &scan->xs_heaptid, NULL)) {
             return false;
         }
-    } while (!chdb_search_tid_in_heap(
-        scan->heapRelation, &so->heap_nblocks, &scan->xs_heaptid
+    } while (!chdb_search_stream_fetchable(
+        so->stream, scan->heapRelation, &scan->xs_heaptid
     ));
 
     scan->xs_recheck = false;
@@ -331,8 +358,8 @@ chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir) {
         scan->xs_itup = so->null_itup;
     }
     for (int i = 0; i < scan->numberOfOrderBys; i++) {
-        scan->xs_orderbyvals[i]  = so->stream->vals[1 + i];
-        scan->xs_orderbynulls[i] = so->stream->nulls[1 + i];
+        scan->xs_orderbyvals[i]  = so->stream->vals[2 + i];
+        scan->xs_orderbynulls[i] = so->stream->nulls[2 + i];
     }
     scan->xs_recheckorderby = false;
     return true;

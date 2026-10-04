@@ -46,20 +46,20 @@ END $$;
 ----------------------------------------------------------------------------
 EXPLAIN (COSTS OFF)
 SELECT id, chdb.score(id) FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC LIMIT 3;
-                                                                                                                                                                     QUERY PLAN                                                                                                                                                                      
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                        QUERY PLAN                                                                                                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@? 'running light'::text)
          Pushed Score: score(id)
          Pushed Limit: 3
-         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') ORDER BY _score DESC, ctid LIMIT 3
+         ClickHouse: SELECT ctid, xmin, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') ORDER BY _score DESC, ctid LIMIT 3
 (6 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT id, chdb.score(id) AS score FROM docs WHERE body @@? 'running light' AND chdb.score(id) > 1 ORDER BY id;
-                                                                                                                                                    QUERY PLAN                                                                                                                                                    
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                       QUERY PLAN                                                                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: id, (score(id))
    Sort Key: docs.id
@@ -68,7 +68,7 @@ SELECT id, chdb.score(id) AS score FROM docs WHERE body @@? 'running light' AND 
          Filter: ((score(docs.id)) > '1'::double precision)
          Pushed Cond: (docs.body @@? 'running light'::text)
          Pushed Score: score(docs.id)
-         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light')
+         ClickHouse: SELECT ctid, xmin, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light')
 (9 rows)
 
 ----------------------------------------------------------------------------
@@ -121,12 +121,12 @@ SELECT id, chdb.score(id) AS score,
 -- A score is per text column searched, summed; the second argument keeps one.
 EXPLAIN (COSTS OFF)
 SELECT id, chdb.score(id), chdb.score(id, 'title') FROM docs WHERE body @@? 'running light' AND title @@@ 'sho';
-                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                      
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: (body @@? 'running light'::text), (title @@@ 'sho'::text)
    Pushed Score: score(id), score(id, 'title'::text)
-   ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0) + log(5.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("title"), ['sho'], 'ngrams(3)'), 0)) AS _score1, toFloat32(log(5.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("title"), ['sho'], 'ngrams(3)'), 0)) AS _score2 FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') AND hasAllTokens("title", 'sho')
+   ClickHouse: SELECT ctid, xmin, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0) + log(5.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("title"), ['sho'], 'ngrams(3)'), 0)) AS _score1, toFloat32(log(5.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("title"), ['sho'], 'ngrams(3)'), 0)) AS _score2 FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') AND hasAllTokens("title", 'sho')
 (4 rows)
 
 SELECT id, chdb.score(id), chdb.score(id, 'body'), chdb.score(id, 'title') FROM docs WHERE body @@? 'running light' AND title @@@ 'sho';
@@ -137,14 +137,14 @@ SELECT id, chdb.score(id), chdb.score(id, 'body'), chdb.score(id, 'title') FROM 
 
 -- A text[] column: its elements are the tokens, lowercased as the index has them.
 EXPLAIN (COSTS OFF) SELECT id, chdb.score(id) FROM docs WHERE tags @@= 'SPORT' ORDER BY chdb.score(id) DESC LIMIT 5;
-                                                                                                                    QUERY PLAN                                                                                                                     
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                       QUERY PLAN                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (tags @@= 'SPORT'::text)
          Pushed Score: score(id)
          Pushed Limit: 5
-         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(arrayMap(x -> lowerUTF8(x), "tags"), ['sport'], 'array'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("tags", 'SPORT') ORDER BY _score DESC, ctid LIMIT 5
+         ClickHouse: SELECT ctid, xmin, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(arrayMap(x -> lowerUTF8(x), "tags"), ['sport'], 'array'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("tags", 'SPORT') ORDER BY _score DESC, ctid LIMIT 5
 (6 rows)
 
 SELECT id, chdb.score(id) FROM docs WHERE tags @@= 'SPORT' ORDER BY chdb.score(id) DESC LIMIT 5;
@@ -169,15 +169,15 @@ SELECT id, chdb.score(id) FROM docs WHERE body @@? 'running light' AND chdb.scor
 -- join above the scan, a rescan with another needle
 ----------------------------------------------------------------------------
 EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id), id LIMIT 2;
-                                                                                                                                                       QUERY PLAN                                                                                                                                                       
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                          QUERY PLAN                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Sort
          Sort Key: (score(id)), id
          ->  Custom Scan (chdb_search) on docs
                Pushed Cond: (body @@? 'running light'::text)
                Pushed Score: score(id)
-               ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light')
+               ClickHouse: SELECT ctid, xmin, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light')
 (7 rows)
 
 SELECT id FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id), id LIMIT 2;
@@ -275,14 +275,14 @@ DEALLOCATE q;
 EXPLAIN (COSTS OFF)
 SELECT id FROM docs WHERE body @@@ (chdb.boost(chdb.term('light'), 2) || chdb.term('running'))
  ORDER BY chdb.score(id) DESC LIMIT 3;
-                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                  
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@@ 'or(boost(term(''light''), 2), term(''running''))'::query)
          Pushed Score: score(id)
          Pushed Limit: 3
-         ClickHouse: SELECT ctid, toFloat32(2 * log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0) + log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE (hasToken("body", 'light') OR hasToken("body", 'running')) ORDER BY _score DESC, ctid LIMIT 3
+         ClickHouse: SELECT ctid, xmin, toFloat32(2 * log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0) + log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE (hasToken("body", 'light') OR hasToken("body", 'running')) ORDER BY _score DESC, ctid LIMIT 3
 (6 rows)
 
 SELECT id, chdb.score(id) AS score,
@@ -348,12 +348,12 @@ SELECT id, chdb.score(id) FROM docs WHERE body @@/ 'boot' ORDER BY id;
 SET enable_seqscan = on;
 SET enable_indexscan = off;
 EXPLAIN (COSTS OFF) SELECT id, chdb.score(id) FROM docs WHERE body @@@ 'running';
-                                                                                              QUERY PLAN                                                                                              
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                 QUERY PLAN                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on docs
    Pushed Cond: (body @@@ 'running'::text)
    Pushed Score: score(id)
-   ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+   ClickHouse: SELECT ctid, xmin, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
 (4 rows)
 
 RESET enable_indexscan;
@@ -386,14 +386,14 @@ RESET chdb_search.enable_custom_scan;
 ----------------------------------------------------------------------------
 DELETE FROM docs WHERE id = 3;
 SELECT * FROM pg_temp.explain($$SELECT id FROM docs WHERE body @@? 'running light' ORDER BY chdb.score(id) DESC LIMIT 2$$, true);
-                                                                                                                                                                       explain                                                                                                                                                                       
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                          explain                                                                                                                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit (actual rows=2.00 loops=1)
    ->  Custom Scan (chdb_search) on docs (actual rows=2.00 loops=1)
          Pushed Cond: (body @@? 'running light'::text)
          Pushed Score: score(id)
          Pushed Limit: 2
-         ClickHouse: SELECT ctid, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') ORDER BY _score DESC, ctid LIMIT 4
+         ClickHouse: SELECT ctid, xmin, toFloat32(log(3.5 / 3.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(4.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['light'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAnyTokens("body", 'running light') ORDER BY _score DESC, ctid LIMIT 4
          Store Rows: 5
          Store Queries: 2
 (8 rows)

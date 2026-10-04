@@ -70,7 +70,7 @@ ask(ChdbScoreCache* cache,
     bool typbyval;
     Datum value;
 
-    if (!chdb_search_stream_next(s, NULL) || s->nulls[0]) {
+    if (!chdb_search_stream_next(s, NULL, NULL) || s->nulls[0]) {
         ereport(
             ERROR,
             errcode(ERRCODE_DATA_EXCEPTION),

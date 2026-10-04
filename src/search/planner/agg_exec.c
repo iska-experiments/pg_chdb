@@ -78,7 +78,7 @@ read_store(ChdbAggState* a, TupleTableSlot* slot) {
         st->cxt
     );
     st->store_queries++;
-    while (chdb_search_stream_next(st->stream, NULL)) {
+    while (chdb_search_stream_next(st->stream, NULL, NULL)) {
         chdb_planner_agg_fill(st->spec, st->stream, slot);
         tuplestore_puttupleslot(a->rows, slot);
         st->store_rows++;

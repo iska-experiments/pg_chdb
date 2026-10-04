@@ -7,9 +7,11 @@
  *   chdb_search_stub.ctids        the packed ctids ((block << 16) | offset,
  *                                 so (0,1) is 1 and (1,1) is 65537) a select
  *                                 returns, comma-separated, one row each,
- *                                 with one Float64 column holding the ctid
- *                                 per ` AS _distance` in the statement and
- *                                 one Float32 per ` AS _score`; 'garbage'
+ *                                 with a zero transaction id when the
+ *                                 statement selects xmin, one Float64
+ *                                 column holding the ctid per
+ *                                 ` AS _distance` in the statement and one
+ *                                 Float32 per ` AS _score`; 'garbage'
  *                                 returns bytes that are not a Native block;
  *                                 empty, the default, returns no block at
  *                                 all. A count(), as the aggregate scan sends

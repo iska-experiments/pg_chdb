@@ -267,6 +267,11 @@ sweeps the loser's table out of the engine. A request for a generation the
 engine no longer has fails with `chdb index "name" does not match its
 store`; `REINDEX INDEX` rebuilds it.
 
+Rows the store holds for a transaction that never committed, after a crash
+between its flush and its commit, carry the transaction id that wrote them,
+and a scan skips them as `VACUUM` deletes them; the heap may have given
+their TIDs to other rows since.
+
   [chdb_vector]: ./chdb_vector.md "chdb_vector Docs"
   [query language]: ./chdb_search-query.md "chdb_search Query Language"
   [internals]: ./chdb_search-internals.md "chdb_search Internals"

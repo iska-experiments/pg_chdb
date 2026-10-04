@@ -107,6 +107,17 @@ Postgres to leave out of base backups and `pg_rewind`, as it does every
 `pgsql_tmp`. The `meta` table and the LSN comparison are gone: the store
 and the index are one relation.
 
+**Rows of transactions that never committed.** A flush sends a
+transaction's rows before its commit record, so a crash in between leaves
+rows in the store whose heap tuples are dead, and a pruned tuple's TID is
+reused. Every store row carries its inserting transaction id (`xmin`); a
+scan skips, and VACUUM deletes, the rows whose transaction is known to have
+ended without committing (`xmin.c`), judged against the commit log inside
+the window between the heap's `relfrozenxid` and the next transaction id,
+and taken as committed outside it. This replaces the LSN comparison for
+the one case it caught that recovery does not: it is exact per row, and a
+failed commit after a flush is covered as well.
+
 ## Phase 1 host contract (from the chdb-core review)
 
 The review of the callback disk fixed the host-side rules the worker must
@@ -196,7 +207,7 @@ WAL_NUMBERS_PLACEHOLDER
 
 Two-phase commit: the buffer flushes at `XACT_EVENT_PRE_PREPARE` as it does
 at pre-commit. `ROLLBACK PREPARED` then leaves rows in the store whose heap
-tuples are dead; the visibility recheck hides them and VACUUM removes them.
+tuples are dead; the xmin check hides them and VACUUM removes them.
 
 WAL-G's `backup-push` tars every file under the data directory, and tar has
 no entry for a socket, so it failed while a worker listened on

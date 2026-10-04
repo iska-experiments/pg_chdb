@@ -228,7 +228,7 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "index", "constra
 SET enable_seqscan = off;
 \o /dev/null
 SELECT * FROM kw WHERE inf = 1 AND nan < 2 AND "constraint" = 'x';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "constraint" = 'x' AND "inf" = toFloat64('1') AND "nan" < toFloat64('2')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE "constraint" = 'x' AND "inf" = toFloat64('1') AND "nan" < toFloat64('2')
 \o
 RESET enable_seqscan;
 RESET client_min_messages;
@@ -294,7 +294,7 @@ DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 0 rows
 SET enable_seqscan = off;
 \o /dev/null
 SELECT body FROM mine WHERE body @@@ 'running shoes';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
 RESET client_min_messages;
@@ -306,7 +306,7 @@ SET client_min_messages = debug1;
 SET enable_seqscan = off;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
 RESET client_min_messages;

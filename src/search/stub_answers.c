@@ -62,16 +62,20 @@ count_aliases(const char* sql, const char* alias) {
 }
 
 /*
- * The ctids GUC as one block, with `ndist` Float64 distance columns and
- * `nscores` Float32 score columns, each holding the ctid. Zero for no rows.
+ * The ctids GUC as one block: the ctid, a zero transaction id if `xmin`,
+ * then `ndist` Float64 distance columns and `nscores` Float32 score columns,
+ * each holding the ctid. Zero for no rows.
  */
 static size_t
-encode_ctids(const char* ctids, int ndist, int nscores, void** out) {
+encode_ctids(const char* ctids, bool xmin, int ndist, int nscores, void** out) {
     MemoryContext cxt, old;
     StringInfoData structure;
+    int first = xmin ? 2 : 1; /* the first distance's column */
 
     initStringInfo(&structure);
-    appendStringInfoString(&structure, "ctid UInt64");
+    appendStringInfoString(
+        &structure, xmin ? "ctid UInt64, xmin UInt32" : "ctid UInt64"
+    );
     for (int i = 0; i < ndist; i++) {
         appendStringInfo(&structure, ", _distance%d Float64", i);
     }
@@ -93,12 +97,18 @@ encode_ctids(const char* ctids, int ndist, int nscores, void** out) {
             );
         }
         pgch_append_datum(w, 0, Int64GetDatum((int64)ctid), INT8OID, false);
+        if (xmin) {
+            /* No transaction id, as a build's rows carry none: never judged aborted. */
+            pgch_append_datum(w, 1, Int32GetDatum(0), INT4OID, false);
+        }
         for (int i = 0; i < ndist; i++) {
-            pgch_append_datum(w, 1 + i, Float8GetDatum((double)ctid), FLOAT8OID, false);
+            pgch_append_datum(
+                w, first + i, Float8GetDatum((double)ctid), FLOAT8OID, false
+            );
         }
         for (int i = 0; i < nscores; i++) {
             pgch_append_datum(
-                w, 1 + ndist + i, Float4GetDatum((float4)ctid), FLOAT4OID, false
+                w, first + ndist + i, Float4GetDatum((float4)ctid), FLOAT4OID, false
             );
         }
         p = *end == ',' ? end + 1 : end;
@@ -197,8 +207,10 @@ chdb_stub_answer(const char* sql, Oid indexoid, void** out) {
     if (strncmp(sql, "SELECT count() FROM ", 20) == 0) {
         return encode_count(count_for(sql), out);
     }
+    /* A scan's statement selects the transaction id; the others only the ctid. */
     return encode_ctids(
         chdb_search_stub_ctids,
+        strncmp(sql, "SELECT ctid, xmin", 17) == 0,
         count_aliases(sql, " AS _distance"),
         count_aliases(sql, " AS _score"),
         out

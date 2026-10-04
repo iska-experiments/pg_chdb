@@ -52,13 +52,13 @@ END $$;
 -- Nearest first, the LIMIT in the statement
 ----------------------------------------------------------------------------
 EXPLAIN (COSTS OFF) SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
-                                                                                                                                      QUERY PLAN                                                                                                                                      
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                         QUERY PLAN                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on items
          Pushed Order By: (embedding <=> '[1,0,0]'::vector)
          Pushed Limit: 3
-         ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT 3 SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+         ClickHouse: SELECT ctid, xmin, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT 3 SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
 (5 rows)
 
 SELECT id, embedding <=> '[1,0,0]' AS distance FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 3;
@@ -78,13 +78,13 @@ SELECT * FROM pg_temp.check($$SELECT id FROM items ORDER BY embedding <=> '[1,0,
 -- A hybrid query: the text predicate filters in ClickHouse, the distance
 -- orders what passes, and the LIMIT counts the result.
 EXPLAIN (COSTS OFF) SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,0,1]' LIMIT 2;
-                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on items
          Pushed Cond: (body @@@ 'running'::text)
          Pushed Order By: (embedding <=> '[0,0,1]'::vector)
-         ClickHouse: SELECT ctid, cosineDistance("embedding", [0,0,1]) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY cosineDistance("embedding", [0,0,1]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+         ClickHouse: SELECT ctid, xmin, cosineDistance("embedding", [0,0,1]) AS _distance FROM idx_N.t_N WHERE hasAllTokens("body", 'running') ORDER BY cosineDistance("embedding", [0,0,1]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
 (5 rows)
 
 SELECT id FROM items WHERE body @@@ 'running' ORDER BY embedding <=> '[0,0,1]' LIMIT 2;
@@ -103,21 +103,21 @@ SELECT * FROM pg_temp.check($$SELECT id FROM items WHERE body @@@ 'running' ORDE
 -- Without a LIMIT the search asks for as many rows as the index serves, as
 -- an index scan does; with a filter kept here the LIMIT stays here too.
 EXPLAIN (COSTS OFF) SELECT id FROM items ORDER BY embedding <=> '[1,0,0]';
-                                                                                                                                                           QUERY PLAN                                                                                                                                                           
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                              QUERY PLAN                                                                                                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on items
    Pushed Order By: (embedding <=> '[1,0,0]'::vector)
-   ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+   ClickHouse: SELECT ctid, xmin, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT id FROM items WHERE id > 1 ORDER BY embedding <=> '[1,0,0]' LIMIT 2;
-                                                                                                                                                              QUERY PLAN                                                                                                                                                              
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                 QUERY PLAN                                                                                                                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on items
          Filter: (id > 1)
          Pushed Order By: (embedding <=> '[1,0,0]'::vector)
-         ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+         ClickHouse: SELECT ctid, xmin, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT getSetting('max_limit_for_vector_search_queries') SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
 (5 rows)
 
 SELECT * FROM pg_temp.check($$SELECT id FROM items WHERE id > 1 ORDER BY embedding <=> '[1,0,0]' LIMIT 2$$);
@@ -129,13 +129,13 @@ SELECT * FROM pg_temp.check($$SELECT id FROM items WHERE id > 1 ORDER BY embeddi
 -- The nearest row deleted: the store still has it, the LIMIT is still met.
 DELETE FROM items WHERE id = 1;
 SELECT * FROM pg_temp.explain($$SELECT id FROM items ORDER BY embedding <=> '[1,0,0]' LIMIT 2$$, true);
-                                                                                                                                       explain                                                                                                                                        
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                          explain                                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit (actual rows=2.00 loops=1)
    ->  Custom Scan (chdb_search) on items (actual rows=2.00 loops=1)
          Pushed Order By: (embedding <=> '[1,0,0]'::vector)
          Pushed Limit: 2
-         ClickHouse: SELECT ctid, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT 4 SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+         ClickHouse: SELECT ctid, xmin, cosineDistance("embedding", [1,0,0]) AS _distance FROM idx_N.t_N ORDER BY cosineDistance("embedding", [1,0,0]) LIMIT 4 SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
          Store Rows: 5
          Store Queries: 2
 (7 rows)

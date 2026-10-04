@@ -106,8 +106,8 @@ chdb_search_build_scored_select(
     /* The SELECT list, and the aliases alone, which a merge of two legs selects. */
     initStringInfo(&list);
     initStringInfo(&merged);
-    appendStringInfoString(&list, "SELECT ctid");
-    appendStringInfoString(&merged, "SELECT ctid");
+    appendStringInfoString(&list, "SELECT ctid, xmin");
+    appendStringInfoString(&merged, "SELECT ctid, xmin");
     for (int i = 0; i < norderbys; i++) {
         appendStringInfo(
             &list, ", %s AS ", chdb_search_order_expr(index, cols, &orderbys[i])

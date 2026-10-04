@@ -104,7 +104,7 @@ chdb_search_query_from_string(const char* s);
 /*
  * Builds
  *
- *   SELECT ctid[, <distance> AS _distance] FROM idx_<oid>.t_<generation>
+ *   SELECT ctid, xmin[, <distance> AS _distance] FROM idx_<oid>.t_<generation>
  *   [WHERE <keys>] [ORDER BY _distance] [LIMIT n]
  *
  * from the scan keys and order-by keys an index scan receives. Several

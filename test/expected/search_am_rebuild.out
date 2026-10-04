@@ -109,7 +109,7 @@ DEBUG:  chdb_search exec: DROP TABLE IF EXISTS idx_N.t_N SYNC
 SET enable_seqscan = off;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ 'running shoes';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 \o
 RESET enable_seqscan;
 ----------------------------------------------------------------------------

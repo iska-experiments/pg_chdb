@@ -84,7 +84,7 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ 'running' ORDER BY loc <-
 SET chdb_search.mask_oids = off;
 CREATE FUNCTION pg_temp.plan(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$
 BEGIN RETURN QUERY EXECUTE 'EXPLAIN (COSTS OFF) ' || q; END $$;
-SELECT line ~ 'ClickHouse: SELECT ctid FROM idx_\d+\.t_\d+ WHERE' AS names_the_table
+SELECT line ~ 'ClickHouse: SELECT ctid, xmin FROM idx_\d+\.t_\d+ WHERE' AS names_the_table
   FROM pg_temp.plan($$SELECT id FROM docs WHERE body @@@ 'running shoes'$$) line
  WHERE line LIKE '%ClickHouse:%';
 SET chdb_search.mask_oids = on;

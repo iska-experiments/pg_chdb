@@ -30,15 +30,15 @@ END $$;
 -- Plans
 ----------------------------------------------------------------------------
 EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'running shoes';
-                                            QUERY PLAN                                            
---------------------------------------------------------------------------------------------------
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search aggregate)
    Pushed Cond: (body @@@ 'running shoes'::text)
    ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
    ->  Aggregate
          ->  Custom Scan (chdb_search) on docs
                Pushed Cond: (body @@@ 'running shoes'::text)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 (7 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -57,27 +57,27 @@ SELECT author, count(*), count(price), min(price), max(price), sum(price), avg(p
          ->  Custom Scan (chdb_search) on public.docs
                Output: author, price
                Pushed Cond: has_all_tokens(docs.body, 'shoes'::text), (docs.price < '100'::numeric)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes') AND "price" < toDecimal256('100', 0)
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes') AND "price" < toDecimal256('100', 0)
 (12 rows)
 
 EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'shoes' AND id > 1;
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
+                                        QUERY PLAN                                        
+------------------------------------------------------------------------------------------
  Aggregate
    ->  Custom Scan (chdb_search) on docs
          Filter: (id > 1)
          Pushed Cond: (body @@@ 'shoes'::text)
-         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes')
+         ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'shoes')
 (5 rows)
 
 SET chdb_search.enable_aggregate_pushdown = off;
 EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'running shoes';
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
  Aggregate
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@@ 'running shoes'::text)
-         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+         ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
 (4 rows)
 
 RESET chdb_search.enable_aggregate_pushdown;
@@ -88,8 +88,8 @@ RESET chdb_search.enable_aggregate_pushdown;
 -- and a scan skips, so the two answers differ.
 SET chdb_search_stub.ctids = '1,2,65537';
 SELECT * FROM pg_temp.explain($$SELECT count(*) FROM docs WHERE body @@@ 'x'$$, true);
-                                       explain                                        
---------------------------------------------------------------------------------------
+                                          explain                                           
+--------------------------------------------------------------------------------------------
  Custom Scan (chdb_search aggregate) (actual rows=1.00 loops=1)
    Pushed Cond: (body @@@ 'x'::text)
    ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
@@ -97,7 +97,7 @@ SELECT * FROM pg_temp.explain($$SELECT count(*) FROM docs WHERE body @@@ 'x'$$, 
    ->  Aggregate (never executed)
          ->  Custom Scan (chdb_search) on docs (never executed)
                Pushed Cond: (body @@@ 'x'::text)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
                Store Rows: 0
 (9 rows)
 
@@ -121,8 +121,8 @@ EXECUTE c;
 
 INSERT INTO docs VALUES (4, 'Running socks', 'cid', 5.00);
 SELECT * FROM pg_temp.explain($$EXECUTE c$$, true);
-                                       explain                                        
---------------------------------------------------------------------------------------
+                                          explain                                           
+--------------------------------------------------------------------------------------------
  Custom Scan (chdb_search aggregate) (actual rows=1.00 loops=1)
    Pushed Cond: (body @@@ 'x'::text)
    ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
@@ -131,7 +131,7 @@ SELECT * FROM pg_temp.explain($$EXECUTE c$$, true);
    ->  Aggregate (actual rows=1.00 loops=1)
          ->  Custom Scan (chdb_search) on docs (actual rows=2.00 loops=1)
                Pushed Cond: (body @@@ 'x'::text)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
                Store Rows: 3
 (10 rows)
 
@@ -142,18 +142,18 @@ EXECUTE c;
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT count(*) FROM docs WHERE body @@@ 'x';
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
  Aggregate
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@@ 'x'::text)
-         ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+         ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
 (4 rows)
 
 VACUUM docs;
 SELECT * FROM pg_temp.explain($$EXECUTE c$$, true);
-                                       explain                                        
---------------------------------------------------------------------------------------
+                                          explain                                           
+--------------------------------------------------------------------------------------------
  Custom Scan (chdb_search aggregate) (actual rows=1.00 loops=1)
    Pushed Cond: (body @@@ 'x'::text)
    ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
@@ -161,7 +161,7 @@ SELECT * FROM pg_temp.explain($$EXECUTE c$$, true);
    ->  Aggregate (never executed)
          ->  Custom Scan (chdb_search) on docs (never executed)
                Pushed Cond: (body @@@ 'x'::text)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
                Store Rows: 0
 (9 rows)
 
@@ -211,22 +211,22 @@ RESET chdb_search_stub.meta;
 PREPARE c AS SELECT count(*) FROM docs WHERE body @@@ 'x';
 SET plan_cache_mode = force_generic_plan;
 EXPLAIN (COSTS OFF) EXECUTE c;
-                                      QUERY PLAN                                      
---------------------------------------------------------------------------------------
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
  Custom Scan (chdb_search aggregate)
    Pushed Cond: (body @@@ 'x'::text)
    ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
    ->  Aggregate
          ->  Custom Scan (chdb_search) on docs
                Pushed Cond: (body @@@ 'x'::text)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
 (7 rows)
 
 SET chdb_search_stub.meta = 'none';
 SET chdb_search.unavailable_index = skip;
 SELECT * FROM pg_temp.explain($$EXECUTE c$$, true);
-                                       explain                                        
---------------------------------------------------------------------------------------
+                                          explain                                           
+--------------------------------------------------------------------------------------------
  Custom Scan (chdb_search aggregate) (actual rows=1.00 loops=1)
    Pushed Cond: (body @@@ 'x'::text)
    ClickHouse: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
@@ -235,7 +235,7 @@ SELECT * FROM pg_temp.explain($$EXECUTE c$$, true);
    ->  Aggregate (actual rows=1.00 loops=1)
          ->  Custom Scan (chdb_search) on docs (actual rows=0.00 loops=1)
                Pushed Cond: (body @@@ 'x'::text)
-               ClickHouse: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
+               ClickHouse: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAllTokens("body", 'x')
                Store Rows: 0
 (10 rows)
 

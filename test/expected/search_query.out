@@ -249,15 +249,15 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@/ 'run+ing' AND body @@% 'R
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs WHERE body @@/ 'run+ing';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)run+ing')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)run+ing')
 SELECT id FROM docs WHERE body @@% 'Run%';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (lowerUTF8("body") LIKE lowerUTF8('Run%'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (lowerUTF8("body") LIKE lowerUTF8('Run%'))
 SELECT id FROM docs WHERE html @@/ 'bold' AND plain @@% 'Pla%';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(extractTextFromHTML("html"), 'bold') AND ("plain" LIKE 'Pla%')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE match(extractTextFromHTML("html"), 'bold') AND ("plain" LIKE 'Pla%')
 SELECT id FROM docs WHERE raw @@/ 'hyphen ated' AND raw @@% 'hyphen%';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8(replaceAll(raw, '-', ' ')), '(?i)hyphen ated') AND (lowerUTF8(replaceAll(raw, '-', ' ')) LIKE (SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen%' AS "raw")))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE match(lowerUTF8(replaceAll(raw, '-', ' ')), '(?i)hyphen ated') AND (lowerUTF8(replaceAll(raw, '-', ' ')) LIKE (SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen%' AS "raw")))
 SELECT id FROM docs WHERE body @@/ E'it''s \\d+' AND body @@% E'50\\% ''off''%';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)it\'s \\d+') AND (lowerUTF8("body") LIKE lowerUTF8('50\\% \'off\'%'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE match(lowerUTF8("body"), '(?i)it\'s \\d+') AND (lowerUTF8("body") LIKE lowerUTF8('50\\% \'off\'%'))
 \o
 RESET client_min_messages;
 -- An array column has no pattern operators.
@@ -279,22 +279,22 @@ EXPLAIN (COSTS OFF) SELECT id FROM docs WHERE body @@@ (chdb.match('running') &&
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ chdb.match('running shoes');
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAnyTokens("body", 'running shoes')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE hasAnyTokens("body", 'running shoes')
 SELECT id FROM docs WHERE body @@@ (chdb.match_all('running shoes') && !chdb.term('boots'));
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAllTokens("body", 'running shoes') AND NOT hasToken("body", 'boots')))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAllTokens("body", 'running shoes') AND NOT hasToken("body", 'boots')))
 SELECT id FROM docs WHERE body @@@ (chdb.term('a') || chdb.phrase('b c') || chdb.boost(chdb.regex('d+'), 2));
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasToken("body", 'a') OR hasPhrase("body", 'b c') OR match(lowerUTF8("body"), '(?i)d+'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasToken("body", 'a') OR hasPhrase("body", 'b c') OR match(lowerUTF8("body"), '(?i)d+'))
 -- A text column with a NOT in its tree is guarded against NULL, which the
 -- strict operator never matches while ClickHouse's NOT false would.
 SELECT id FROM docs WHERE body @@@ !(chdb.wildcard('a%') && chdb.term('b')) AND body @@= 'c';
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE ("body" IS NOT NULL AND NOT ((lowerUTF8("body") LIKE lowerUTF8('a%')) AND hasToken("body", 'b'))) AND hasToken("body", 'c')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE ("body" IS NOT NULL AND NOT ((lowerUTF8("body") LIKE lowerUTF8('a%')) AND hasToken("body", 'b'))) AND hasToken("body", 'c')
 SELECT id FROM docs WHERE tags @@@ !chdb.term('sport');
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE NOT hasAllTokens("tags", 'sport')
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE NOT hasAllTokens("tags", 'sport')
 SELECT id FROM docs WHERE tags @@@ chdb.any_of(chdb.term('sport'), chdb.match_all('trail'));
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("tags", 'sport') OR hasAllTokens("tags", 'trail'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasAllTokens("tags", 'sport') OR hasAllTokens("tags", 'trail'))
 -- A leaf naming another column of the index searches that column.
 SELECT id FROM docs WHERE body @@@ (chdb.term('a') && chdb.in_column(chdb.term('b'), 'html') && chdb.in_column(chdb.match('c'), 'tags'));
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasToken("body", 'a') AND hasToken("html", 'b') AND hasAnyTokens("tags", 'c'))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasToken("body", 'a') AND hasToken("html", 'b') AND hasAnyTokens("tags", 'c'))
 \o
 RESET client_min_messages;
 -- A phrase with slop is hasAllTokens, which the index answers, and a check
@@ -303,13 +303,13 @@ RESET client_min_messages;
 SET client_min_messages = debug1;
 \o /dev/null
 SELECT id FROM docs WHERE body @@@ chdb.phrase('running shoes', 2);
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("body", 'running shoes') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens(lowerUTF8('running shoes'), 'splitByNonAlpha')) <= 2, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8("body"), 'splitByNonAlpha')), tokens(lowerUTF8("body"), 'splitByNonAlpha')))), arraySlice(tokens(lowerUTF8('running shoes'), 'splitByNonAlpha'), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens(lowerUTF8('running shoes'), 'splitByNonAlpha')[1], arrayEnumerate(tokens(lowerUTF8("body"), 'splitByNonAlpha')), tokens(lowerUTF8("body"), 'splitByNonAlpha')))))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasAllTokens("body", 'running shoes') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens(lowerUTF8('running shoes'), 'splitByNonAlpha')) <= 2, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8("body"), 'splitByNonAlpha')), tokens(lowerUTF8("body"), 'splitByNonAlpha')))), arraySlice(tokens(lowerUTF8('running shoes'), 'splitByNonAlpha'), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens(lowerUTF8('running shoes'), 'splitByNonAlpha')[1], arrayEnumerate(tokens(lowerUTF8("body"), 'splitByNonAlpha')), tokens(lowerUTF8("body"), 'splitByNonAlpha')))))
 SELECT id FROM docs WHERE ng @@@ chdb.phrase('gr am', 1) AND sep @@@ chdb.phrase('a c', 1);
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("ng", 'gr am') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens(lowerUTF8('gr am'), 'ngrams', 2)) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8("ng"), 'ngrams', 2)), tokens(lowerUTF8("ng"), 'ngrams', 2)))), arraySlice(tokens(lowerUTF8('gr am'), 'ngrams', 2), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens(lowerUTF8('gr am'), 'ngrams', 2)[1], arrayEnumerate(tokens(lowerUTF8("ng"), 'ngrams', 2)), tokens(lowerUTF8("ng"), 'ngrams', 2))))) AND (hasAllTokens("sep", 'a c') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens(lowerUTF8('a c'), 'splitByString', [' ', ','])) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])), tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])))), arraySlice(tokens(lowerUTF8('a c'), 'splitByString', [' ', ',']), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens(lowerUTF8('a c'), 'splitByString', [' ', ','])[1], arrayEnumerate(tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])), tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])))))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasAllTokens("ng", 'gr am') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens(lowerUTF8('gr am'), 'ngrams', 2)) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8("ng"), 'ngrams', 2)), tokens(lowerUTF8("ng"), 'ngrams', 2)))), arraySlice(tokens(lowerUTF8('gr am'), 'ngrams', 2), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens(lowerUTF8('gr am'), 'ngrams', 2)[1], arrayEnumerate(tokens(lowerUTF8("ng"), 'ngrams', 2)), tokens(lowerUTF8("ng"), 'ngrams', 2))))) AND (hasAllTokens("sep", 'a c') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens(lowerUTF8('a c'), 'splitByString', [' ', ','])) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])), tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])))), arraySlice(tokens(lowerUTF8('a c'), 'splitByString', [' ', ',']), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens(lowerUTF8('a c'), 'splitByString', [' ', ','])[1], arrayEnumerate(tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])), tokens(lowerUTF8("sep"), 'splitByString', [' ', ','])))))
 SELECT id FROM docs WHERE plain @@@ chdb.phrase('Plain text', 1);
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("plain", 'Plain text') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens('Plain text', 'splitByNonAlpha')) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens("plain", 'splitByNonAlpha')), tokens("plain", 'splitByNonAlpha')))), arraySlice(tokens('Plain text', 'splitByNonAlpha'), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens('Plain text', 'splitByNonAlpha')[1], arrayEnumerate(tokens("plain", 'splitByNonAlpha')), tokens("plain", 'splitByNonAlpha')))))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasAllTokens("plain", 'Plain text') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens('Plain text', 'splitByNonAlpha')) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens("plain", 'splitByNonAlpha')), tokens("plain", 'splitByNonAlpha')))), arraySlice(tokens('Plain text', 'splitByNonAlpha'), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens('Plain text', 'splitByNonAlpha')[1], arrayEnumerate(tokens("plain", 'splitByNonAlpha')), tokens("plain", 'splitByNonAlpha')))))
 SELECT id FROM docs WHERE raw @@@ chdb.phrase('hyphen ated', 1);
-DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE (hasAllTokens("raw", 'hyphen ated') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens((SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen ated' AS "raw")), 'splitByNonAlpha')) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')), tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')))), arraySlice(tokens((SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen ated' AS "raw")), 'splitByNonAlpha'), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens((SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen ated' AS "raw")), 'splitByNonAlpha')[1], arrayEnumerate(tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')), tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')))))
+DEBUG:  chdb_search select: SELECT ctid, xmin FROM idx_N.t_N WHERE (hasAllTokens("raw", 'hyphen ated') AND arrayExists(d -> d >= 0 AND d + 1 - length(tokens((SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen ated' AS "raw")), 'splitByNonAlpha')) <= 1, arrayMap(i -> toInt64(arrayFold((acc, t) -> if(acc = 0, toUInt32(0), arrayFirst(p -> p > acc, arrayFilter((p, x) -> x = t, arrayEnumerate(tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')), tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')))), arraySlice(tokens((SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen ated' AS "raw")), 'splitByNonAlpha'), 2), i)) - toInt64(i), arrayFilter((p, x) -> x = tokens((SELECT lowerUTF8(replaceAll(raw, '-', ' ')) FROM (SELECT 'hyphen ated' AS "raw")), 'splitByNonAlpha')[1], arrayEnumerate(tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')), tokens(lowerUTF8(replaceAll(raw, '-', ' ')), 'splitByNonAlpha')))))
 \o
 RESET client_min_messages;
 SELECT id FROM docs WHERE body @@@ chdb.in_column(chdb.term('a'), 'nope');

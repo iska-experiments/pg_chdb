@@ -1,7 +1,8 @@
 /*
  * VACUUM. The store holds every ctid ever inserted, so ambulkdelete asks the
- * callback about each one and removes the dead ones with a DELETE run as a
- * lightweight update: ClickHouse patches the parts holding the rows, found
+ * callback about each one, and the rows of transactions that never
+ * committed (xmin.c), whose TIDs the heap may have given out again, and
+ * removes the dead ones with a DELETE run as a lightweight update: ClickHouse patches the parts holding the rows, found
  * by the block number and offset columns the table keeps (ddl.c), and never
  * rewrites a part with a mutation, which the Phase 1 plain_rewritable disk
  * rejects ("Mutations are not supported for immutable disk") and which the
@@ -81,6 +82,7 @@ chdb_search_ambulkdelete(
     uint64* dead = NULL;
     size_t ndead = 0, cap = 0;
     ItemPointerData tid;
+    TransactionId xmin;
 
     bool skip;
 
@@ -115,8 +117,9 @@ chdb_search_ambulkdelete(
     );
 
     vs->live = 0;
-    while (chdb_search_stream_next(s, &tid)) {
-        if (!callback(&tid, callback_state)) {
+    while (chdb_search_stream_next(s, &tid, &xmin)) {
+        if (!callback(&tid, callback_state) &&
+            !chdb_search_xmin_aborted(info->heaprel, xmin)) {
             vs->live++;
         } else {
             if (ndead == cap) {
@@ -222,7 +225,7 @@ sweep_tables(Relation index) {
         cxt
     );
 
-    while (chdb_search_stream_next(s, NULL)) {
+    while (chdb_search_stream_next(s, NULL, NULL)) {
         char* name = TextDatumGetCString(s->vals[0]);
         uint64 found, fxid;
 

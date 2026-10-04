@@ -150,8 +150,8 @@ fill_scan_slot(ChdbScanState* st, TupleTableSlot* slot) {
         }
     }
     for (int i = 0; i < list_length(st->spec->outputs); i++) {
-        slot->tts_values[st->nvars + i] = st->stream->vals[1 + ndist + i];
-        slot->tts_isnull[st->nvars + i] = st->stream->nulls[1 + ndist + i];
+        slot->tts_values[st->nvars + i] = st->stream->vals[2 + ndist + i];
+        slot->tts_isnull[st->nvars + i] = st->stream->nulls[2 + ndist + i];
     }
     ExecStoreVirtualTuple(slot);
 }
@@ -239,7 +239,7 @@ next_tuple(ScanState* ss) {
     while (st->stream) {
         bool call_again = false, all_dead = false;
 
-        if (!chdb_search_stream_next(st->stream, &tid)) {
+        if (!chdb_search_stream_next(st->stream, &tid, NULL)) {
             if (!ask_again(st)) {
                 break;
             }
@@ -247,7 +247,7 @@ next_tuple(ScanState* ss) {
         }
         st->got++;
         st->store_rows++;
-        if (!chdb_search_tid_in_heap(ss->ss_currentRelation, &st->heap_nblocks, &tid) ||
+        if (!chdb_search_stream_fetchable(st->stream, ss->ss_currentRelation, &tid) ||
             (st->seen && !first_time(st, &tid))) {
             continue;
         }
@@ -290,15 +290,14 @@ chdb_planner_reset(ChdbScanState* st) {
         ExecClearTuple(st->heap_slot); /* the last row's buffer pin */
     }
     MemoryContextReset(st->cxt); /* takes the hash table with it */
-    st->seen         = NULL;
-    st->sql          = NULL;
-    st->built        = false;
-    st->started      = false;
-    st->skip         = false;
-    st->asked        = -1;
-    st->got          = 0;
-    st->returned     = 0;
-    st->heap_nblocks = 0;
+    st->seen     = NULL;
+    st->sql      = NULL;
+    st->built    = false;
+    st->started  = false;
+    st->skip     = false;
+    st->asked    = -1;
+    st->got      = 0;
+    st->returned = 0;
 }
 
 static void

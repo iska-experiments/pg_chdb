@@ -279,7 +279,6 @@ typedef struct ChdbScanState {
     bool started;
     bool skip;        /* the store is unavailable and the GUC says skip */
     bool exec_params; /* an argument comes from a subplan */
-    BlockNumber heap_nblocks;
 } ChdbScanState;
 
 /* ExprStates for the pushed arguments, quals then orderbys, and the recheck. */

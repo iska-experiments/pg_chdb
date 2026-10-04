@@ -29,14 +29,14 @@ DEBUG:  chdb_search select: SELECT tokens(lowerUTF8('Running Shoes'), 'splitByNo
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['running'])
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['shoes'])
-                                                                                                                                                                     QUERY PLAN                                                                                                                                                                      
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                        QUERY PLAN                                                                                                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@@ 'Running Shoes'::text)
          Pushed Score: score(id)
          Pushed Limit: 2
-         ClickHouse: SELECT ctid, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'Running Shoes') ORDER BY _score DESC, ctid LIMIT 2
+         ClickHouse: SELECT ctid, xmin, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'Running Shoes') ORDER BY _score DESC, ctid LIMIT 2
 (6 rows)
 
 -- A chdb.query is scored by its token leaves, each weighed by the boosts
@@ -49,27 +49,27 @@ DEBUG:  chdb_search select: SELECT tokens(lowerUTF8('Running Shoes'), 'splitByNo
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['running'])
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['shoes'])
-                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    ->  Custom Scan (chdb_search) on docs
          Pushed Cond: (body @@@ 'and(boost(match(''Running Shoes''), 2), not(term(''boots'')), regex(''sho''))'::query)
          Pushed Score: score(id)
          Pushed Limit: 2
-         ClickHouse: SELECT ctid, toFloat32(2 * log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + 2 * log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAnyTokens("body", 'Running Shoes') AND NOT hasToken("body", 'boots') AND match(lowerUTF8("body"), '(?i)sho'))) ORDER BY _score DESC, ctid LIMIT 2
+         ClickHouse: SELECT ctid, xmin, toFloat32(2 * log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + 2 * log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE ("body" IS NOT NULL AND (hasAnyTokens("body", 'Running Shoes') AND NOT hasToken("body", 'boots') AND match(lowerUTF8("body"), '(?i)sho'))) ORDER BY _score DESC, ctid LIMIT 2
 (6 rows)
 
 RESET client_min_messages;
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT id, chdb.score(id) FROM docs WHERE body @@@ 'Running Shoes' AND price < 100 AND id > 1;
-                                                                                                                                                                   QUERY PLAN                                                                                                                                                                    
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                      QUERY PLAN                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (chdb_search) on public.docs
    Output: id, (score(id))
    Filter: (docs.id > 1)
    Pushed Cond: (docs.body @@@ 'Running Shoes'::text), (docs.price < '100'::numeric)
    Pushed Score: score(docs.id)
-   ClickHouse: SELECT ctid, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'Running Shoes') AND "price" < toDecimal256('100', 0)
+   ClickHouse: SELECT ctid, xmin, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'Running Shoes') AND "price" < toDecimal256('100', 0)
 (6 rows)
 
 ----------------------------------------------------------------------------
@@ -97,9 +97,9 @@ DEBUG:  chdb_search select: SELECT tokens(lowerUTF8('boots'), 'splitByNonAlpha')
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['running'])
 DEBUG:  chdb_search select: SELECT count() FROM idx_N.t_N WHERE hasAllTokens("body", ['shoes'])
-DEBUG:  chdb_search select: SELECT ctid, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'boots')
+DEBUG:  chdb_search select: SELECT ctid, xmin, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'boots')
 DEBUG:  chdb_search select: SELECT tokens(lowerUTF8('running'), 'splitByNonAlpha')
-DEBUG:  chdb_search select: SELECT ctid, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
+DEBUG:  chdb_search select: SELECT ctid, xmin, toFloat32(log(2.5 / 1.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['running'], 'splitByNonAlpha'), 0) + log(1.5 / 2.5 + 1) * ifNull(hasAllTokens(lowerUTF8("body"), ['shoes'], 'splitByNonAlpha'), 0)) AS _score FROM idx_N.t_N WHERE hasAllTokens("body", 'running')
     q    | id | score 
 ---------+----+-------
  boots   |  1 |     1
