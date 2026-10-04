@@ -128,6 +128,22 @@ extern char*
 chdb_search_skip_index_args(Relation index, int attno, const ChdbColumn* column);
 extern bool
 chdb_search_wants_phrase_search(Relation index, const ChdbColumn* cols);
+/* The column's tokenizer as the DDL and tokens() spell it: `ngrams(3)`. */
+extern char*
+chdb_search_tokenizer(Relation index, int attno, const ChdbColumn* column);
+/*
+ * `expr` under the column's preprocessor, as a query evaluates it: element
+ * by element when `array` says the expression is one, as a text[] column is
+ * and its needle is not.
+ */
+extern char*
+chdb_search_preprocess(
+    Relation index,
+    int attno,
+    const ChdbColumn* column,
+    const char* expr,
+    bool array
+);
 
 /* ---- columns.c ---- */
 /* `"<name>"`, with quotes and backslashes escaped, whatever the name. */
