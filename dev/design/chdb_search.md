@@ -413,3 +413,34 @@ over the needles expanded by the index tokenizer); regex and wildcard leaves
 use `re2replaceregexpall` when pg_re2 is present, Postgres regex otherwise.
 Outside a custom scan the functions still work with default-tokenizer
 semantics. Cost is proportional to rows returned after LIMIT.
+
+## Next phase: lexical model and repository split (2026-10-05)
+
+Decisions:
+
+* **Repository.** `chdb_search` and `chdb_vector` move to
+  `iska-experiments/pg_chdb_search`, carrying their commit history. The new
+  repository builds against an installed pg_chdb (headers and the `chdb`
+  extension at runtime); pg_chdb keeps `chdb`, `chdb_hook` and the shared
+  transport, which go upstream. chdb-core is a git submodule pinned to the
+  callback-disk branch; `make libchdb` builds it from source, and a release
+  workflow publishes `libchdb-<commit>-linux-amd64.tar.gz` so CI and `make`
+  download by default. CI runs on the homelab runners as first-class config.
+* **Lexical model.** Every `text_ops`/`text_array_ops` column materializes
+  `toks Array(String)`, `tf Map(String, UInt32)` and `doc_len UInt32` in the
+  store (`ranking = off` per column disables them); the index's average
+  document length lives in the metapage.
+* **Scoring.** `chdb.score(k)` is BM25 by default (`k1 = 1.2`, `b = 0.75` as
+  index options, overridable per query as `chdb.score(k, k1 => 0.9, b =>
+  0.4)`), `chdb.score(k, method => 'idf')` keeps the overlap score for
+  columns without lexical columns, and `chdb.max_score(k)` gives the
+  normalisation denominator so scores can be shown as percentages.
+* **Stemming** through a tokenizer postprocessor `stem(lang, token)` on index
+  and needle, which needs libchdb built with `ENABLE_NLP=1` (from the
+  submodule); Postgres fallbacks use the matching Snowball dictionaries.
+  **Fuzzy** terms expand the needle against the index's token dictionary by
+  `editDistanceUTF8 <= d`. **More-like-this** takes a row's top tf·idf tokens.
+  **Highlighting** uses the stored tokens for positions and pg_re2 for regex
+  leaves.
+* **Writes.** The worker coalesces commit flushes into fewer parts, measured
+  by a benchmark against ParadeDB on the Hacker News dataset.
