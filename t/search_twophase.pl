@@ -80,4 +80,25 @@ is $node->safe_psql(postgres => $staged), 0, 'The staged rows should wait for th
 $node->safe_psql(postgres => "COMMIT PREPARED 'staged'");
 is $node->safe_psql(postgres => $staged), 5000, 'COMMIT PREPARED should make them searchable';
 
+# A search inside the transaction stages the rows buffered so far, which
+# it reads with the table's, and PREPARE attaches the staging table as
+# COMMIT would.
+$offset = -s $node->logfile;
+my ($out, $err) = ('', '');
+$node->psql(postgres => q{
+    BEGIN;
+    INSERT INTO docs VALUES (6000, 'searched boots');
+    SET LOCAL enable_seqscan = off;
+    SELECT id FROM docs WHERE body @@@ 'searched';
+    PREPARE TRANSACTION 'searched';
+}, stdout => \$out, stderr => \$err);
+is $out, 6000, 'The transaction should find its own row';
+ok $node->log_contains(
+    qr/chdb_search exec: ALTER TABLE idx_$oid\.t_\d+ ATTACH PARTITION tuple\(\) FROM idx_$oid\.t_\d+_tx_\d+/,
+    $offset), 'PREPARE should attach the staging table the search made';
+unlike store_tables($node, $oid), qr/_tx_/, 'PREPARE should drop it';
+is search_ids($node, 'searched'), '', 'Another session should not find the prepared row';
+$node->safe_psql(postgres => "COMMIT PREPARED 'searched'");
+is search_ids($node, 'searched'), 6000, 'COMMIT PREPARED should make it searchable';
+
 done_testing;

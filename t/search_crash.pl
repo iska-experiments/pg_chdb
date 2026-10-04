@@ -1,9 +1,10 @@
 #!/usr/bin/perl
 
 # A backend killed inside a transaction that has staged rows never runs the
-# drop it registered for its staging table. The table is named by the full
-# transaction id, so it is seen to belong to a transaction that is over, and
-# the next VACUUM of the table sweeps it.
+# drop of its staging table. The table is named by the full transaction id,
+# so it is seen to belong to a transaction that is over, and the next VACUUM
+# of the table sweeps it. While the transaction runs, its own searches read
+# the staging table and no other session's do.
 
 use v5.34;
 use strict;
@@ -28,9 +29,16 @@ my $pid = $victim->query_safe('SELECT pg_backend_pid()');
 $victim->query_safe(q{
     BEGIN;
     INSERT INTO docs (id, body)
-    SELECT 1000 + i, repeat('word ', 250) FROM generate_series(1, 120) i;
+    SELECT 1000 + i, 'staged ' || repeat('word ', 250) FROM generate_series(1, 120) i;
 });
 like store_tables($node, $oid), qr/^t_\d+_tx_\d+$/m, 'The transaction should have staged its rows';
+
+# Its own search ships the rest and reads the staging table with the index's;
+# another session's search reads the index's table alone.
+my $search = q{SET enable_seqscan = off; SELECT count(*) FROM docs WHERE body @@@ 'staged'};
+is $victim->query_safe($search), 120, 'The transaction should see its own rows';
+is $node->safe_psql(postgres => $search), 0,
+    'Another session should not see them';
 
 # An uncommitted transaction's WAL need not have reached disk yet. Without
 # it the crash loses the transaction's xid too, which then reads as still to
