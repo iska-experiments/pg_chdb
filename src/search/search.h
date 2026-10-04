@@ -14,6 +14,7 @@
 #include "catalog/pg_opfamily.h"
 #include "commands/vacuum.h"
 #include "lib/stringinfo.h"
+#include "nodes/pathnodes.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
@@ -85,6 +86,27 @@ extern void
 chdb_search_am_init(void);
 extern void
 chdb_search_log_sql(const char* what, const char* sql);
+/* `sql`, or with chdb_search.mask_oids a palloc'd copy with its numbers masked. */
+extern const char*
+chdb_search_mask_sql(const char* sql);
+
+/* ---- am.c ---- */
+/*
+ * The index access method's cost estimate, which is also how the planner
+ * hook tells a chdb index from the others: by the address of this function
+ * in IndexOptInfo, whatever the access method was named.
+ */
+extern void
+chdb_search_costestimate(
+    PlannerInfo* root,
+    IndexPath* path,
+    double loop_count,
+    Cost* indexStartupCost,
+    Cost* indexTotalCost,
+    Selectivity* indexSelectivity,
+    double* indexCorrelation,
+    double* indexPages
+);
 
 /* ---- validate.c ---- */
 extern bool
@@ -300,6 +322,13 @@ chdb_search_stream_next(ChdbStream* s, ItemPointer tid);
 /* Abandons the stream, finishing it only if it ran to the end. */
 extern void
 chdb_search_stream_close(ChdbStream* s);
+/*
+ * Whether `tid` names a block the heap has, so that a store holding blocks
+ * past the heap's end never makes the heap fetch raise; *nblocks caches the
+ * heap's size between calls and starts at zero.
+ */
+extern bool
+chdb_search_tid_in_heap(Relation heap, BlockNumber* nblocks, ItemPointer tid);
 
 /* ---- scan.c, vacuum.c ---- */
 extern IndexScanDesc

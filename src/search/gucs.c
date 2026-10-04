@@ -34,18 +34,16 @@ static const char* const masked_prefixes[] = {
 };
 
 /*
- * Logs a ClickHouse statement at DEBUG1, so tests can assert on what was
- * generated with client_min_messages = debug1. With mask_oids, index OIDs,
- * store generations, transaction ids and WAL positions become N, as they
- * differ from run to run.
+ * The statement as the log and EXPLAIN show it: as is, or with mask_oids
+ * the index OIDs, store generations, transaction ids and WAL positions
+ * replaced by N, as they differ from run to run and tests compare the text.
  */
-void
-chdb_search_log_sql(const char* what, const char* sql) {
+const char*
+chdb_search_mask_sql(const char* sql) {
     StringInfoData buf;
 
     if (!chdb_search_mask_oids) {
-        elog(DEBUG1, "chdb_search %s: %s", what, sql);
-        return;
+        return sql;
     }
     initStringInfo(&buf);
     for (const char* p = sql; *p;) {
@@ -74,7 +72,16 @@ chdb_search_log_sql(const char* what, const char* sql) {
             appendStringInfoChar(&buf, *p++);
         }
     }
-    elog(DEBUG1, "chdb_search %s: %s", what, buf.data);
+    return buf.data;
+}
+
+/*
+ * Logs a ClickHouse statement at DEBUG1, so tests can assert on what was
+ * generated with client_min_messages = debug1.
+ */
+void
+chdb_search_log_sql(const char* what, const char* sql) {
+    elog(DEBUG1, "chdb_search %s: %s", what, chdb_search_mask_sql(sql));
 }
 
 void

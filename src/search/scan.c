@@ -278,18 +278,19 @@ start(IndexScanDesc scan) {
  * Whether `tid` points into the heap. A store from before the heap lost its
  * last pages, or copied from after they were allocated, names blocks past
  * the heap's end, and heapam reads such a block unconditionally and raises
- * "could not read blocks". The count is measured again when a block is at
- * or past it: any row the store can return had its block allocated before
- * the flush that sent it, so a fresh count only ever filters phantoms.
+ * "could not read blocks". The count, kept in *nblocks between calls, is
+ * measured again when a block is at or past it: any row the store can
+ * return had its block allocated before the flush that sent it, so a fresh
+ * count only ever filters phantoms.
  */
-static bool
-tid_in_heap(IndexScanDesc scan, ScanOpaque* so, ItemPointer tid) {
+bool
+chdb_search_tid_in_heap(Relation heap, BlockNumber* nblocks, ItemPointer tid) {
     BlockNumber blk = ItemPointerGetBlockNumber(tid);
 
-    if (blk >= so->heap_nblocks) {
-        so->heap_nblocks = RelationGetNumberOfBlocks(scan->heapRelation);
+    if (blk >= *nblocks) {
+        *nblocks = RelationGetNumberOfBlocks(heap);
     }
-    return blk < so->heap_nblocks;
+    return blk < *nblocks;
 }
 
 bool
@@ -306,7 +307,9 @@ chdb_search_amgettuple(IndexScanDesc scan, ScanDirection dir) {
         if (!chdb_search_stream_next(so->stream, &scan->xs_heaptid)) {
             return false;
         }
-    } while (!tid_in_heap(scan, so, &scan->xs_heaptid));
+    } while (!chdb_search_tid_in_heap(
+        scan->heapRelation, &so->heap_nblocks, &scan->xs_heaptid
+    ));
 
     scan->xs_recheck = false;
     if (scan->xs_want_itup) {

@@ -40,7 +40,7 @@ PG_FUNCTION_INFO_V1(chdb_search_handler);
  * matches, which are streamed without touching index pages, so the generic
  * page cost is scaled down; an unqualified scan stays at the generic cost.
  */
-static void
+void
 chdb_search_costestimate(
     PlannerInfo* root,
     IndexPath* path,
