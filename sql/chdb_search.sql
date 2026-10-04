@@ -80,9 +80,18 @@ LANGUAGE C IMMUTABLE PARALLEL SAFE;
 
 -- Operator classes without options still need the support function: it makes
 -- an unknown option an error, and it gives a columnar_ops class its member.
+-- Support function 1 also tells the access method how a column is stored
+-- and searched: a class naming chdb_search_text_options gets a text skip
+-- index, one naming chdb_search_text_array_options an array one, and any
+-- other a plain column.
 CREATE FUNCTION chdb_search_no_options(internal)
 RETURNS void
 AS 'MODULE_PATHNAME', 'chdb_search_no_options'
+LANGUAGE C IMMUTABLE PARALLEL SAFE;
+
+CREATE FUNCTION chdb_search_text_array_options(internal)
+RETURNS void
+AS 'MODULE_PATHNAME', 'chdb_search_text_array_options'
 LANGUAGE C IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION chdb_search_restrict_sel(internal, oid, internal, integer)
@@ -198,75 +207,77 @@ FOR TYPE text[] USING chdb AS
     OPERATOR 1 @@@ (text[], text),
     OPERATOR 2 @@? (text[], text),
     OPERATOR 3 @@= (text[], text),
-    FUNCTION 1 (text[]) chdb_search_no_options(internal);
+    FUNCTION 1 (text[]) chdb_search_text_array_options(internal);
 
 -- One class for every stored column type, so that columns are written
 -- `author columnar_ops` whatever they hold. It is declared for anyelement; the
 -- comparison operators of each supported type are members of its family.
--- Strategies: 1 =, 2 <, 3 <=, 4 >, 5 >=. Being the only default for types
--- without one of their own, it applies when a column names no class.
+-- Strategies: 11 =, 12 <, 13 <=, 14 >, 15 >=, disjoint from the text search
+-- strategies so that an operator is rendered by its number alone, whatever
+-- class it came from. Being the only default for types without one of their
+-- own, it applies when a column names no class.
 CREATE OPERATOR CLASS columnar_ops
 DEFAULT FOR TYPE anyelement USING chdb AS
     FUNCTION 1 (anyelement) chdb_search_no_options(internal);
 
 ALTER OPERATOR FAMILY columnar_ops USING chdb ADD
-    OPERATOR 1 = (int2, int2),
-    OPERATOR 2 < (int2, int2),
-    OPERATOR 3 <= (int2, int2),
-    OPERATOR 4 > (int2, int2),
-    OPERATOR 5 >= (int2, int2),
-    OPERATOR 1 = (int4, int4),
-    OPERATOR 2 < (int4, int4),
-    OPERATOR 3 <= (int4, int4),
-    OPERATOR 4 > (int4, int4),
-    OPERATOR 5 >= (int4, int4),
-    OPERATOR 1 = (int8, int8),
-    OPERATOR 2 < (int8, int8),
-    OPERATOR 3 <= (int8, int8),
-    OPERATOR 4 > (int8, int8),
-    OPERATOR 5 >= (int8, int8),
-    OPERATOR 1 = (float4, float4),
-    OPERATOR 2 < (float4, float4),
-    OPERATOR 3 <= (float4, float4),
-    OPERATOR 4 > (float4, float4),
-    OPERATOR 5 >= (float4, float4),
-    OPERATOR 1 = (float8, float8),
-    OPERATOR 2 < (float8, float8),
-    OPERATOR 3 <= (float8, float8),
-    OPERATOR 4 > (float8, float8),
-    OPERATOR 5 >= (float8, float8),
-    OPERATOR 1 = (numeric, numeric),
-    OPERATOR 2 < (numeric, numeric),
-    OPERATOR 3 <= (numeric, numeric),
-    OPERATOR 4 > (numeric, numeric),
-    OPERATOR 5 >= (numeric, numeric),
-    OPERATOR 1 = (bool, bool),
-    OPERATOR 2 < (bool, bool),
-    OPERATOR 3 <= (bool, bool),
-    OPERATOR 4 > (bool, bool),
-    OPERATOR 5 >= (bool, bool),
-    OPERATOR 1 = (date, date),
-    OPERATOR 2 < (date, date),
-    OPERATOR 3 <= (date, date),
-    OPERATOR 4 > (date, date),
-    OPERATOR 5 >= (date, date),
-    OPERATOR 1 = (timestamp, timestamp),
-    OPERATOR 2 < (timestamp, timestamp),
-    OPERATOR 3 <= (timestamp, timestamp),
-    OPERATOR 4 > (timestamp, timestamp),
-    OPERATOR 5 >= (timestamp, timestamp),
-    OPERATOR 1 = (timestamptz, timestamptz),
-    OPERATOR 2 < (timestamptz, timestamptz),
-    OPERATOR 3 <= (timestamptz, timestamptz),
-    OPERATOR 4 > (timestamptz, timestamptz),
-    OPERATOR 5 >= (timestamptz, timestamptz),
-    OPERATOR 1 = (uuid, uuid),
-    OPERATOR 2 < (uuid, uuid),
-    OPERATOR 3 <= (uuid, uuid),
-    OPERATOR 4 > (uuid, uuid),
-    OPERATOR 5 >= (uuid, uuid),
-    OPERATOR 1 = (text, text),
-    OPERATOR 2 < (text, text),
-    OPERATOR 3 <= (text, text),
-    OPERATOR 4 > (text, text),
-    OPERATOR 5 >= (text, text);
+    OPERATOR 11 = (int2, int2),
+    OPERATOR 12 < (int2, int2),
+    OPERATOR 13 <= (int2, int2),
+    OPERATOR 14 > (int2, int2),
+    OPERATOR 15 >= (int2, int2),
+    OPERATOR 11 = (int4, int4),
+    OPERATOR 12 < (int4, int4),
+    OPERATOR 13 <= (int4, int4),
+    OPERATOR 14 > (int4, int4),
+    OPERATOR 15 >= (int4, int4),
+    OPERATOR 11 = (int8, int8),
+    OPERATOR 12 < (int8, int8),
+    OPERATOR 13 <= (int8, int8),
+    OPERATOR 14 > (int8, int8),
+    OPERATOR 15 >= (int8, int8),
+    OPERATOR 11 = (float4, float4),
+    OPERATOR 12 < (float4, float4),
+    OPERATOR 13 <= (float4, float4),
+    OPERATOR 14 > (float4, float4),
+    OPERATOR 15 >= (float4, float4),
+    OPERATOR 11 = (float8, float8),
+    OPERATOR 12 < (float8, float8),
+    OPERATOR 13 <= (float8, float8),
+    OPERATOR 14 > (float8, float8),
+    OPERATOR 15 >= (float8, float8),
+    OPERATOR 11 = (numeric, numeric),
+    OPERATOR 12 < (numeric, numeric),
+    OPERATOR 13 <= (numeric, numeric),
+    OPERATOR 14 > (numeric, numeric),
+    OPERATOR 15 >= (numeric, numeric),
+    OPERATOR 11 = (bool, bool),
+    OPERATOR 12 < (bool, bool),
+    OPERATOR 13 <= (bool, bool),
+    OPERATOR 14 > (bool, bool),
+    OPERATOR 15 >= (bool, bool),
+    OPERATOR 11 = (date, date),
+    OPERATOR 12 < (date, date),
+    OPERATOR 13 <= (date, date),
+    OPERATOR 14 > (date, date),
+    OPERATOR 15 >= (date, date),
+    OPERATOR 11 = (timestamp, timestamp),
+    OPERATOR 12 < (timestamp, timestamp),
+    OPERATOR 13 <= (timestamp, timestamp),
+    OPERATOR 14 > (timestamp, timestamp),
+    OPERATOR 15 >= (timestamp, timestamp),
+    OPERATOR 11 = (timestamptz, timestamptz),
+    OPERATOR 12 < (timestamptz, timestamptz),
+    OPERATOR 13 <= (timestamptz, timestamptz),
+    OPERATOR 14 > (timestamptz, timestamptz),
+    OPERATOR 15 >= (timestamptz, timestamptz),
+    OPERATOR 11 = (uuid, uuid),
+    OPERATOR 12 < (uuid, uuid),
+    OPERATOR 13 <= (uuid, uuid),
+    OPERATOR 14 > (uuid, uuid),
+    OPERATOR 15 >= (uuid, uuid),
+    OPERATOR 11 = (text, text),
+    OPERATOR 12 < (text, text),
+    OPERATOR 13 <= (text, text),
+    OPERATOR 14 > (text, text),
+    OPERATOR 15 >= (text, text);

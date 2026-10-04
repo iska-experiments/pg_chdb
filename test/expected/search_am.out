@@ -206,6 +206,47 @@ DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE "constraint" = 'x' 
 RESET enable_seqscan;
 RESET client_min_messages;
 DROP TABLE kw;
+-- A column's kind comes from its class's options support function, not the
+-- family's name: a class without text options, as another extension might
+-- declare, stores a plain column, and its operators are still rendered by
+-- strategy number (text searches are 1..4, comparisons 11..15).
+CREATE OPERATOR CLASS my_text FOR TYPE text USING chdb AS
+    OPERATOR 1 @@@ (text, text),
+    FUNCTION 1 (text) chdb_search_no_options(internal);
+SELECT amvalidate(oid) FROM pg_opclass WHERE opcname = 'my_text';
+INFO:  chdb opfamily my_text contains text search operator @@@(text,text) without text options as support function 1
+ amvalidate 
+------------
+ f
+(1 row)
+
+CREATE TABLE mine (body text COLLATE "C");
+SET client_min_messages = debug1;
+CREATE INDEX mine_idx ON mine USING chdb (body my_text);
+DEBUG:  building index "mine_idx" on table "mine" serially
+DEBUG:  chdb_search exec: CREATE DATABASE IF NOT EXISTS idx_N
+DEBUG:  chdb_search exec: CREATE TABLE idx_N.t_N (ctid UInt64, xmin UInt32, "body" Nullable(String)) ENGINE = MergeTree ORDER BY ctid
+DEBUG:  chdb_search insert: INSERT INTO idx_N.t_N (ctid, xmin, "body") -- 0 rows
+SET enable_seqscan = off;
+\o /dev/null
+SELECT body FROM mine WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+\o
+RESET enable_seqscan;
+RESET client_min_messages;
+DROP TABLE mine;
+DROP OPERATOR CLASS my_text USING chdb;
+-- Renaming a family does not change how its indexes are searched.
+ALTER OPERATOR FAMILY text_ops USING chdb RENAME TO text_ops_v2;
+SET client_min_messages = debug1;
+SET enable_seqscan = off;
+\o /dev/null
+SELECT id FROM docs WHERE body @@@ 'running shoes';
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t_N WHERE hasAllTokens("body", 'running shoes')
+\o
+RESET enable_seqscan;
+RESET client_min_messages;
+ALTER OPERATOR FAMILY text_ops_v2 USING chdb RENAME TO text_ops;
 -- A text column filtered through the index needs a bytewise collation:
 -- ClickHouse compares strings bytewise and the scan does not recheck. Only
 -- C and POSIX count as bytewise, as for btree's text_pattern_ops, so the

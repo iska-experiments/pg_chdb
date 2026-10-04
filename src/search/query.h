@@ -13,20 +13,21 @@
 #include "utils/rel.h"
 
 /*
- * Strategy numbers, shared with the SQL script. Text columns (text_ops,
- * text_array_ops):
+ * Strategy numbers, shared with the SQL script. The two sets are disjoint,
+ * so a scan key is rendered by its number alone, whatever operator class it
+ * came from. Text searches (text_ops, text_array_ops):
  */
 #define CHDB_STRATEGY_HAS_ALL_TOKENS 1 /* @@@ */
 #define CHDB_STRATEGY_HAS_ANY_TOKENS 2 /* @@? */
 #define CHDB_STRATEGY_HAS_TOKEN 3
 #define CHDB_STRATEGY_HAS_PHRASE 4 /* @@~ */
 
-/* Columnar columns (columnar_ops): = < <= > >= */
-#define CHDB_STRATEGY_EQ 1
-#define CHDB_STRATEGY_LT 2
-#define CHDB_STRATEGY_LE 3
-#define CHDB_STRATEGY_GT 4
-#define CHDB_STRATEGY_GE 5
+/* Comparisons (columnar_ops): = < <= > >= */
+#define CHDB_STRATEGY_EQ 11
+#define CHDB_STRATEGY_LT 12
+#define CHDB_STRATEGY_LE 13
+#define CHDB_STRATEGY_GT 14
+#define CHDB_STRATEGY_GE 15
 
 /* Distance ORDER BY operators, numbered as pgvector does: <-> <#> <=> <+>. */
 #define CHDB_ORDER_L2 1
