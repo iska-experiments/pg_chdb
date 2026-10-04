@@ -136,7 +136,7 @@ CREATE TABLE t (
   embedding Array(Float32),
   INDEX body_idx body TYPE text(tokenizer = splitByNonAlpha, preprocessor = lowerUTF8(body)),
   INDEX title_idx title TYPE text(tokenizer = ngrams(3)),
-  INDEX tags_idx tags TYPE text(tokenizer = array),
+  INDEX tags_idx tags TYPE text(tokenizer = array, preprocessor = lowerUTF8(tags)),
   INDEX embedding_idx embedding TYPE vector_similarity('hnsw', 'cosineDistance', 1536)
 ) ENGINE = MergeTree ORDER BY ctid
 ```
