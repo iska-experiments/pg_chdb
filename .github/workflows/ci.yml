@@ -93,6 +93,17 @@ jobs:
           sudo codesign -f -s - /usr/local/lib/libchdb.so
       - name: Build
         run: make -j $(nproc)
+      # chdb-core's static archive keeps only the function objects its link
+      # map reaches, and v26.9.0's drops lowerUTF8, upperUTF8, caseFoldUTF8
+      # and hasPhrase, which chdb indexes call. Until it ships them, the
+      # static legs link chdb_search_engine to the shared library instead;
+      # chdb_helper stays static.
+      - name: Link the search engine to the shared libchdb
+        if: matrix.build == 'static'
+        run: |
+          rm -f src/search/engine/chdb_search_engine
+          make src/search/engine/chdb_search_engine LIBCHDB_BUILD=dynamic
+          sudo --preserve-env=BUNDLE_LIBCHDB make install-libchdb
       - name: Install
         run: sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install
       - name: Configure AWS credentials # for s3.sql round-trip test
