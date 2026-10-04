@@ -25,18 +25,9 @@
 #include "../module.h"
 #include "copy.h"
 #include "create.h"
+#include "url.h"
 
 CHDB_MODULE_MAGIC("chdb_hook");
-
-/*
- * Remove file_scheme if CHDB_NO_FILE_SCHEME is defined. Works because the
- * `scheme_for()` considers only schemes < `CHDB_NO_SCHEME`.
- */
-#ifdef CHDB_NO_FILE_SCHEME
-#define CHDB_NO_SCHEME file_scheme
-#else
-#define CHDB_NO_SCHEME no_scheme
-#endif
 
 void
 InitializeUtilityHook(void);
@@ -56,22 +47,6 @@ chDBProcessUtilityHook(
     DestReceiver* dest,
     QueryCompletion* completionTag
 );
-
-/*
- * Strings for the URL schemes that the COPY hook understands. Same as for the
- * schemes used for dispatch in the ClickHouse 26.7 `url()` function. Must
- * allocate one more than the longest list, so that each ends in a NULL.
- * https://clickhouse.com/docs/sql-reference/table-functions/url#scheme-dispatch
- */
-static char const* const scheme_name[no_scheme][4] = {
-    [http_scheme] = { "http", "https" },
-    [s3_scheme]   = { "s3" },
-    [gcs_scheme]  = { "gs", "gcs", "oss" },
-    [az_scheme]   = { "az", "azure" },
-    [abfs_scheme] = { "abfs", "abfss" },
-    [file_scheme] = { "file" },
-    [hdfs_scheme] = { "hdfs" },
-};
 
 /*
  * GUCs for settings to be passed to chDB, referenced by CHDB_GUCS().
@@ -104,27 +79,6 @@ InitializeUtilityHook(void) {
     PrevProcessUtility =
         ProcessUtility_hook ? ProcessUtility_hook : standard_ProcessUtility;
     ProcessUtility_hook = chDBProcessUtilityHook;
-}
-
-static scheme
-scheme_for(const char* str) {
-    if (str) {
-        const char* ptr = strstr(str, "://");
-        if (ptr) {
-            size_t len = ptr - str;
-
-            for (size_t sch = http_scheme; sch < CHDB_NO_SCHEME; sch++) {
-                for (size_t i = 0; scheme_name[sch][i]; i++) {
-                    if (strlen(scheme_name[sch][i]) == len &&
-                        memcmp(str, scheme_name[sch][i], len) == 0) {
-                        return sch;
-                    }
-                }
-            }
-        }
-    }
-
-    return no_scheme;
 }
 
 /*
@@ -329,7 +283,7 @@ contextualize_options(chdbCopyContext* ctx, List* options, List** others) {
  */
 static scheme
 option_url_scheme(const char* url, const char* option) {
-    scheme scheme = scheme_for(url);
+    scheme scheme = chdb_url_scheme(url);
 
     if (scheme == no_scheme) {
         ereport(
@@ -414,7 +368,7 @@ chDBProcessUtilityHook(
     if (IsA(parsetree, CopyStmt)) {
         /* Look for a URL filename. */
         CopyStmt* copy = (CopyStmt*)parsetree;
-        scheme scheme  = scheme_for(copy->filename);
+        scheme scheme  = chdb_url_scheme(copy->filename);
 
         /* Leave COPY TO/FROM PROGRAM to Postgres, which gates it on a role. */
         if (copy->relation && !copy->is_program && scheme != no_scheme) {
