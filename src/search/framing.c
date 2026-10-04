@@ -75,7 +75,7 @@ frame_send(int fd, const void* buf, size_t len) {
 bool
 frame_send_chunks(int fd, const char* buf, size_t len) {
     while (len) {
-        uint32_t n = (uint32_t)Min(len, CHDB_SEARCH_CHUNK_MAX);
+        uint32_t n = (uint32_t)Min(len, CHDB_CHUNK_MAX);
 
         if (!frame_send(fd, &n, sizeof(n)) || !frame_send(fd, buf, n)) {
             return false;

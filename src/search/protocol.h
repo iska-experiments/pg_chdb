@@ -21,8 +21,8 @@
  *              limits, query and parameters. The command is CHDB_CMD_SELECT,
  *              _INSERT, _EXEC or _DROP; parameters are not supported yet.
  *   data       Native blocks as a run of chunks, each a uint32 byte count of
- *              at most CHDB_SEARCH_CHUNK_MAX and that many bytes, ended by a
- *              zero count. A chunk is an arbitrary slice of the stream, not a
+ *              at most CHDB_CHUNK_MAX and that many bytes, ended by a zero
+ *              count. A chunk is an arbitrary slice of the stream, not a
  *              block. This is the chunked form of channel.h.
  *                CHDB_CMD_INSERT   client to worker, after the request
  *                CHDB_CMD_SELECT   worker to client, after the request
@@ -40,9 +40,6 @@
 /* Worker-handled commands, continuing the numbering of src/setup.h. */
 #define CHDB_CMD_EXEC 'E' /* run a statement, no result rows */
 #define CHDB_CMD_DROP 'X' /* drop the index's chDB database */
-
-/* Largest chunk either side will take, so a corrupt count cannot size a buffer. */
-#define CHDB_SEARCH_CHUNK_MAX (8 * 1024 * 1024)
 
 /* Where the worker for `dboid` listens, relative to the data directory. */
 #define CHDB_SEARCH_SOCKET_FMT "pg_chdb/%u.sock"

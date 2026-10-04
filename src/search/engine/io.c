@@ -50,8 +50,7 @@ io_send(int fd, const void* buf, size_t len) {
 bool
 io_send_chunks(int fd, const char* buf, size_t len) {
     while (len) {
-        uint32_t n =
-            len < CHDB_SEARCH_CHUNK_MAX ? (uint32_t)len : CHDB_SEARCH_CHUNK_MAX;
+        uint32_t n = len < CHDB_CHUNK_MAX ? (uint32_t)len : CHDB_CHUNK_MAX;
 
         if (!io_send(fd, &n, sizeof(n)) || !io_send(fd, buf, n)) {
             return false;

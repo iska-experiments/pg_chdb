@@ -89,7 +89,7 @@ all: sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX)
 
 # PGXS tracks no header dependencies, and the vendored libraries are all header.
 # *.bc compiles same sources, so needs same headers.
-$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h src/search/protocol.h \
+$(OBJS) $(OBJS:.o=.bc): $(CH_C_DIR)/clickhouse.h src/version.h \
                         $(wildcard src/*.h $(PGCH_DIR)/*.h $(CH_C_DIR)/*.h)
 
 # Versioned SQL script.

@@ -131,7 +131,7 @@ command_insert(int fd, const chdbSearchRequest* req) {
     for (;;) {
         uint32_t len;
 
-        if (io_recv(fd, &len, sizeof(len)) != 1 || len > CHDB_SEARCH_CHUNK_MAX) {
+        if (io_recv(fd, &len, sizeof(len)) != 1 || len > CHDB_CHUNK_MAX) {
             in_step = false;
             break;
         }
