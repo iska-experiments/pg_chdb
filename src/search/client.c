@@ -19,8 +19,8 @@
 #include "utils/timestamp.h"
 #include "utils/wait_event.h"
 
-#include "../helper.h"
 #include "client.h"
+#include "frame.h"
 #include "worker.h"
 
 /* Milliseconds between connection attempts while the worker comes up. */
@@ -147,17 +147,10 @@ chdb_search_close(chdbSearchConn* conn) {
 
 /* ---- requests ------------------------------------------------------------ */
 
-/* Sends the request frame of protocol.h: its length, the index, the payload. */
+/* Sends the request frame of protocol.h. */
 static void
 send_request(chdbSearchConn* conn, chdbCmdType cmd, Oid index, const char* sql) {
     StringInfoData buf;
-    uint32_t len          = 0;
-    chdbHelperContext ctx = {
-        .cmd         = cmd,
-        .max_memory  = (uint16_t)chdb_max_memory,
-        .max_threads = (uint16_t)chdb_max_threads,
-        .max_parsers = (uint16_t)chdb_max_parsers,
-    };
 
     conn->cmd           = cmd;
     conn->query         = sql;
@@ -165,12 +158,7 @@ send_request(chdbSearchConn* conn, chdbCmdType cmd, Oid index, const char* sql) 
     conn->ch.data_ended = false;
 
     initStringInfo(&buf);
-    appendBinaryStringInfo(&buf, (char*)&len, sizeof(len)); /* patched below */
-    appendBinaryStringInfo(&buf, (char*)&index, sizeof(index));
-    chdb_helper_build_setup(&buf, &ctx, sql, NULL, NULL, 0);
-    len = (uint32_t)(buf.len - sizeof(len));
-    memcpy(buf.data, &len, sizeof(len));
-
+    chdb_search_frame_request(&buf, cmd, index, sql);
     chdb_channel_send_exact(&conn->ch, buf.data, buf.len);
     pfree(buf.data);
 }
@@ -182,31 +170,15 @@ send_request(chdbSearchConn* conn, chdbCmdType cmd, Oid index, const char* sql) 
 static char*
 read_status(chdbSearchConn* conn) {
     uint8_t status;
-    uint32_t len;
+    char* detail = chdb_search_frame_status(&conn->ch, "worker", conn->query, &status);
 
-    chdb_channel_recv_exact(&conn->ch, &status, sizeof(status));
-    chdb_channel_recv_exact(&conn->ch, &len, sizeof(len));
-    if (len > CHDB_CHUNK_MAX) {
-        /* The framing cannot be followed past this, so the connection goes. */
-        chdb_channel_close(&conn->ch);
-        ereport(
-            ERROR,
-            errcode(ERRCODE_PROTOCOL_VIOLATION),
-            errmsg("chdb_search: the worker sent a malformed status"),
-            errdetail("Its text would be %u bytes long.", len),
-            errcontext("query: %s", conn->query)
-        );
-    }
-
-    char* detail = palloc(len + 1);
-
-    chdb_channel_recv_exact(&conn->ch, detail, len);
-    detail[len] = '\0';
     if (status == 0) {
         return detail;
     }
 
     /* Worded as the helper's errors are: no trailing newline, request ID or version. */
+    size_t len = strlen(detail);
+
     while (len && (detail[len - 1] == '\n' || detail[len - 1] == '\r')) {
         detail[--len] = '\0';
     }
@@ -254,10 +226,7 @@ chdb_search_finish(chdbSearchConn* conn) {
     if (conn->cmd == CHDB_CMD_INSERT) {
         chdb_channel_end_write(&conn->ch);
     } else {
-        /* Reader stopped early: skip what is left to get to the status. */
-        char skip[8192];
-
-        while (chdb_channel_recv(&conn->ch, skip, sizeof(skip))) {}
+        chdb_search_frame_skip_data(&conn->ch); /* the reader stopped early */
     }
     read_status(conn);
 }
