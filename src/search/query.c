@@ -160,8 +160,15 @@ append_vector(StringInfo buf, Datum value, Oid typid) {
     appendStringInfoString(buf, s);
 }
 
+/*
+ * ClickHouse's hasToken takes no array. The array tokenizer makes the needle
+ * one token, so for arrays all, any and token agree and hasAllTokens serves.
+ */
 static const char*
-text_function(StrategyNumber strategy) {
+text_function(StrategyNumber strategy, ChdbColumnKind kind) {
+    if (kind == CHDB_COL_TEXT_ARRAY && strategy == CHDB_STRATEGY_HAS_TOKEN) {
+        return "hasAllTokens";
+    }
     switch (strategy) {
     case CHDB_STRATEGY_HAS_ALL_TOKENS:
         return "hasAllTokens";
@@ -220,7 +227,7 @@ chdb_search_append_quals(StringInfo buf, Relation index, ScanKey keys, int nkeys
             chdb_search_append_literal(buf, key->sk_argument, argtype);
         } else {
             appendStringInfo(
-                buf, "%s(%s, ", text_function(key->sk_strategy), col->name
+                buf, "%s(%s, ", text_function(key->sk_strategy, col->kind), col->name
             );
             chdb_search_append_literal(buf, key->sk_argument, TEXTOID);
             appendStringInfoChar(buf, ')');
