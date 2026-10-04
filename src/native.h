@@ -8,6 +8,7 @@
 #include "utils/relcache.h"
 
 #include "pg-clickhouse-decode.h"
+#include "pg-clickhouse-encode.h"
 
 #include "channel.h"
 
@@ -17,6 +18,16 @@
  */
 extern pgch_block_source
 chdb_native_source(chdbChannel* helper);
+
+/*
+ * A writer over the columns `structure` declares, a Native structure clause
+ * such as "ctid UInt64, body Nullable(String)", in `cxt`. ClickHouse matches a
+ * Native block's columns to the target by name and rejects one it cannot find,
+ * so a block carries the declared names and types, not a relation's. `ncols`,
+ * if given, takes the column count.
+ */
+extern pgch_writer*
+chdb_writer_for(MemoryContext cxt, const char* structure, size_t* ncols);
 
 /* Source column name and ClickHouse type returned by DESCRIBE */
 typedef struct chdbDescribedColumn {

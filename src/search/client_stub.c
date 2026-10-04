@@ -34,6 +34,7 @@
 #include "pg-clickhouse-encode.h"
 #include "pg-clickhouse.h"
 
+#include "../native.h"
 #include "client.h"
 #include "search.h"
 
@@ -143,27 +144,6 @@ answer(chdbSearchConn* conn, const void* data, size_t len) {
     set_data_fd(conn, fds[0], "a pipe");
 }
 
-/* A writer for one block of `structure`, with the encoder the row writer uses. */
-static pgch_writer*
-new_writer(MemoryContext cxt, const char* structure) {
-    chc_type* type;
-    chc_err err = {};
-
-    if (chc_type_parse(structure, strlen(structure), &pgch_alloc, &type, &err) !=
-        CHC_OK) {
-        pgch_raise(&err, ERRCODE_INTERNAL_ERROR, "chdb_search stub: ", NULL);
-    }
-
-    size_t ncols   = chc_type_n_children(type);
-    pgch_col* cols = palloc0(ncols * sizeof(pgch_col));
-
-    for (size_t i = 0; i < ncols; i++) {
-        cols[i].name = chc_type_tuple_field_name(type, i, &cols[i].name_len);
-        cols[i].type = chc_type_child(type, i);
-    }
-    return pgch_writer_new(cxt, cols, ncols);
-}
-
 /* The writer's rows as one block in the caller's context; `cxt` goes. */
 static size_t
 take_block(pgch_writer* w, MemoryContext cxt, MemoryContext old, void** out) {
@@ -188,14 +168,14 @@ encode_ctids(const char* ctids, int ndist, void** out) {
     MemoryContext old = MemoryContextSwitchTo(cxt);
     StringInfoData structure;
 
+    /* Encoded as the row writer encodes rows, so the AM reads it as the worker's. */
     initStringInfo(&structure);
-    appendStringInfoString(&structure, "Tuple(ctid UInt64");
+    appendStringInfoString(&structure, "ctid UInt64");
     for (int i = 0; i < ndist; i++) {
         appendStringInfo(&structure, ", _distance%d Float64", i);
     }
-    appendStringInfoChar(&structure, ')');
 
-    pgch_writer* w = new_writer(cxt, structure.data);
+    pgch_writer* w = chdb_writer_for(cxt, structure.data, NULL);
 
     for (const char* p = ctids; *p;) {
         char* end;
@@ -240,7 +220,7 @@ encode_meta(Oid indexoid, void** out) {
         meta.flushed_lsn = strtoull(stub_meta, NULL, 10);
     }
 
-    pgch_writer* w = new_writer(cxt, "Tuple(n UInt64, lsn UInt64, t UInt64)");
+    pgch_writer* w = chdb_writer_for(cxt, "n UInt64, lsn UInt64, t UInt64", NULL);
 
     pgch_append_datum(w, 0, Int64GetDatum((int64)rows), INT8OID, false);
     pgch_append_datum(w, 1, Int64GetDatum((int64)meta.flushed_lsn), INT8OID, false);
