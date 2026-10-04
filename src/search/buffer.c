@@ -80,6 +80,19 @@ free_pending(Pending* p) {
     pfree(p);
 }
 
+static void
+poisoned_error(Pending* p) {
+    ereport(
+        ERROR,
+        errcode(ERRCODE_INTERNAL_ERROR),
+        errmsg(
+            "the rows buffered for chdb index %u were lost in a savepoint rollback",
+            p->indexoid
+        ),
+        errhint("Roll the transaction back.")
+    );
+}
+
 /*
  * Called by a rebuild of the index. Its build scan covers the transaction's
  * own tuples, so the rows buffered so far would reach the store twice, and
@@ -125,6 +138,9 @@ chdb_search_aminsert(
     bool nested            = GetCurrentTransactionNestLevel() > 1;
     MemoryContext old      = MemoryContextSwitchTo(TopTransactionContext);
 
+    if (p->poisoned) {
+        poisoned_error(p);
+    }
     if (nested) {
         chdb_search_mark_level(p, subid);
     }
@@ -175,6 +191,9 @@ xact_callback(XactEvent event, void* arg) {
                     chdb_search_drop_staging(p);
                 }
                 continue;
+            }
+            if (p->poisoned) {
+                poisoned_error(p);
             }
             if (chdb_rowwriter_rows(p->rw) == 0 && !p->staging) {
                 continue;

@@ -131,11 +131,12 @@ chdb_search_ambuild(Relation heap, Relation index, struct IndexInfo* indexInfo) 
             chdb_search_column_list(index)
         );
 
-        chdb_search_log_sql("insert", sql);
         chdb_search_insert(bs.conn, RelationGetRelid(index), sql);
         reltuples = table_index_build_scan(
             heap, index, indexInfo, true, true, build_callback, &bs, NULL
         );
+        /* Logged once the rows are counted, like a buffer flush. */
+        chdb_search_log_sql("insert", psprintf("%s -- %.0f rows", sql, bs.indtuples));
 
         if (chdb_rowwriter_rows(bs.rw)) {
             size_t len;
