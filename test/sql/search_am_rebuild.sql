@@ -107,9 +107,14 @@ BEGIN;
 DROP INDEX docs_title;
 PREPARE TRANSACTION 'p';
 \echo -- a new index is refused too, and its store dropped with the transaction
+-- (The drop runs in the abort callback of the failing statement, and its
+-- line and the error can reach the client in either order, so the log is
+-- quiet here; t/search_prepare.pl pins the drop through the server log.)
+RESET client_min_messages;
 BEGIN;
 CREATE INDEX docs_prep ON docs USING chdb (title text_ops);
 PREPARE TRANSACTION 'q';
+SET client_min_messages = debug1;
 \echo -- buffered rows are refused by the buffer
 BEGIN;
 INSERT INTO docs (id, body) VALUES (16, 'x');
