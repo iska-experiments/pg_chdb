@@ -1,0 +1,423 @@
+-- The chdb index access method end to end: the searches below are answered by
+-- the database's chdb_search worker from the index's ClickHouse table. The
+-- server needs libchdb on its library path or chdb_search.libchdb_path.
+\set VERBOSITY terse
+SET client_min_messages = warning;
+CREATE EXTENSION chdb_search;
+SET chdb_search.mask_oids = on;
+CREATE TABLE prod (id int PRIMARY KEY, body text, tags text[], price numeric(10, 2));
+INSERT INTO prod VALUES
+    (1, 'Running shoes for runners', '{Sport,shoes}', 49.90),
+    (2, 'Walking boots', '{outdoor}', 89.00),
+    (3, 'Trail running shoes, fast and light', '{sport,trail}', 120.00);
+CREATE INDEX prod_idx ON prod USING chdb (body, tags text_array_ops, price columnar_ops);
+BEGIN;
+INSERT INTO prod VALUES
+    (4, E'It''s a \\back\\slash\nand a new line', E'{"o''clock","c:\\\\dir"}', 5.00),
+    (5, NULL, NULL, NULL);
+COMMIT;
+-- The index's ClickHouse table, read through the worker. ctid is the heap TID
+-- packed as (block << 16) | offset; a NULL array is stored empty.
+SELECT 'prod_idx'::regclass::oid AS idx \gset
+CREATE FUNCTION pg_temp.store(oid)
+RETURNS TABLE (ctid bigint, body text, tags text[], price numeric)
+LANGUAGE sql AS $$
+    SELECT * FROM chdb_search_query(format(
+        'SELECT toInt64(ctid), body, tags, price FROM idx_%s.t ORDER BY ctid', $1
+    )) AS (ctid bigint, body text, tags text[], price numeric)
+$$;
+SELECT * FROM pg_temp.store(:idx) ORDER BY ctid;
+ ctid |                body                 |        tags         | price  
+------+-------------------------------------+---------------------+--------
+    1 | Running shoes for runners           | {Sport,shoes}       |  49.90
+    2 | Walking boots                       | {outdoor}           |  89.00
+    3 | Trail running shoes, fast and light | {sport,trail}       | 120.00
+    4 | It's a \back\slash                 +| {o'clock,"c:\\dir"} |   5.00
+      | and a new line                      |                     | 
+    5 |                                     | {}                  |       
+(5 rows)
+
+-- Every heap row's TID packs to the store row holding its values.
+SELECT p.id, p.ctid, s.ctid AS packed,
+       (s.body, s.price) IS NOT DISTINCT FROM (p.body, p.price) AS same
+  FROM prod p
+  LEFT JOIN pg_temp.store(:idx) s
+    ON s.ctid = (p.ctid::text::point)[0]::bigint * 65536 + (p.ctid::text::point)[1]::bigint
+ ORDER BY p.id;
+ id | ctid  | packed | same 
+----+-------+--------+------
+  1 | (0,1) |      1 | t
+  2 | (0,2) |      2 | t
+  3 | (0,3) |      3 | t
+  4 | (0,4) |      4 | t
+  5 | (0,5) |      5 | t
+(5 rows)
+
+----------------------------------------------------------------------------
+-- Searches through the index
+----------------------------------------------------------------------------
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (COSTS OFF) SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Sort
+   Sort Key: id
+   ->  Index Scan using prod_idx on prod
+         Index Cond: (body @@@ 'running shoes'::text)
+(4 rows)
+
+SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+SELECT id FROM prod WHERE body @@@ 'RUNNING Shoes' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+SELECT id FROM prod WHERE body @@? 'boots trail' ORDER BY id;
+ id 
+----
+  2
+  3
+(2 rows)
+
+SELECT id FROM prod WHERE body @@~ 'running shoes' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+SELECT id FROM prod WHERE body @@~ 'shoes running' ORDER BY id;
+ id 
+----
+(0 rows)
+
+SELECT id FROM prod WHERE body @@= 'boots' ORDER BY id;
+ id 
+----
+  2
+(1 row)
+
+SELECT id FROM prod WHERE tags @@@ 'SPORT' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+SELECT id FROM prod WHERE tags @@= 'trail' ORDER BY id;
+ id 
+----
+  3
+(1 row)
+
+SELECT id FROM prod WHERE tags @@? 'outdoor' ORDER BY id;
+ id 
+----
+  2
+(1 row)
+
+SELECT id FROM prod WHERE body @@@ NULL ORDER BY id;
+ id 
+----
+(0 rows)
+
+-- A columnar filter with a text predicate, both sent to ClickHouse.
+EXPLAIN (COSTS OFF) SELECT id FROM prod WHERE body @@@ 'shoes' AND price < 100 ORDER BY id;
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Sort
+   Sort Key: id
+   ->  Index Scan using prod_idx on prod
+         Index Cond: ((body @@@ 'shoes'::text) AND (price < '100'::numeric))
+(4 rows)
+
+SET client_min_messages = debug1;
+SELECT id FROM prod WHERE body @@@ 'shoes' AND price < 100 ORDER BY id;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t WHERE hasAllTokens(body, 'shoes') AND price < toDecimal256('100', 0)
+ id 
+----
+  1
+(1 row)
+
+SET client_min_messages = warning;
+SELECT id FROM prod WHERE body @@@ 'shoes' AND price >= 49.90 AND price <= 120 ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+SELECT id FROM prod WHERE price = 89 ORDER BY id;
+ id 
+----
+  2
+(1 row)
+
+-- A bitmap scan.
+SET enable_indexscan = off;
+SET enable_bitmapscan = on;
+EXPLAIN (COSTS OFF) SELECT id FROM prod WHERE body @@? 'shoes boots' ORDER BY id;
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Sort
+   Sort Key: id
+   ->  Bitmap Heap Scan on prod
+         Recheck Cond: (body @@? 'shoes boots'::text)
+         ->  Bitmap Index Scan on prod_idx
+               Index Cond: (body @@? 'shoes boots'::text)
+(6 rows)
+
+SELECT id FROM prod WHERE body @@? 'shoes boots' ORDER BY id;
+ id 
+----
+  1
+  2
+  3
+(3 rows)
+
+RESET enable_indexscan;
+SET enable_bitmapscan = off;
+-- The tokenizer, run by the worker.
+SELECT chdb.tokens('Running Shoes, fast!');
+        tokens        
+----------------------
+ {Running,Shoes,fast}
+(1 row)
+
+SELECT chdb.tokens(E'It''s a \\back\\slash\nnew line');
+            tokens            
+------------------------------
+ {It,s,a,back,slash,new,line}
+(1 row)
+
+----------------------------------------------------------------------------
+-- String literals reach ClickHouse intact: quotes, backslashes, newlines
+----------------------------------------------------------------------------
+SELECT id FROM prod WHERE body @@@ E'it''s' ORDER BY id;
+ id 
+----
+  4
+(1 row)
+
+SELECT id FROM prod WHERE body @@@ E'back\\slash' ORDER BY id;
+ id 
+----
+  4
+(1 row)
+
+SELECT id FROM prod WHERE body @@~ E'slash\nand' ORDER BY id;
+ id 
+----
+  4
+(1 row)
+
+SELECT id FROM prod WHERE tags @@= E'o''clock' ORDER BY id;
+ id 
+----
+  4
+(1 row)
+
+SELECT id FROM prod WHERE tags @@= E'c:\\dir' ORDER BY id;
+ id 
+----
+  4
+(1 row)
+
+-- A needle cannot end the literal: this is five tokens, which no row has.
+SELECT id FROM prod WHERE body @@@ $$shoes') OR hasAnyTokens(body, 'x$$ ORDER BY id;
+ id 
+----
+(0 rows)
+
+SELECT id FROM prod WHERE body @@@ E'shoes\\'' OR 1 = 1 OR ''' ORDER BY id;
+ id 
+----
+(0 rows)
+
+-- The answers come from the store: a row deleted there behind Postgres's back
+-- is no longer found through the index, though the heap still has it.
+SELECT chdb_search_exec(format('DELETE FROM idx_%s.t WHERE ctid = 3', :idx));
+ chdb_search_exec 
+------------------
+ 
+(1 row)
+
+SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
+ id 
+----
+  1
+(1 row)
+
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+RESET enable_indexscan;
+SET enable_seqscan = off;
+REINDEX INDEX prod_idx;
+SELECT id FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+----------------------------------------------------------------------------
+-- Writes: visibility of updated, deleted and rolled-back rows
+----------------------------------------------------------------------------
+-- The old version stays in the store, and the heap fetch hides it.
+UPDATE prod SET body = 'Running sandals' WHERE id = 1;
+SELECT id, body FROM prod WHERE body @@@ 'running shoes' ORDER BY id;
+ id |                body                 
+----+-------------------------------------
+  3 | Trail running shoes, fast and light
+(1 row)
+
+SELECT id, body FROM prod WHERE body @@@ 'sandals' ORDER BY id;
+ id |      body       
+----+-----------------
+  1 | Running sandals
+(1 row)
+
+SELECT id, body FROM prod WHERE body @@@ 'running' ORDER BY id;
+ id |                body                 
+----+-------------------------------------
+  1 | Running sandals
+  3 | Trail running shoes, fast and light
+(2 rows)
+
+SELECT count(*) FROM pg_temp.store(:idx);
+ count 
+-------
+     6
+(1 row)
+
+-- Rows reach the store at COMMIT, so the index does not find a transaction's
+-- own inserts before then; a rolled-back insert never reaches it.
+BEGIN;
+INSERT INTO prod VALUES (6, 'rolled back shoes', '{gone}', 1);
+SELECT id FROM prod WHERE body @@@ 'rolled' ORDER BY id;
+ id 
+----
+(0 rows)
+
+ROLLBACK;
+SELECT id FROM prod WHERE body @@@ 'rolled' ORDER BY id;
+ id 
+----
+(0 rows)
+
+SELECT count(*) FROM pg_temp.store(:idx) WHERE body LIKE 'rolled%';
+ count 
+-------
+     0
+(1 row)
+
+DELETE FROM prod WHERE id = 2;
+SELECT id FROM prod WHERE body @@@ 'boots' ORDER BY id;
+ id 
+----
+(0 rows)
+
+SELECT ctid, body FROM pg_temp.store(:idx) WHERE body IN ('Walking boots', 'Running shoes for runners') ORDER BY ctid;
+ ctid |           body            
+------+---------------------------
+    1 | Running shoes for runners
+    2 | Walking boots
+(2 rows)
+
+-- VACUUM removes the dead versions from the store, and merges its parts once
+-- enough of it is dead.
+SET client_min_messages = debug1;
+VACUUM prod;
+DEBUG:  chdb_search select: SELECT ctid FROM idx_N.t
+DEBUG:  chdb_search exec: DELETE FROM idx_N.t WHERE ctid IN (1,2)
+DEBUG:  chdb_search exec: OPTIMIZE TABLE idx_N.t FINAL
+SET client_min_messages = warning;
+SELECT * FROM pg_temp.store(:idx) ORDER BY ctid;
+ ctid |                body                 |        tags         | price  
+------+-------------------------------------+---------------------+--------
+    3 | Trail running shoes, fast and light | {sport,trail}       | 120.00
+    4 | It's a \back\slash                 +| {o'clock,"c:\\dir"} |   5.00
+      | and a new line                      |                     | 
+    5 |                                     | {}                  |       
+    6 | Running sandals                     | {Sport,shoes}       |  49.90
+(4 rows)
+
+SELECT id FROM prod WHERE body @@? 'running boots sandals' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+-- REINDEX rebuilds the store from the live rows.
+REINDEX INDEX prod_idx;
+SELECT * FROM pg_temp.store(:idx) ORDER BY ctid;
+ ctid |                body                 |        tags         | price  
+------+-------------------------------------+---------------------+--------
+    3 | Trail running shoes, fast and light | {sport,trail}       | 120.00
+    4 | It's a \back\slash                 +| {o'clock,"c:\\dir"} |   5.00
+      | and a new line                      |                     | 
+    5 |                                     | {}                  |       
+    6 | Running sandals                     | {Sport,shoes}       |  49.90
+(4 rows)
+
+SELECT id FROM prod WHERE body @@? 'running line' ORDER BY id;
+ id 
+----
+  1
+  3
+  4
+(3 rows)
+
+-- The chdb extension's own functions still work in the same backend.
+SELECT * FROM chdb_query('SELECT 42') AS (answer int);
+ answer 
+--------
+     42
+(1 row)
+
+----------------------------------------------------------------------------
+-- DROP INDEX drops the store at commit
+----------------------------------------------------------------------------
+DROP INDEX prod_idx;
+SELECT * FROM chdb_search_query(format(
+    'SELECT count() FROM system.databases WHERE name = ''idx_%s''', :idx
+)) AS (n bigint);
+ n 
+---
+ 0
+(1 row)
+
+SELECT id FROM prod WHERE body @@@ 'running' ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+DROP TABLE prod;
+DROP EXTENSION chdb_search;
+-- The worker stays connected to the database, which could not be dropped for
+-- the next run, so stop it.
+DO $$
+BEGIN
+    PERFORM pg_terminate_backend(pid, 10000)
+       FROM pg_stat_activity
+      WHERE backend_type = 'chdb_search worker' AND datname = current_database();
+END $$;
