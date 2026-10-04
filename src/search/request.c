@@ -21,9 +21,6 @@
 /* Set when the failure is the client's, which has nobody left to be told. */
 static bool client_gone;
 
-/* Set while the engine is mid-request, so that a failure leaves it out of step. */
-static bool engine_busy;
-
 static void
 client_lost(chdbChannel* ch pg_attribute_unused(), const char* what, int errnum) {
     client_gone = true;
@@ -110,9 +107,7 @@ serve(chdbChannel* client, MemoryContext cxt) {
         return false;
     }
 
-    engine_busy = true;
-    char* err   = relay_request(client, &raw, req.ctx.cmd, &data_open);
-    engine_busy = false;
+    char* err = relay_request(client, &raw, req.ctx.cmd, &data_open);
 
     if (err) {
         uint32_t zero = 0;
@@ -137,7 +132,6 @@ chdb_search_serve_request(int fd, MemoryContext cxt) {
     client.send_what = "error sending to the client";
     client.fail      = client_lost;
     client_gone      = false;
-    engine_busy      = false;
 
     PG_TRY();
     { keep = serve(&client, cxt); }
@@ -148,9 +142,13 @@ chdb_search_serve_request(int fd, MemoryContext cxt) {
             EmitErrorReport();
         }
         FlushErrorState();
-        /* The engine may be halfway through a request that nobody finishes. */
-        if (engine_busy && engine_pid() > 0) {
-            pfree(engine_death());
+        /* The engine may be halfway through a reply that nobody takes. */
+        if (engine_pid() > 0) {
+            char* err = relay_abandon();
+
+            if (err) {
+                pfree(err);
+            }
         }
         keep = false;
     }
