@@ -85,7 +85,19 @@ SEARCH_VERSION := $(shell sed -n "s/^default_version *= *'\(.*\)'/\1/p" chdb_sea
 SEARCH_MODULE  := src/search/chdb_search$(DLSUFFIX)
 
 # Require the versioned SQL script.
-all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper $(ENGINE) src/hook/chdb_hook$(DLSUFFIX) $(SEARCH_MODULE) sql/chdb_search--$(SEARCH_VERSION).sql
+all: sql/$(EXTENSION)--$(EXTVERSION).sql src/helper/chdb_helper src/hook/chdb_hook$(DLSUFFIX)
+
+# The search module and its engine need PostgreSQL 17 or later, as its
+# control file says; an older server builds and tests the chdb extension
+# alone, and its TAP tests skip the search ones.
+ifeq ($(shell test $(VERSION_NUM) -ge 170000 && echo yes),yes)
+all: $(ENGINE) $(SEARCH_MODULE) sql/chdb_search--$(SEARCH_VERSION).sql
+install: install-search install-engine
+uninstall: uninstall-search uninstall-engine
+else
+TESTS := $(filter-out test/sql/search_%,$(TESTS))
+PROVE_TESTS := $(filter-out t/search_%,$(wildcard t/*.pl))
+endif
 
 # PGXS tracks no header dependencies, and the vendored libraries are all header.
 # *.bc compiles same sources, so needs same headers.
@@ -138,8 +150,6 @@ install-search: $(SEARCH_MODULE) sql/chdb_search--$(SEARCH_VERSION).sql
 uninstall-search:
 	rm -f $(DESTDIR)$(pkglibdir)/chdb_search$(DLSUFFIX)
 	rm -f $(DESTDIR)$(datadir)/extension/chdb_search.control $(DESTDIR)$(datadir)/extension/chdb_search--$(SEARCH_VERSION).sql
-install: install-search
-uninstall: uninstall-search
 
 # The program the search worker forks to run libchdb, so that a libchdb crash
 # never takes the worker, and with it the cluster, down.
@@ -152,8 +162,6 @@ install-engine: $(ENGINE)
 	  $(INSTALL_PROGRAM) $< $$to.new && mv -f $$to.new $$to
 uninstall-engine:
 	rm -f $(DESTDIR)$(pkglibdir)/chdb_search_engine
-install: install-engine
-uninstall: uninstall-engine
 
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules
