@@ -49,10 +49,13 @@ and the debug functions are in the [internals].
 ## Installation
 
 chdb_search requires PostgreSQL 17 or later and the [chDB] library, libchdb,
-v26.9.0 or later. Build and install it with the rest of the distribution (see
-the README). It installs the `chdb_search_engine` program beside
-`chdb_helper`; the engine links libchdb, so a dynamic build needs the server
-to find `libchdb.so` through `ldconfig` or its `LD_LIBRARY_PATH`.
+v26.9.0 or later; its engine needs a build with the callback object storage,
+which chdb-core has on its `callback-object-storage` branch and no release ships
+yet. Build it with the rest of the distribution (see the README),
+`ENGINE_LIBCHDB_DIR` naming a directory with that build's `include/chdb.h` and
+`lib/libchdb.so`, which the server must find through `ldconfig` or
+`LD_LIBRARY_PATH`: the engine and the helper load it by soname. `make
+CHDB_SEARCH_ENGINE= CHDB_SEARCH_STUB=1` leaves the engine out.
 
 Then create the extension as a superuser in each database that needs it:
 

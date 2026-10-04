@@ -71,6 +71,20 @@ registry.
   host serialises them onto its main thread through a queue; the API should
   state that callbacks may be called concurrently so hosts know to do so.
 
+### What pg_chdb's CI needs (2026-10-04)
+
+The search engine now keeps its store on the callback disk, so it builds
+and runs only against a libchdb that has `chdb_register_object_storage`,
+and no release has it. pg_chdb's CI therefore needs the chdb-core build
+with the callback disk (chdb-io/chdb-core#256) published as a release, or
+at least as a downloadable tarball of `include/chdb.h` and
+`lib/libchdb.so` for linux-amd64. Until then CI builds without the engine
+(`make CHDB_SEARCH_ENGINE=`) and tests the search module with the stub
+worker client only, with a warning saying so; a repository variable
+`LIBCHDB_CALLBACK_URL` naming such a tarball turns the legs that need the
+engine back on. The worker's SQL and TAP tests run locally against a
+chdb-core build in the meantime.
+
 ## 2. Multi-process read access to one store path
 
 ### Problem

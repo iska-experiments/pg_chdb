@@ -31,6 +31,13 @@ jobs:
       MAX_CONCURRENT_TESTS: 10
       WALG_VERSION: v3.0.9
       AWS_ROLE_TO_ASSUME: ${{ secrets.aws_role_to_assume }}
+      # chdb_search_engine keeps its store through libchdb's callback object
+      # storage (chdb-io/chdb-core#256), which no libchdb release carries
+      # yet. A repository variable naming a tarball of that build,
+      # include/chdb.h and lib/libchdb.so, enables the legs that need the
+      # engine; without it the job builds no engine and tests the search
+      # module with the stub worker client alone, and says so.
+      LIBCHDB_CALLBACK_URL: ${{ vars.LIBCHDB_CALLBACK_URL }}
     steps:
       - name: Checkout the Repository
         uses: actions/checkout@v7
@@ -114,21 +121,51 @@ jobs:
           mv ~/.local/bin/wal-g-pg-24.04-${{ matrix.pg.arch }} ~/.local/bin/wal-g
       - name: Put WAL-G on the PATH
         run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Every make below takes SEARCH_MAKE_ARGS on its command line, which
+      # sudo passes on where it would drop the environment.
+      - name: Fetch the callback-capable libchdb
+        if: env.LIBCHDB_CALLBACK_URL != ''
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/libchdb-callback"
+          mkdir -p "$dir"
+          curl -fsSL "$LIBCHDB_CALLBACK_URL" | tar xz -C "$dir"
+          grep -q chdb_register_object_storage "$dir/include/chdb.h"
+          test -f "$dir/lib/libchdb.so"
+          echo "SEARCH_MAKE_ARGS=ENGINE_LIBCHDB_DIR=$dir" >> "$GITHUB_ENV"
+          # The tarball has no static archive: a static leg builds the
+          # engine in its own step below, linked to the shared library.
+          if [ "$LIBCHDB_BUILD" = static ]; then
+            echo "SEARCH_BUILD_ARGS=CHDB_SEARCH_ENGINE=" >> "$GITHUB_ENV"
+          fi
+      - name: Leave out the engine without it
+        if: env.LIBCHDB_CALLBACK_URL == ''
+        run: |
+          echo "::warning title=chdb_search engine not built::LIBCHDB_CALLBACK_URL is unset, and no libchdb release has the callback object storage the engine needs (chdb-io/chdb-core#256). The search module is tested with the stub worker client only; the worker's SQL and TAP tests skip."
+          echo "SEARCH_MAKE_ARGS=CHDB_SEARCH_STUB=1 CHDB_SEARCH_ENGINE=" >> "$GITHUB_ENV"
       - name: Build
-        run: make -j $(nproc)
+        run: make -j $(nproc) $SEARCH_MAKE_ARGS $SEARCH_BUILD_ARGS
       # chdb-core's static archive keeps only the function objects its link
       # map reaches, and v26.9.0's drops lowerUTF8, upperUTF8, caseFoldUTF8
       # and hasPhrase, which chdb indexes call. Until it ships them, the
       # static legs link chdb_search_engine to the shared library instead;
       # chdb_helper stays static.
       - name: Link the search engine to the shared libchdb
-        if: matrix.build == 'static'
+        if: matrix.build == 'static' && env.LIBCHDB_CALLBACK_URL != ''
         run: |
           rm -f src/search/engine/chdb_search_engine
-          make src/search/engine/chdb_search_engine LIBCHDB_BUILD=dynamic
+          make src/search/engine/chdb_search_engine LIBCHDB_BUILD=dynamic $SEARCH_MAKE_ARGS
           sudo --preserve-env=BUNDLE_LIBCHDB make install-libchdb
       - name: Install
-        run: sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install
+        run: sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install $SEARCH_MAKE_ARGS
+      # Both programs load libchdb.so by its soname, and the callback build
+      # is a superset of the release the helper is built against, so it
+      # takes the bundled library's place for both.
+      - name: Install the callback-capable libchdb
+        if: env.LIBCHDB_CALLBACK_URL != ''
+        run: |
+          sudo install -m 755 "$RUNNER_TEMP/libchdb-callback/lib/libchdb.so" /usr/local/lib/
+          sudo ldconfig
       - name: Configure AWS credentials # for s3.sql round-trip test
         if: env.AWS_ROLE_TO_ASSUME != ''
         uses: aws-actions/configure-aws-credentials@v6
@@ -140,7 +177,7 @@ jobs:
         run: make start-kv-rest KVREST_PORT=9631
       - name: Test
         id: test
-        run: make installcheck
+        run: make installcheck $SEARCH_MAKE_ARGS
         # https://console.cloud.google.com/storage/settings;tab=interoperability?project=ch-pg-test
         env:
           CLOUDSDK_AUTH_HMAC_KEY: ${{ secrets.gcp_hmac_key }}
@@ -151,7 +188,8 @@ jobs:
         # cluster's ctype, so the search tests run once more in a database
         # created with --no-locale.
         id: test-nolocale
-        run: make installcheck NO_LOCALE=1 TAP_TESTS= TESTS="$(ls test/sql/search_*.sql | grep -v search_stub)"
+        if: env.LIBCHDB_CALLBACK_URL != ''
+        run: make installcheck NO_LOCALE=1 TAP_TESTS= TESTS="$(ls test/sql/search_*.sql | grep -v search_stub)" $SEARCH_MAKE_ARGS
       - name: Show Diffs
         if: failure() && (steps.test.outcome == 'failure' || steps.test-nolocale.outcome == 'failure')
         run: find . -name regression.diffs -exec cat {} +
@@ -166,12 +204,14 @@ jobs:
       - name: Test the access method with the stub worker client
         # The stub answers the statements the access method generates from
         # two GUCs, so these tests see the rows a scan fetches and the rows
-        # VACUUM judges without a worker; the worker's own tests skip.
+        # VACUUM judges without a worker; the worker's own tests skip. A job
+        # without the engine ran them in its Test step already.
         id: test-stub
+        if: env.LIBCHDB_CALLBACK_URL != ''
         run: |
-          make -j $(nproc) CHDB_SEARCH_STUB=1
-          sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install CHDB_SEARCH_STUB=1
-          make installcheck CHDB_SEARCH_STUB=1 TESTS="$(ls test/sql/search_*.sql | grep -v -e search_worker -e search_e2e -e search_planner -e search_score -e search_aggregates -e search_own_writes_e2e -e search_query_e2e)"
+          make -j $(nproc) CHDB_SEARCH_STUB=1 $SEARCH_MAKE_ARGS
+          sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install CHDB_SEARCH_STUB=1 $SEARCH_MAKE_ARGS
+          make installcheck CHDB_SEARCH_STUB=1 TESTS="$(ls test/sql/search_*.sql | grep -v -e search_worker -e search_e2e -e search_blobs -e search_planner -e search_score -e search_aggregates -e search_own_writes_e2e -e search_query_e2e)"
       - name: Show Stub Diffs
         if: failure() && steps.test-stub.outcome == 'failure'
         run: find . -name regression.diffs -exec cat {} +
@@ -181,7 +221,7 @@ jobs:
         # the test output does not include that text.
         run: |
           (cd src/hook && rm -rf chdb_hook.* *.o)
-          make -j $(nproc) NO_FILE_SCHEME=1
-          sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install
-          make installcheck TAP_TESTS= TESTS=test/sql/file.sql || true
+          make -j $(nproc) NO_FILE_SCHEME=1 $SEARCH_MAKE_ARGS
+          sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install $SEARCH_MAKE_ARGS
+          make installcheck TAP_TESTS= TESTS=test/sql/file.sql $SEARCH_MAKE_ARGS || true
           grep -s 'could not open file' regression.diffs
