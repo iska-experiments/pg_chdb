@@ -4,21 +4,23 @@
  *
  * The predicates exist so that a sequential scan, or the heap recheck of a
  * plan that does not use the index, gives the answer the index would. They
- * implement ClickHouse's default pipeline only: lowerUTF8 (here the database's
- * lower()) followed by splitByNonAlpha, which breaks a string at every ASCII
- * character that is not a letter or digit and keeps bytes >= 0x80 inside
- * words. An index built with another tokenizer or preprocessor answers
- * differently, so for those the operators are meaningful through the index
- * only. A needle without tokens matches nothing, as in ClickHouse.
+ * implement ClickHouse's default pipeline only: lowerUTF8 (here Unicode's
+ * own lowercase mapping, not the cluster's ctype) followed by
+ * splitByNonAlpha, which breaks a string at every ASCII character that is
+ * not a letter or digit and keeps bytes >= 0x80 inside words. An index built
+ * with another tokenizer or preprocessor answers differently, so for those
+ * the operators are meaningful through the index only. A needle without
+ * tokens matches nothing, as in ClickHouse.
  */
 
 #include "postgres.h"
 
 #include <string.h>
 
-#include "catalog/pg_collation_d.h"
 #include "catalog/pg_type_d.h"
+#include "common/unicode_case.h"
 #include "fmgr.h"
+#include "mb/pg_wchar.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -42,11 +44,39 @@ is_word_byte(unsigned char c) {
            (c >= 'A' && c <= 'Z');
 }
 
+/* PostgreSQL 17 has the simple mapping only; 18 adds the full one. */
+static size_t
+strlower(char* dst, size_t size, const char* s, size_t n) {
+#if PG_VERSION_NUM >= 180000
+    return unicode_strlower(dst, size, s, n, true);
+#else
+    return unicode_strlower(dst, size, s, n);
+#endif
+}
+
+/*
+ * Lowercases as the index's lowerUTF8 does, by Unicode's full mapping (so
+ * that İ becomes i̇, as ICU has it) whatever the cluster's ctype, under
+ * which str_tolower is ASCII-only for C and POSIX. A database in another
+ * encoding has no Unicode text to map and lowercases ASCII only.
+ */
+static char*
+lower_for_index(const char* s, size_t n) {
+    if (GetDatabaseEncoding() != PG_UTF8) {
+        return asc_tolower(s, n);
+    }
+
+    size_t len = strlower(NULL, 0, s, n);
+    char* low  = palloc(len + 1);
+
+    strlower(low, len + 1, s, n);
+    return low;
+}
+
 /* Lowercases and splits `t`; token pointers live in the returned buffer. */
 static int
 tokenize(text* t, Tok** out) {
-    char* raw = text_to_cstring(t);
-    char* low = str_tolower(raw, strlen(raw), DEFAULT_COLLATION_OID);
+    char* low = lower_for_index(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
     int cap = 16, n = 0;
     Tok* toks = palloc(sizeof(Tok) * cap);
 
@@ -135,19 +165,34 @@ phrase(text* hay, text* needles) {
     return false;
 }
 
-/* ClickHouse's hasToken rejects a needle that is not one token; so does this. */
+/*
+ * ClickHouse's hasToken rejects a needle that is not one token, judging the
+ * needle as written: any separator byte in it raises, and an empty needle
+ * matches nothing. (Lowercasing first would misjudge it: İstanbul shrinks
+ * by a byte, and the length test took that for a second token.)
+ */
 static bool
 single_token(text* hay, text* needle) {
+    const char* raw = VARDATA_ANY(needle);
+    size_t len      = VARSIZE_ANY_EXHDR(needle);
     Tok *h, *n;
-    int nh = tokenize(hay, &h), nn = tokenize(needle, &n);
+    int nh, nn PG_USED_FOR_ASSERTS_ONLY;
 
-    if (nn != 1 || n[0].n != (int)strlen(text_to_cstring(needle))) {
-        ereport(
-            ERROR,
-            errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-            errmsg("has_token needs a needle that is a single token")
-        );
+    if (len == 0) {
+        return false;
     }
+    for (size_t i = 0; i < len; i++) {
+        if (!is_word_byte((unsigned char)raw[i])) {
+            ereport(
+                ERROR,
+                errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("has_token needs a needle that is a single token")
+            );
+        }
+    }
+    nh = tokenize(hay, &h);
+    nn = tokenize(needle, &n);
+    Assert(nn == 1);
     return contains(h, nh, n[0]);
 }
 
@@ -169,22 +214,20 @@ TEXT_PREDICATE(chdb_search_has_phrase, phrase)
 PG_FUNCTION_INFO_V1(chdb_search_array_has_token);
 Datum
 chdb_search_array_has_token(PG_FUNCTION_ARGS) {
-    ArrayType* arr = PG_GETARG_ARRAYTYPE_P(0);
-    char* needle   = str_tolower(
-        text_to_cstring(PG_GETARG_TEXT_PP(1)),
-        VARSIZE_ANY_EXHDR(PG_GETARG_TEXT_PP(1)),
-        DEFAULT_COLLATION_OID
-    );
+    ArrayType* arr   = PG_GETARG_ARRAYTYPE_P(0);
+    text* t          = PG_GETARG_TEXT_PP(1);
+    char* needle     = lower_for_index(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
     ArrayIterator it = array_create_iterator(arr, 0, NULL);
     Datum d;
     bool isnull, found = false;
 
     while (!found && array_iterate(it, &d, &isnull)) {
         if (!isnull) {
-            char* e = text_to_cstring(DatumGetTextPP(d));
+            text* e = DatumGetTextPP(d);
 
             found =
-                strcmp(str_tolower(e, strlen(e), DEFAULT_COLLATION_OID), needle) == 0;
+                strcmp(lower_for_index(VARDATA_ANY(e), VARSIZE_ANY_EXHDR(e)), needle) ==
+                0;
         }
     }
     array_free_iterator(it);

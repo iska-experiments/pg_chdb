@@ -14,7 +14,10 @@ DOCS         = $(wildcard doc/*.md)
 TESTS        ?= $(if $(CHDB_SEARCH_STUB),$(filter-out test/sql/search_worker.sql \
                 test/sql/search_e2e.sql,$(wildcard test/sql/*.sql)),$(wildcard test/sql/*.sql))
 REGRESS      = --schedule test/schedule$(MAX_CONCURRENT_TESTS)
-REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION) $(if $(MAX_CONCURRENT_TESTS),--max-concurrent-tests $(MAX_CONCURRENT_TESTS))
+# UTF8: the search predicates lowercase by Unicode, and the tests say so in
+# their literals, whatever the cluster's locale (CI also runs them with
+# NO_LOCALE=1, in a database with the C locale).
+REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION) --encoding=UTF8 $(if $(MAX_CONCURRENT_TESTS),--max-concurrent-tests $(MAX_CONCURRENT_TESTS))
 MODULE_big   = $(EXTENSION)
 PG_CONFIG   ?= pg_config
 TAP_TESTS   ?= 1

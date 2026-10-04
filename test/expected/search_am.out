@@ -58,6 +58,30 @@ SELECT 'Wörter und Zahlen 42' @@@ 'wörter 42',
  t        | t        | t        | t        | t        | f        | t        | t
 (1 row)
 
+-- Lowercased by Unicode, as lowerUTF8 does, whatever the cluster's ctype.
+SELECT 'ÉCOLE' @@@ 'école', 'ÖL' @@= 'öl', chdb.has_token('ÉCOLE', 'école'), 'ÉCOLE' @@~ 'école',
+       ARRAY['ÉCOLE'] @@@ 'école';
+ ?column? | ?column? | has_token | ?column? | ?column? 
+----------+----------+-----------+----------+----------
+ t        | t        | t         | t        | t
+(1 row)
+
+-- has_token judges the needle as written: a separator in it raises, an
+-- empty one matches nothing, and lowercasing may change its length.
+SELECT chdb.has_token('İzmir ve İstanbul', 'İzmir');
+ has_token 
+-----------
+ t
+(1 row)
+
+SELECT chdb.has_token('x ⱥ y', 'Ⱥ ');
+ERROR:  has_token needs a needle that is a single token
+SELECT chdb.has_token('x', '');
+ has_token 
+-----------
+ f
+(1 row)
+
 ----------------------------------------------------------------------------
 -- Operator classes validate
 ----------------------------------------------------------------------------

@@ -269,6 +269,14 @@ SELECT id FROM prod WHERE tags @@= 'BLUE';
 SELECT id FROM prod WHERE tags @@@ 'Red Blue';
 RESET enable_indexscan;
 SET enable_seqscan = off;
+-- Non-ASCII letters lowercase alike in the index and in the predicates.
+INSERT INTO prod VALUES (10, 'ÉCOLE in İstanbul', '{ÖL}', 2.00);
+SELECT id FROM prod WHERE body @@@ 'école İSTANBUL' AND tags @@= 'öl';
+SET enable_seqscan = on;
+SET enable_indexscan = off;
+SELECT id FROM prod WHERE body @@@ 'école İSTANBUL' AND tags @@= 'öl';
+RESET enable_indexscan;
+SET enable_seqscan = off;
 
 ----------------------------------------------------------------------------
 -- DROP INDEX drops the store at commit
