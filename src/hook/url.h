@@ -6,6 +6,14 @@
 #include "copy.h"
 
 /*
+ * The scheme of `str`, a URL, or no_scheme for anything else: the schemes the
+ * ClickHouse 26.7 `url()` function dispatches on, less file_scheme when the
+ * module is built with CHDB_NO_FILE_SCHEME.
+ */
+extern scheme
+chdb_url_scheme(const char* str);
+
+/*
  * Decomposition of an Azure URL into the arguments that `azureBlobStorage()`
  * expects.
  */
