@@ -4,8 +4,11 @@
  * the store is derived data, so the page records which store belongs to this
  * relation (generation) and how far it was written (flushed_lsn). The
  * generation names the store table, idx_<oid>.t_<generation>, so a rebuild
- * that rolls back leaves the table the metapage still names untouched, and
- * the worker compares the LSN on open to have a stale index rebuilt.
+ * that rolls back leaves the table the metapage still names untouched. The
+ * store keeps the same record in its meta table, one row per generation and
+ * flush (protocol.h), so that the two can be compared: a store and a
+ * relation that agree on the generation and the last flush are from the
+ * same point in time.
  */
 
 #include "postgres.h"
@@ -109,15 +112,38 @@ chdb_meta_generation(Relation index) {
 }
 
 /*
- * Records that the store now holds everything logged so far. Runs after the
- * flush, before commit: a crash in between leaves store rows for heap tuples
- * that were never committed, and a restored relation shows an older LSN than
- * the store. The heap fetch does not hide those rows: one past the heap's end
- * errors, and one whose TID a later insert reused returns that other row, so
- * a store ahead of its metapage must be detected and rebuilt, not read.
+ * Records that the store now holds everything logged so far, in the store's
+ * meta table and then in the metapage. Runs after the flush, before commit:
+ * a crash in between leaves store rows for heap tuples that were never
+ * committed, and a restored relation shows an older LSN than the store. The
+ * heap fetch does not hide those rows: one past the heap's end errors, and
+ * one whose TID a later insert reused returns that other row, so a store
+ * ahead of its metapage must be detected and rebuilt, not read.
+ *
+ * The store is written first, so that a failure between the two leaves it
+ * ahead, which is refused, rather than the metapage ahead of a store that
+ * is complete. Flushes of one index by several backends interleave: each
+ * takes its own position, the store keeps them all and the page the
+ * highest, so the two agree once every flush has done both writes.
  */
 void
 chdb_meta_note_flush(Relation index) {
+    ChdbMetaPageData current;
+    uint64 lsn = GetXLogInsertRecPtr();
+
+    chdb_meta_read(index, &current);
+    chdb_search_run(
+        RelationGetRelid(index),
+        current.generation,
+        psprintf(
+            "INSERT INTO " CHDB_STORE_META_FMT
+            " (generation, lsn) VALUES (" UINT64_FORMAT ", " UINT64_FORMAT ")",
+            RelationGetRelid(index),
+            current.generation,
+            lsn
+        )
+    );
+
     Buffer buf = ReadBuffer(index, CHDB_METAPAGE_BLKNO);
 
     LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
@@ -125,14 +151,11 @@ chdb_meta_note_flush(Relation index) {
     Page page              = GenericXLogRegisterBuffer(xlog, buf, 0);
     ChdbMetaPageData* meta = meta_of(page);
 
-    if (meta->magic != CHDB_META_MAGIC) {
-        GenericXLogAbort(xlog);
-        UnlockReleaseBuffer(buf);
-        elog(
-            ERROR, "relation \"%s\" is not a chdb index", RelationGetRelationName(index)
-        );
+    if (meta->flushed_lsn >= lsn) {
+        GenericXLogAbort(xlog); /* a later flush got here first */
+    } else {
+        meta->flushed_lsn = lsn;
+        GenericXLogFinish(xlog);
     }
-    meta->flushed_lsn = GetXLogInsertRecPtr();
-    GenericXLogFinish(xlog);
     UnlockReleaseBuffer(buf);
 }
