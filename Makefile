@@ -214,4 +214,3 @@ kv-rest:
 
 start-kv-rest: kv-rest
 	KVREST_PORT="$${KVREST_PORT:-9182}" ./kv-rest &
-

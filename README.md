@@ -286,7 +286,7 @@ Building Against pg_chdb
 transport (the channel to a chDB process, the Native block codec, the setup
 payload and the process spawn): `libpgchdb.a` into `pkglibdir`, and the
 headers, `module.mk`, `rules.mk`, `libchdb.mk` and a generated `chdb.mk` into
-`$(pg_config --includedir-server)/extension/chdb`. A dependant's Makefile
+`$(pg_config --includedir-server)/extension/chdb`. A dependent's Makefile
 includes `chdb.mk`, links `$(CHDB_LIB)` and includes `module.mk` last:
 
 ```make
@@ -299,7 +299,7 @@ include $(CHDB_INCLUDEDIR)/module.mk
 ```
 
 Each module links its own copy of the archive, compiled with the server's
-hidden symbol visibility, so `chdb.so`, `chdb_hook.so` and a dependant load
+hidden symbol visibility, so `chdb.so`, `chdb_hook.so` and a dependent load
 side by side with nothing shared between them but what Postgres shares: the
 ClickHouse type hook of `native_writer.h` lives in a rendezvous variable.
 

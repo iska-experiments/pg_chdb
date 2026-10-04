@@ -1,5 +1,5 @@
 # How to build a module against pg_chdb @VERSION@, written by its make install.
-# A dependant's Makefile includes this file before anything else of pg_chdb's,
+# A dependent's Makefile includes this file before anything else of pg_chdb's,
 # then $(CHDB_INCLUDEDIR)/module.mk for the flags and PGXS:
 #
 #   PG_CONFIG ?= pg_config
@@ -9,7 +9,7 @@
 #   include $(CHDB_INCLUDEDIR)/module.mk
 #
 # The headers keep the names they have in pg_chdb's src/ (channel.h,
-# native.h, spawn.h, ...); module.h includes a version.h the dependant
+# native.h, spawn.h, ...); module.h includes a version.h the dependent
 # generates. libpgchdb.a holds the transport's objects built with the
 # server's -fvisibility=hidden, so each module linking it carries a private
 # copy that no other module's symbols can interpose.
