@@ -11,6 +11,7 @@
 
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
+#include "portability/instr_time.h"
 #include "storage/latch.h"
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
@@ -35,6 +36,7 @@ chdb_channel_init(chdbChannel* ch, int data, int err) {
     ch->err       = err;
     ch->recv_what = "error receiving from chDB";
     ch->send_what = "error sending to chDB";
+    ch->wait_what = "timed out waiting for chDB";
 }
 
 void
@@ -79,14 +81,38 @@ chdb_channel_prepare_fd(int fd) {
     set_flag(fd, F_GETFL, F_SETFL, O_NONBLOCK);
 }
 
-/* Sleeps until `fd` is ready, letting a cancel or a shutdown through. */
+/*
+ * Sleeps until `fd` is ready, letting a cancel or a shutdown through. While
+ * interrupts are held none gets through, so a channel with a hold timeout
+ * fails once the waits of one call, timed from the first in `since`, have
+ * spent it: a peer that never answers would otherwise hang the backend past
+ * pg_cancel_backend, pg_terminate_backend and statement_timeout.
+ */
 static void
-wait_fd(int fd, uint32 event) {
+wait_fd(chdbChannel* ch, int fd, uint32 event, instr_time* since) {
+    long timeout = CHDB_CHANNEL_POLL_MS;
+
+    if (ch->hold_timeout_ms > 0 && InterruptHoldoffCount > 0) {
+        instr_time now;
+
+        INSTR_TIME_SET_CURRENT(now);
+        if (INSTR_TIME_IS_ZERO(*since)) {
+            *since = now;
+        }
+        INSTR_TIME_SUBTRACT(now, *since);
+
+        long left = ch->hold_timeout_ms - (long)INSTR_TIME_GET_MILLISEC(now);
+
+        if (left <= 0) {
+            ch->fail(ch, ch->wait_what, ETIMEDOUT);
+        }
+        timeout = Min(timeout, left);
+    }
     WaitLatchOrSocket(
         MyLatch,
         event | WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
         fd,
-        CHDB_CHANNEL_POLL_MS,
+        timeout,
         PG_WAIT_EXTENSION
     );
     ResetLatch(MyLatch);
@@ -117,11 +143,13 @@ drain_err(chdbChannel* ch) {
 
 void
 chdb_channel_drain_err(chdbChannel* ch) {
+    instr_time since = { 0 };
+
     while (ch->err >= 0) {
         CHECK_FOR_INTERRUPTS();
         drain_err(ch);
         if (ch->err >= 0) {
-            wait_fd(ch->err, WL_SOCKET_READABLE);
+            wait_fd(ch, ch->err, WL_SOCKET_READABLE, &since);
         }
     }
 }
@@ -170,7 +198,8 @@ chdb_channel_scrub_error(char* msg, size_t len) {
 
 bool
 chdb_channel_try_write(chdbChannel* ch, int fd, const void* p, size_t len) {
-    const char* at = p;
+    const char* at   = p;
+    instr_time since = { 0 };
 
     while (len) {
         CHECK_FOR_INTERRUPTS();
@@ -181,7 +210,7 @@ chdb_channel_try_write(chdbChannel* ch, int fd, const void* p, size_t len) {
             len -= put;
         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
             drain_err(ch);
-            wait_fd(fd, WL_SOCKET_WRITEABLE);
+            wait_fd(ch, fd, WL_SOCKET_WRITEABLE, &since);
         } else if (errno != EINTR) {
             return false;
         }
@@ -203,6 +232,8 @@ chdb_channel_send_exact(chdbChannel* ch, const void* p, size_t len) {
  */
 static size_t
 read_some(chdbChannel* ch, void* buf, size_t len) {
+    instr_time since = { 0 };
+
     for (;;) {
         CHECK_FOR_INTERRUPTS();
         if (ch->data < 0) {
@@ -219,7 +250,7 @@ read_some(chdbChannel* ch, void* buf, size_t len) {
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             drain_err(ch);
-            wait_fd(ch->data, WL_SOCKET_READABLE);
+            wait_fd(ch, ch->data, WL_SOCKET_READABLE, &since);
         } else if (errno != EINTR) {
             ch->fail(ch, ch->recv_what, errno);
         }

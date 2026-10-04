@@ -13,6 +13,11 @@
  * creates the chDB database `idx_<indexoid>` if it is missing. Queries pass
  * through unchanged, so callers name the table in full: `idx_<indexoid>.t`.
  * The framing is documented in protocol.h.
+ *
+ * Every call returns or raises within chdb_search.worker_timeout when
+ * interrupts are held (a commit or abort callback), where a cancel could not
+ * end a wait for a worker that is busy or stopped; elsewhere waits are
+ * interruptible and unbounded.
  */
 
 #include "postgres.h"
