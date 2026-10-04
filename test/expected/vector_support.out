@@ -1,0 +1,39 @@
+-- chdb_vector: support functions, settings, and the vector cast.
+CREATE EXTENSION vector;
+CREATE EXTENSION chdb_search;
+CREATE EXTENSION chdb_vector;
+SELECT n, chdb.vector_distance_name(n::int2) FROM generate_series(1, 3) AS n;
+ n | vector_distance_name 
+---+----------------------
+ 1 | L2Distance
+ 2 | cosineDistance
+ 3 | dotProduct
+(3 rows)
+
+SELECT chdb.vector_distance_name(4::int2);
+ERROR:  unknown vector strategy number 4
+SELECT chdb.vector_query_settings();
+                                                    vector_query_settings                                                     
+------------------------------------------------------------------------------------------------------------------------------
+ SETTINGS hnsw_candidate_list_size_for_search = 256, vector_search_with_rescoring = 0, vector_search_filter_strategy = 'auto'
+(1 row)
+
+SET chdb_vector.hnsw_candidate_list_size = 64;
+SET chdb_vector.rescoring = on;
+SET chdb_vector.filter_strategy = prefilter;
+SELECT chdb.vector_query_settings();
+                                                      vector_query_settings                                                       
+----------------------------------------------------------------------------------------------------------------------------------
+ SETTINGS hnsw_candidate_list_size_for_search = 64, vector_search_with_rescoring = 1, vector_search_filter_strategy = 'prefilter'
+(1 row)
+
+SET chdb_vector.filter_strategy = bogus;
+ERROR:  invalid value for parameter "chdb_vector.filter_strategy": "bogus"
+HINT:  Available values: auto, postfilter, prefilter.
+RESET ALL;
+SELECT '[1,2,3]'::vector::real[];
+ float4  
+---------
+ {1,2,3}
+(1 row)
+
