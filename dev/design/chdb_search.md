@@ -360,3 +360,32 @@ subscription whose subscriber builds its own index; and WAL-G itself with
 
 Each lands as a draft PR of small commits. B exposes `client.h` first so C
 can compile against it with a stub worker.
+
+## Parity decisions (2026-10-04)
+
+Kaushik asked for parity with ParadeDB on query language, storage and
+same-transaction visibility. Decided:
+
+* **Query language.** First pass: regex and wildcard terms (ClickHouse
+  `match` and `LIKE`, both accelerated by the text index), boolean OR/NOT
+  trees of chdb predicates pushed as one `WHERE`, and per-clause boosts that
+  multiply the IDF score. Phrase slop is exact and evaluated in ClickHouse on
+  the candidate set: `hasAllTokens` prefilters, then an expression over
+  `tokens(col)` positions checks that the terms fall within the slop. Fuzzy
+  and more-like-this wait. Compound queries use builder functions in schema
+  `chdb` returning a `chdb.query` value (`chdb.match`, `chdb.phrase(text,
+  slop)`, `chdb.regex`, `chdb.wildcard`, `chdb.boost(query, weight)`),
+  combined with ordinary SQL `AND`/`OR`/`NOT`; no string parser.
+* **Own writes.** `aminsert` still buffers, but the buffer is shipped to the
+  transaction's staging table `idx_N.t_tx_<xid>` at the end of each statement;
+  scans read `t UNION ALL t_tx_<xid>` for the current transaction; commit
+  attaches the staging partition into `t` (`ALTER TABLE ... ATTACH PARTITION
+  FROM`) instead of copying; abort drops the staging table. Subtransaction
+  rollback deletes that subtransaction's rows from the staging table by the
+  subxid column they carry.
+* **Storage.** The page store (callback disk from chdb-core PR #256 over
+  index-relation pages with generic WAL) replaces the directory store; there
+  is one storage mode. Standbys serve searches in this phase: the standby
+  worker opens the store read-only from pages with merges stopped. WAL cost
+  is measured (WAL bytes per inserted row and per merge, directory store
+  versus page store) before part-size and merge defaults are chosen.
