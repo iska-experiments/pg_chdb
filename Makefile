@@ -83,6 +83,9 @@ uninstall: uninstall-libchdb
 endif
 endif
 
+SEARCH_VERSION := $(shell sed -n "s/^default_version *= *'\(.*\)'/\1/p" chdb_search.control)
+SEARCH_MODULE  := src/search/chdb_search$(DLSUFFIX)
+
 # Require the versioned SQL script.
 all: sql/$(EXTENSION)--$(EXTVERSION).sql src/hook/chdb_hook$(DLSUFFIX)
 
@@ -136,8 +139,11 @@ uninstall: uninstall-$(patsubst chdb_%,%,$(1))
 EXTRA_CLEAN += sql/$(1)--$$($(1)_VERSION).sql $$($(1)_SO) $$(dir $$($(1)_SO))*.o $$(dir $$($(1)_SO))*.bc
 endef
 
-# The chdb_search extension: the search worker and its clients.
-$(eval $(call ext_module,chdb_search,$(OBJS),CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR)))
+# The chdb_search extension: the search worker, its clients and the chdb index
+# access method. Pass CHDB_SEARCH_STUB=1 to link the per-backend fake in
+# src/search/client_stub.c instead of the worker client, for building and
+# testing the access method without a worker.
+$(eval $(call ext_module,chdb_search,$(OBJS),CH_C_DIR=$(CH_C_DIR) PGCH_DIR=$(PGCH_DIR) CHDB_SEARCH_STUB=$(CHDB_SEARCH_STUB)))
 
 # Fail with something more useful than a missing include.
 $(CH_C_DIR)/clickhouse.h: .gitmodules

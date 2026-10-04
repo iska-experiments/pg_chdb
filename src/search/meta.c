@@ -1,0 +1,88 @@
+/*
+ * The index relation's only page: a WAL-logged metapage tying the relation to
+ * its ClickHouse store. Postgres decides what survives a crash or a restore;
+ * the store is derived data, so the page records which store belongs to this
+ * relation (generation) and how far it was written (flushed_lsn). The worker
+ * compares them on open and has the index rebuilt on a mismatch.
+ */
+
+#include "postgres.h"
+
+#include "access/generic_xlog.h"
+#include "access/xlog.h"
+#include "common/pg_prng.h"
+#include "miscadmin.h"
+#include "storage/bufmgr.h"
+#include "storage/bufpage.h"
+
+#include "search.h"
+
+static ChdbMetaPageData*
+meta_of(Page page) {
+    return (ChdbMetaPageData*)PageGetContents(page);
+}
+
+void
+chdb_meta_init(Relation index, ForkNumber fork) {
+    /* No concurrent inserters can exist yet, as in contrib/bloom. */
+    Buffer buf = ReadBufferExtended(index, fork, P_NEW, RBM_NORMAL, NULL);
+
+    LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
+    Assert(BufferGetBlockNumber(buf) == CHDB_METAPAGE_BLKNO);
+
+    GenericXLogState* xlog = GenericXLogStart(index);
+    Page page = GenericXLogRegisterBuffer(xlog, buf, GENERIC_XLOG_FULL_IMAGE);
+
+    PageInit(page, BLCKSZ, 0);
+    ChdbMetaPageData* meta = meta_of(page);
+
+    meta->magic       = CHDB_META_MAGIC;
+    meta->version     = CHDB_META_VERSION;
+    meta->generation  = pg_prng_uint64(&pg_global_prng_state);
+    meta->flushed_lsn = 0;
+    ((PageHeader)page)->pd_lower += sizeof(ChdbMetaPageData);
+
+    GenericXLogFinish(xlog);
+    UnlockReleaseBuffer(buf);
+}
+
+void
+chdb_meta_read(Relation index, ChdbMetaPageData* out) {
+    Buffer buf = ReadBuffer(index, CHDB_METAPAGE_BLKNO);
+
+    LockBuffer(buf, BUFFER_LOCK_SHARE);
+    *out = *meta_of(BufferGetPage(buf));
+    UnlockReleaseBuffer(buf);
+
+    if (out->magic != CHDB_META_MAGIC) {
+        elog(
+            ERROR, "relation \"%s\" is not a chdb index", RelationGetRelationName(index)
+        );
+    }
+}
+
+/*
+ * Records that the store now holds everything logged so far. Runs after the
+ * flush, before commit: a crash in between leaves stale store rows, which the
+ * heap fetch hides, and a restored relation shows an older LSN than the store.
+ */
+void
+chdb_meta_note_flush(Relation index) {
+    Buffer buf = ReadBuffer(index, CHDB_METAPAGE_BLKNO);
+
+    LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
+    GenericXLogState* xlog = GenericXLogStart(index);
+    Page page              = GenericXLogRegisterBuffer(xlog, buf, 0);
+    ChdbMetaPageData* meta = meta_of(page);
+
+    if (meta->magic != CHDB_META_MAGIC) {
+        GenericXLogAbort(xlog);
+        UnlockReleaseBuffer(buf);
+        elog(
+            ERROR, "relation \"%s\" is not a chdb index", RelationGetRelationName(index)
+        );
+    }
+    meta->flushed_lsn = GetXLogInsertRecPtr();
+    GenericXLogFinish(xlog);
+    UnlockReleaseBuffer(buf);
+}
