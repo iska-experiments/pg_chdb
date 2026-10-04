@@ -75,14 +75,6 @@ SET client_min_messages = warning;
 SELECT id FROM prod WHERE body @@@ 'shoes' AND price >= 49.90 AND price <= 120 ORDER BY id;
 SELECT id FROM prod WHERE price = 89 ORDER BY id;
 
--- A bitmap scan.
-SET enable_indexscan = off;
-SET enable_bitmapscan = on;
-EXPLAIN (COSTS OFF) SELECT id FROM prod WHERE body @@? 'shoes boots' ORDER BY id;
-SELECT id FROM prod WHERE body @@? 'shoes boots' ORDER BY id;
-RESET enable_indexscan;
-SET enable_bitmapscan = off;
-
 -- The tokenizer, run by the worker.
 SELECT chdb.tokens('Running Shoes, fast!');
 SELECT chdb.tokens(E'It''s a \\back\\slash\nnew line');

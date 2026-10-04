@@ -122,7 +122,7 @@ so each column gets its own tokenizer. Allowed tokenizers:
 
 IndexAmRoutine: `amstrategies = 0`, `amsupport = 1` (options proc),
 `amcanmulticol`, `amoptionalkey`, `amcanorderbyop` (vector distance),
-`amcanreturn = false`, `amgettuple` and `amgetbitmap` both implemented,
+`amcanreturn = false`, `amgettuple` only (no `amgetbitmap`, see Scans),
 `amcostestimate` via `genericcostestimate` with a low per-tuple cost when a
 chdb predicate is present, `ambulkdelete` issues a lightweight
 `DELETE FROM t WHERE ctid IN (...)`, `amvacuumcleanup` runs
@@ -179,7 +179,11 @@ documented.
   back as Native blocks; the AM fills `xs_heaptid` and `xs_orderbyvals`.
   Visibility is rechecked by the executor through the heap fetch, so stale
   entries from aborted transactions are harmless until VACUUM removes them.
-* `amgetbitmap`: same query, fills a TIDBitmap.
+* No `amgetbitmap`: a TIDBitmap past `work_mem` makes the bitmap heap scan
+  recheck the quals with the Postgres fallbacks, which implement the default
+  tokenizer only, so every match of another tokenizer on a lossy page would be
+  dropped; the AM streams the whole TID set anyway. EvalPlanQual rechecks
+  still evaluate the fallbacks for non-default tokenizers.
 * CustomScan (`src/search/customscan.c`): `set_rel_pathlist_hook` adds a
   `chdb_search` path when a relation has a chdb index and the quals include
   our operators. It pushes LIMIT, plain column filters on stored columns, and
