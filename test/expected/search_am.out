@@ -318,12 +318,19 @@ SELECT quote_ident(collname) AS noncoll FROM pg_collation
  WHERE (collprovider = 'c' AND collcollate NOT IN ('C', 'POSIX') OR collprovider = 'i')
    AND collencoding IN (-1, pg_char_to_encoding('UTF8'))
  ORDER BY collname <> 'C.utf8', collprovider, collname LIMIT 1 \gset
-CREATE TABLE coll (author text COLLATE :noncoll, c_author text COLLATE "C");
+-- The check is by the column's collation, not its type: a domain over text
+-- carries the one it was declared with.
+CREATE DOMAIN coll_text AS text COLLATE :noncoll;
+CREATE TABLE coll (author text COLLATE :noncoll, d_author coll_text, c_author text COLLATE "C");
 CREATE INDEX ON coll USING chdb (author columnar_ops);
 ERROR:  chdb columnar_ops on a text column requires a C or POSIX collation
+CREATE INDEX ON coll USING chdb (d_author columnar_ops);
+ERROR:  chdb columnar_ops on a text column requires a C or POSIX collation
 CREATE INDEX ON coll USING chdb ((author COLLATE "C") columnar_ops);
+CREATE INDEX ON coll USING chdb ((d_author COLLATE "C") columnar_ops);
 CREATE INDEX ON coll USING chdb (c_author columnar_ops);
 DROP TABLE coll;
+DROP DOMAIN coll_text;
 -- Only permanent tables: an unlogged heap is reset by crash recovery while
 -- its store is not, and a temporary one is rebuilt and dropped by backends
 -- that need not have the library.
